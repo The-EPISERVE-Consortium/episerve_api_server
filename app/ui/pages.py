@@ -5,160 +5,189 @@ from app.clients import lakefs as lakefs_client
 from app.clients import ckan as ckan_client
 
 
-def _header():
-    with ui.header().classes("bg-blue-800 text-white items-center gap-4 px-6 py-3"):
-        ui.label("EPISERVE Platform").classes("text-xl font-bold")
+NAV_ITEMS = [
+    ("Datasets – Raw",       "/ui/datasets/raw"),
+    ("Datasets – Processed", "/ui/datasets/processed"),
+    ("Models",               "/ui/models"),
+    ("Model Runs",           "/ui/model-runs"),
+    ("Trigger",              "/ui/trigger"),
+]
 
 
-def _error(msg: str):
-    ui.notify(str(msg), type="negative", position="top", timeout=8000)
+def _header(current: str = ""):
+    with ui.header().classes("bg-white text-gray-800 border-b border-gray-200 px-8 py-3 flex items-center justify-between shadow-sm"):
+        ui.label("EPISERVE").classes("text-lg font-bold tracking-wide")
+        with ui.row().classes("gap-8 items-center"):
+            for label, path in NAV_ITEMS:
+                active = current == path
+                ui.link(label, path).classes(
+                    "text-sm no-underline font-medium " +
+                    ("text-blue-700 border-b-2 border-blue-700 pb-0.5" if active else "text-gray-600 hover:text-blue-700")
+                )
 
 
 def _error_label(msg: str):
-    ui.label(f"⚠ {msg}").classes("text-red-600 text-sm")
+    ui.label(f"⚠ {msg}").classes("text-red-600 text-sm mt-2")
 
 
 def register_pages():
 
     @ui.page("/ui")
-    def main():
-        _header()
-        with ui.tabs().classes("w-full") as tabs:
-            tab_datasets   = ui.tab("Datasets")
-            tab_models     = ui.tab("Models")
-            tab_model_runs = ui.tab("Model Runs")
-
-        with ui.tab_panels(tabs, value=tab_datasets).classes("w-full p-4"):
-
-            # ── Datasets ──────────────────────────────────────────────────────
-            with ui.tab_panel(tab_datasets):
-                with ui.tabs().classes("w-full") as sub_tabs:
-                    tab_raw       = ui.tab("Raw")
-                    tab_processed = ui.tab("Processed")
-
-                with ui.tab_panels(sub_tabs, value=tab_raw).classes("w-full"):
-
-                    with ui.tab_panel(tab_raw):
-                        ui.label("Raw Datasets").classes("text-lg font-semibold mb-2")
-                        try:
-                            rows = lakefs_client.list_raw_objects()
-                            ui.table(
-                                columns=[
-                                    {"name": "path",          "label": "Path",          "field": "path",          "align": "left", "sortable": True},
-                                    {"name": "size_bytes",    "label": "Size (bytes)",  "field": "size_bytes",    "align": "right", "sortable": True},
-                                    {"name": "last_modified", "label": "Last Modified", "field": "last_modified", "align": "left",  "sortable": True},
-                                ],
-                                rows=rows,
-                                row_key="path",
-                            ).classes("w-full")
-                        except Exception as e:
-                            _error_label(f"Could not load raw datasets: {e}")
-
-                    with ui.tab_panel(tab_processed):
-                        ui.label("Processed Datasets").classes("text-lg font-semibold mb-2")
-                        try:
-                            rows = lakefs_client.list_processed_datasets()
-                            ui.table(
-                                columns=[
-                                    {"name": "name",        "label": "Name",        "field": "name",        "align": "left",  "sortable": True},
-                                    {"name": "qid",         "label": "QID",         "field": "qid",         "align": "left",  "sortable": True},
-                                    {"name": "description", "label": "Description", "field": "description", "align": "left"},
-                                    {"name": "doip_url",    "label": "DOIP",        "field": "doip_url",    "align": "left"},
-                                ],
-                                rows=rows,
-                                row_key="qid",
-                            ).classes("w-full")
-                        except Exception as e:
-                            _error_label(f"Could not load processed datasets: {e}")
-
-            # ── Models ────────────────────────────────────────────────────────
-            with ui.tab_panel(tab_models):
-                ui.label("Models").classes("text-lg font-semibold mb-2")
-                try:
-                    rows = ckan_client.list_models()
-                    ui.table(
-                        columns=[
-                            {"name": "name",         "label": "Name",         "field": "name",         "align": "left", "sortable": True},
-                            {"name": "docker_image", "label": "Image",        "field": "docker_image", "align": "left"},
-                            {"name": "docker_tag",   "label": "Tag",          "field": "docker_tag",   "align": "left", "sortable": True},
-                            {"name": "description",  "label": "Description",  "field": "description",  "align": "left"},
-                        ],
-                        rows=rows,
-                        row_key="name",
-                    ).classes("w-full")
-                except Exception as e:
-                    _error_label(f"Could not load models: {e}")
-
-            # ── Model Runs ────────────────────────────────────────────────────
-            with ui.tab_panel(tab_model_runs):
-                with ui.row().classes("w-full items-center justify-between mb-2"):
-                    ui.label("Model Runs").classes("text-lg font-semibold")
-                    ui.button("Trigger Run", icon="play_arrow", on_click=lambda: trigger_dialog.open()).classes("bg-blue-700 text-white")
-
-                runs_table = ui.table(
+    @ui.page("/ui/datasets/raw")
+    def datasets_raw():
+        _header("/ui/datasets/raw")
+        with ui.column().classes("p-6 w-full"):
+            ui.label("Raw Datasets").classes("text-xl font-semibold mb-4")
+            try:
+                rows = lakefs_client.list_raw_objects()
+                ui.table(
                     columns=[
-                        {"name": "qid",           "label": "QID",        "field": "qid",           "align": "left",  "sortable": True},
-                        {"name": "model_name",    "label": "Model",      "field": "model_name",    "align": "left",  "sortable": True},
-                        {"name": "docker_tag",    "label": "Tag",        "field": "docker_tag",    "align": "left"},
-                        {"name": "run_timestamp", "label": "Timestamp",  "field": "run_timestamp", "align": "left",  "sortable": True},
-                        {"name": "doip_url",      "label": "DOIP",       "field": "doip_url",      "align": "left"},
+                        {"name": "path",          "label": "Path",          "field": "path",          "align": "left",  "sortable": True},
+                        {"name": "size_bytes",    "label": "Size (bytes)",  "field": "size_bytes",    "align": "right", "sortable": True},
+                        {"name": "last_modified", "label": "Last Modified", "field": "last_modified", "align": "left",  "sortable": True},
                     ],
-                    rows=[],
+                    rows=rows,
+                    row_key="path",
+                ).classes("w-full")
+            except Exception as e:
+                _error_label(f"Could not load raw datasets: {e}")
+
+    @ui.page("/ui/datasets/processed")
+    def datasets_processed():
+        _header("/ui/datasets/processed")
+        with ui.column().classes("p-6 w-full"):
+            ui.label("Processed Datasets").classes("text-xl font-semibold mb-4")
+            try:
+                rows = lakefs_client.list_processed_datasets()
+                ui.table(
+                    columns=[
+                        {"name": "name",          "label": "Name",          "field": "name",          "align": "left", "sortable": True},
+                        {"name": "qid",           "label": "QID",           "field": "qid",           "align": "left", "sortable": True},
+                        {"name": "description",   "label": "Description",   "field": "description",   "align": "left"},
+                        {"name": "doip_url",      "label": "DOIP",          "field": "doip_url",      "align": "left"},
+                    ],
+                    rows=rows,
                     row_key="qid",
                 ).classes("w-full")
+            except Exception as e:
+                _error_label(f"Could not load processed datasets: {e}")
 
-                def refresh_runs():
-                    try:
-                        runs_table.rows = lakefs_client.list_model_runs()
-                    except Exception as e:
-                        _error(f"lakeFS error: {e}")
+    @ui.page("/ui/models")
+    def models():
+        _header("/ui/models")
+        with ui.column().classes("p-6 w-full"):
+            ui.label("Models").classes("text-xl font-semibold mb-4")
+            try:
+                rows = ckan_client.list_models()
+                ui.table(
+                    columns=[
+                        {"name": "name",         "label": "Name",        "field": "name",         "align": "left", "sortable": True},
+                        {"name": "docker_image", "label": "Image",       "field": "docker_image", "align": "left"},
+                        {"name": "docker_tag",   "label": "Tag",         "field": "docker_tag",   "align": "left", "sortable": True},
+                        {"name": "description",  "label": "Description", "field": "description",  "align": "left"},
+                    ],
+                    rows=rows,
+                    row_key="name",
+                ).classes("w-full")
+            except Exception as e:
+                _error_label(f"Could not load models: {e}")
 
-                refresh_runs()
+    @ui.page("/ui/model-runs")
+    def model_runs():
+        _header("/ui/model-runs")
+        with ui.column().classes("p-6 w-full"):
+            ui.label("Model Runs").classes("text-xl font-semibold mb-4")
+            try:
+                rows = lakefs_client.list_model_runs()
+                ui.table(
+                    columns=[
+                        {"name": "qid",           "label": "QID",       "field": "qid",           "align": "left", "sortable": True},
+                        {"name": "model_name",    "label": "Model",     "field": "model_name",    "align": "left", "sortable": True},
+                        {"name": "docker_tag",    "label": "Tag",       "field": "docker_tag",    "align": "left"},
+                        {"name": "run_timestamp", "label": "Timestamp", "field": "run_timestamp", "align": "left", "sortable": True},
+                        {"name": "doip_url",      "label": "DOIP",      "field": "doip_url",      "align": "left"},
+                    ],
+                    rows=rows,
+                    row_key="qid",
+                ).classes("w-full")
+            except Exception as e:
+                _error_label(f"Could not load model runs: {e}")
 
-                # ── Trigger dialog ─────────────────────────────────────────
-                with ui.dialog() as trigger_dialog, ui.card().classes("w-[600px]"):
-                    ui.label("Trigger Model Run").classes("text-lg font-semibold mb-2")
+    @ui.page("/ui/trigger")
+    def trigger():
+        _header("/ui/trigger")
+        with ui.column().classes("p-6 max-w-xl"):
+            ui.label("Trigger Model Run").classes("text-xl font-semibold mb-4")
 
-                    model_image_input = ui.input(
-                        label="Model image",
-                        placeholder="ghcr.io/the-episerve-consortium/model__prediction__grippeweb__baseline-nullmodel",
-                    ).classes("w-full")
+            # Load options
+            try:
+                dataset_options = {
+                    f"{d['name']} ({d['qid']})": d["lakefs_path"]
+                    for d in lakefs_client.list_processed_datasets()
+                }
+            except Exception as e:
+                _error_label(f"Could not load datasets: {e}")
+                dataset_options = {}
 
-                    model_tag_input = ui.input(label="Image tag", value="latest").classes("w-full")
+            try:
+                model_options = {
+                    m["name"]: f"{m['docker_image']}:{m['docker_tag']}"
+                    for m in ckan_client.list_models()
+                }
+            except Exception as e:
+                _error_label(f"Could not load models: {e}")
+                model_options = {}
 
-                    input_path_input = ui.input(
-                        label="Input path (lakeFS)",
-                        placeholder="lakefs://data-processed/main/...",
-                    ).classes("w-full")
+            input_select = ui.select(
+                label="Input dataset",
+                options=list(dataset_options.keys()),
+            ).classes("w-full")
 
-                    config_input = ui.textarea(
-                        label="Config (JSON)",
-                        value='{"horizon_weeks": 4, "n_reference_weeks": 4}',
-                    ).classes("w-full font-mono")
+            model_select = ui.select(
+                label="Model",
+                options=list(model_options.keys()),
+            ).classes("w-full")
 
-                    result_label = ui.label("").classes("text-sm text-gray-500")
+            tag_input = ui.input(label="Image tag override", placeholder="leave empty to use registered tag").classes("w-full")
 
-                    def submit_run():
-                        try:
-                            config = json.loads(config_input.value)
-                        except json.JSONDecodeError as e:
-                            _error(f"Invalid JSON: {e}")
-                            return
-                        from app.clients import prefect as prefect_client
-                        try:
-                            result = prefect_client.trigger_model_run(
-                                input_path=input_path_input.value,
-                                model_image=model_image_input.value,
-                                model_tag=model_tag_input.value,
-                                config_json=json.dumps(config),
-                            )
-                            result_label.set_text(f"Triggered: {result['prefect_flow_run_id']} ({result['status']})")
-                            ui.notify("Model run triggered", type="positive", position="top")
-                            trigger_dialog.close()
-                            refresh_runs()
-                        except Exception as e:
-                            _error(f"Prefect error: {e}")
+            config_input = ui.textarea(
+                label="Config (JSON)",
+                value='{"horizon_weeks": 4, "n_reference_weeks": 4}',
+            ).classes("w-full font-mono")
 
-                    with ui.row().classes("w-full justify-end gap-2 mt-2"):
-                        ui.button("Cancel", on_click=trigger_dialog.close).props("flat")
-                        ui.button("Run", icon="play_arrow", on_click=submit_run).classes("bg-blue-700 text-white")
+            result_label = ui.label("").classes("text-sm text-gray-500")
+
+            def submit():
+                if not input_select.value:
+                    ui.notify("Select an input dataset", type="warning", position="top")
+                    return
+                if not model_select.value:
+                    ui.notify("Select a model", type="warning", position="top")
+                    return
+                try:
+                    config = json.loads(config_input.value)
+                except json.JSONDecodeError as e:
+                    ui.notify(f"Invalid JSON: {e}", type="negative", position="top")
+                    return
+
+                input_path  = dataset_options[input_select.value]
+                full_image  = model_options[model_select.value]
+                image, tag  = full_image.rsplit(":", 1) if ":" in full_image else (full_image, "latest")
+                if tag_input.value.strip():
+                    tag = tag_input.value.strip()
+
+                from app.clients import prefect as prefect_client
+                try:
+                    result = prefect_client.trigger_model_run(
+                        input_path=input_path,
+                        model_image=image,
+                        model_tag=tag,
+                        config_json=json.dumps(config),
+                    )
+                    result_label.set_text(f"Triggered: {result['prefect_flow_run_id']} ({result['status']})")
+                    ui.notify("Model run triggered", type="positive", position="top")
+                except Exception as e:
+                    ui.notify(f"Prefect error: {e}", type="negative", position="top")
+
+            ui.button("Trigger Run", icon="play_arrow", on_click=submit).classes("bg-blue-700 text-white mt-2")
+            result_label
