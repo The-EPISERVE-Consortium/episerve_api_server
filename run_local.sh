@@ -39,4 +39,4 @@ echo "Starting EPISERVE API server at http://localhost:${PORT}"
 echo "Docs at http://localhost:${PORT}/docs"
 echo ""
 
-PYTHONPATH=. uvicorn app.main:app --host 0.0.0.0 --port "${PORT}" --reload
+PYTHONPATH=. uvicorn app.main:app --host 0.0.0.0 --port "${PORT}" --reload --forwarded-allow-ips='*'
