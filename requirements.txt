@@ -4,3 +4,4 @@ lakefs
 ckanapi
 httpx
 pydantic>=2.0
+pytest
