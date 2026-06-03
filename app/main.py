@@ -1,5 +1,8 @@
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
+from nicegui import ui
 from app.routers import datasets, models, model_runs
+from app.ui.pages import register_pages
 
 app = FastAPI(
     title="EPISERVE API",
@@ -12,6 +15,15 @@ app.include_router(models.router)
 app.include_router(model_runs.router)
 
 
+@app.get("/")
+def root():
+    return RedirectResponse(url="/ui")
+
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
+
+
+register_pages()
+ui.run_with(app, title="EPISERVE", favicon="🔬", dark=False)

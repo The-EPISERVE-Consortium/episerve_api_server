@@ -12,7 +12,7 @@ class Settings:
     lakefs_branch: str = os.environ.get("LAKEFS_BRANCH", "main")
 
     # CKAN
-    ckan_url: str = os.environ.get("CKAN_URL", "")
+    ckan_url: str = os.environ.get("CKAN_URL", "https://data.episerve.zib.de")
     ckan_api_token: str = os.environ.get("CKAN_API_TOKEN", "")
 
     # Prefect
