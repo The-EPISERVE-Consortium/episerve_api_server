@@ -3,6 +3,7 @@ from nicegui import ui
 
 from app.clients import lakefs as lakefs_client
 from app.clients import ckan as ckan_client
+from app.config import settings
 
 
 NAV_ITEMS = [
@@ -126,9 +127,11 @@ def register_pages():
 
             # Load options
             try:
+                raw_repo = settings.lakefs_raw_repo
+                branch   = settings.lakefs_branch
                 dataset_options = {
-                    f"{d['name']} ({d['qid']})": d["lakefs_path"]
-                    for d in lakefs_client.list_processed_datasets()
+                    obj["path"]: f"lakefs://{raw_repo}/{branch}/{obj['path']}"
+                    for obj in lakefs_client.list_raw_objects()
                 }
             except Exception as e:
                 _error_label(f"Could not load datasets: {e}")
@@ -190,7 +193,6 @@ def register_pages():
                 except Exception as e:
                     ui.notify(f"Prefect error: {e}", type="negative", position="top")
 
-            from app.config import settings
             if not settings.prefect_api_url:
                 ui.label("⚠ PREFECT_API_URL is not configured. Set it in .env to enable triggering runs.").classes("text-orange-600 text-sm mb-2")
             ui.button("Trigger Run", icon="play_arrow", on_click=submit).classes("bg-blue-700 text-white mt-2").props(f"{'disabled' if not settings.prefect_api_url else ''}")
