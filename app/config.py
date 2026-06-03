@@ -12,18 +12,18 @@ class Settings:
     lakefs_branch: str = os.environ.get("LAKEFS_BRANCH", "main")
 
     # CKAN
-    ckan_url: str = os.environ.get("CKAN_URL", "https://data.episerve.zib.de")
+    ckan_url: str = os.environ.get("CKAN_URL") or "https://data.episerve.zib.de"
     ckan_api_token: str = os.environ.get("CKAN_API_TOKEN", "")
 
     # Prefect
     prefect_api_url: str = os.environ.get("PREFECT_API_URL", "")
     prefect_api_key: str = os.environ.get("PREFECT_API_KEY", "")
-    prefect_model_runner_deployment: str = os.environ.get(
-        "PREFECT_MODEL_RUNNER_DEPLOYMENT", "model-runner/model-pipeline"
+    prefect_model_runner_deployment: str = (
+        os.environ.get("PREFECT_MODEL_RUNNER_DEPLOYMENT") or "model-runner/model-pipeline"
     )
 
     # DOIP server
-    doip_url: str = os.environ.get("DOIP_URL", "https://doip.episerve.zib.de")
+    doip_url: str = os.environ.get("DOIP_URL") or "https://doip.episerve.zib.de"
 
     # Server
     port: int = int(os.environ.get("PORT", "8000"))
