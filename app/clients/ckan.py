@@ -20,12 +20,10 @@ def list_models() -> list[dict]:
     models = []
     for pkg in result.get("results", []):
         extras = {e["key"]: e["value"] for e in pkg.get("extras", [])}
-        name = pkg.get("name", "")
-        docker_tag = extras.get("docker_image", "")
         models.append({
-            "name": name,
-            "docker_image": f"ghcr.io/the-episerve-consortium/{name}",
-            "docker_tag": docker_tag,
+            "name": pkg.get("name", ""),
+            "docker_image": extras.get("docker_image", ""),
+            "docker_tag": extras.get("docker_tag", ""),
             "description": pkg.get("notes", ""),
         })
     return models
