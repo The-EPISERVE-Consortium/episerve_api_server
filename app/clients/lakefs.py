@@ -21,6 +21,8 @@ def list_raw_objects() -> list[dict]:
     repo = lakefs.Repository(settings.lakefs_raw_repo, client=client)
     results = []
     for obj in repo.branch(settings.lakefs_branch).objects(max_amount=1000):
+        if obj.path.endswith(".fdo.json"):
+            continue
         results.append({
             "path": obj.path,
             "last_modified": str(obj.mtime),
@@ -45,11 +47,12 @@ def list_processed_datasets() -> list[dict]:
         content = branch.object(obj.path).reader().read()
         fdo = json.loads(content)
         qid = fdo.get("@id", "")
+        profile = fdo.get("profile", {})
         datasets.append({
             "qid": qid,
-            "name": fdo.get("name", obj.path),
-            "description": fdo.get("description", ""),
-            "source_url": fdo.get("url", ""),
+            "name": profile.get("name", ""),
+            "description": profile.get("description", ""),
+            "source_url": profile.get("url", ""),
             "lakefs_path": f"lakefs://{settings.lakefs_processed_repo}/{settings.lakefs_branch}/{obj.path}",
             "last_modified": str(obj.mtime),
             "doip_url": _doip_url(qid) if qid else "",

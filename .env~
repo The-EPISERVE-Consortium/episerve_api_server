@@ -1,0 +1,17 @@
+# lakeFS
+LAKEFS_URL=https://lake-episerve.zib.de
+LAKEFS_ACCESS_KEY=
+LAKEFS_SECRET_KEY=
+LAKEFS_RAW_REPO=data-raw
+LAKEFS_PROCESSED_REPO=data-processed
+LAKEFS_MODEL_RUNS_REPO=model-runs
+LAKEFS_BRANCH=main
+
+# CKAN
+CKAN_URL=
+CKAN_API_TOKEN=
+
+# Prefect
+PREFECT_API_URL=
+PREFECT_API_KEY=
+PREFECT_MODEL_RUNNER_DEPLOYMENT=model-runner/model-pipeline
