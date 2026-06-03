@@ -116,8 +116,13 @@ def register_pages():
     @ui.page("/ui/trigger")
     def trigger():
         _header("/ui/trigger")
-        with ui.column().classes("p-6 max-w-xl"):
-            ui.label("Trigger Model Run").classes("text-xl font-semibold mb-4")
+        with ui.column().classes("p-6 w-full max-w-2xl"):
+            ui.label("Run a forecast model").classes("text-xl font-semibold")
+            ui.label(
+                "Select a processed dataset and a registered model, adjust the configuration if needed, "
+                "and submit a new model run. The run will be executed on the cluster and results will "
+                "appear in the Model Runs page once complete."
+            ).classes("text-sm text-gray-500 mb-4")
 
             # Load options
             try:
