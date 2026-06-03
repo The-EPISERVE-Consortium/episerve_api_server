@@ -148,8 +148,6 @@ def register_pages():
                 options=list(model_options.keys()),
             ).classes("w-full")
 
-            tag_input = ui.input(label="Image tag override", placeholder="leave empty to use registered tag").classes("w-full")
-
             config_input = ui.textarea(
                 label="Config (JSON)",
                 value='{"horizon_weeks": 4, "n_reference_weeks": 4}',
@@ -173,8 +171,6 @@ def register_pages():
                 input_path  = dataset_options[input_select.value]
                 full_image  = model_options[model_select.value]
                 image, tag  = full_image.rsplit(":", 1) if ":" in full_image else (full_image, "latest")
-                if tag_input.value.strip():
-                    tag = tag_input.value.strip()
 
                 from app.clients import prefect as prefect_client
                 try:
