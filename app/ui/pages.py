@@ -190,5 +190,8 @@ def register_pages():
                 except Exception as e:
                     ui.notify(f"Prefect error: {e}", type="negative", position="top")
 
-            ui.button("Trigger Run", icon="play_arrow", on_click=submit).classes("bg-blue-700 text-white mt-2")
+            from app.config import settings
+            if not settings.prefect_api_url:
+                ui.label("⚠ PREFECT_API_URL is not configured. Set it in .env to enable triggering runs.").classes("text-orange-600 text-sm mb-2")
+            ui.button("Trigger Run", icon="play_arrow", on_click=submit).classes("bg-blue-700 text-white mt-2").props(f"{'disabled' if not settings.prefect_api_url else ''}")
             result_label
