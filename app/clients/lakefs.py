@@ -8,6 +8,41 @@ def _doip_url(qid: str) -> str:
     return f"{settings.doip_url.rstrip('/')}/doip/retrieve/{qid}"
 
 
+def _shard_qid(qid: str) -> str:
+    digits = qid.upper().lstrip("Q").zfill(6)
+    return f"{digits[0:2]}/{digits[2:4]}/{digits[4:6]}/{qid.upper()}"
+
+
+def _parse_run_fdo(qid: str, fdo: dict) -> dict:
+    profile    = fdo.get("profile",    {})
+    kernel     = fdo.get("kernel",     {})
+    provenance = fdo.get("provenance", {})
+
+    attribution = provenance.get("prov:wasAttributedTo", "")
+    docker_tag  = attribution.rsplit(":", 1)[-1] if ":" in attribution else ""
+
+    input_files, output_files = [], []
+    for comp in kernel.get("fdo:hasComponent", []):
+        comp_id = comp.get("@id", "")
+        if comp_id.startswith("components/input/"):
+            input_files.append(comp_id)
+        elif comp_id.startswith("components/output/"):
+            output_files.append(comp_id)
+
+    return {
+        "run_id":           qid,
+        "qid":              qid,
+        "model_name":       profile.get("name",     ""),
+        "docker_tag":       docker_tag,
+        "status":           "",
+        "run_timestamp":    kernel.get("modified",  ""),
+        "computation_time": "",
+        "input_files":      input_files,
+        "output_files":     output_files,
+        "doip_url":         _doip_url(qid),
+    }
+
+
 def _client() -> Client:
     return Client(
         host=settings.lakefs_url,
@@ -62,54 +97,26 @@ def list_processed_datasets() -> list[dict]:
 
 def list_model_runs() -> list[dict]:
     client = _client()
-    repo = lakefs.Repository(settings.lakefs_model_runs_repo, client=client)
+    repo   = lakefs.Repository(settings.lakefs_model_runs_repo, client=client)
     branch = repo.branch(settings.lakefs_branch)
 
-    metadata_objects = [
-        obj for obj in branch.objects(max_amount=1000)
-        if obj.path.endswith("/metadata.json")
-    ]
-
     runs = []
-    for obj in metadata_objects:
+    for obj in branch.objects(max_amount=1000):
+        if not obj.path.endswith(".fdo.json"):
+            continue
+        qid = obj.path.split("/")[-1].removesuffix(".fdo.json")
         content = branch.object(obj.path).reader().read()
-        metadata = json.loads(content)
-        run_id = obj.path.split("/")[0]
-        qid = metadata.get("qid", "")
-        runs.append({
-            "run_id": run_id,
-            "qid": qid,
-            "model_name": metadata.get("model_name", ""),
-            "docker_tag": metadata.get("docker_tag", ""),
-            "status": metadata.get("status", ""),
-            "run_timestamp": metadata.get("run_timestamp", ""),
-            "computation_time": metadata.get("computation_time", ""),
-            "input_files": metadata.get("input_files", []),
-            "output_files": metadata.get("output_files", []),
-            "doip_url": _doip_url(qid) if qid else "",
-        })
+        runs.append(_parse_run_fdo(qid, json.loads(content)))
     return runs
 
 
 def get_model_run(run_id: str) -> dict | None:
     client = _client()
-    repo = lakefs.Repository(settings.lakefs_model_runs_repo, client=client)
+    repo   = lakefs.Repository(settings.lakefs_model_runs_repo, client=client)
     branch = repo.branch(settings.lakefs_branch)
     try:
-        content = branch.object(f"{run_id}/metadata.json").reader().read()
-        metadata = json.loads(content)
-        qid = metadata.get("qid", "")
-        return {
-            "run_id": run_id,
-            "qid": qid,
-            "model_name": metadata.get("model_name", ""),
-            "docker_tag": metadata.get("docker_tag", ""),
-            "status": metadata.get("status", ""),
-            "run_timestamp": metadata.get("run_timestamp", ""),
-            "computation_time": metadata.get("computation_time", ""),
-            "input_files": metadata.get("input_files", []),
-            "output_files": metadata.get("output_files", []),
-            "doip_url": _doip_url(qid) if qid else "",
-        }
+        path    = f"{_shard_qid(run_id)}/{run_id.upper()}.fdo.json"
+        content = branch.object(path).reader().read()
+        return _parse_run_fdo(run_id, json.loads(content))
     except Exception:
         return None
