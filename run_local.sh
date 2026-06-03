@@ -34,8 +34,9 @@ else
 fi
 
 echo ""
-echo "Starting EPISERVE API server at http://localhost:8000"
-echo "Docs at http://localhost:8000/docs"
+PORT=${PORT:-8000}
+echo "Starting EPISERVE API server at http://localhost:${PORT}"
+echo "Docs at http://localhost:${PORT}/docs"
 echo ""
 
-PYTHONPATH=. uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+PYTHONPATH=. uvicorn app.main:app --host 0.0.0.0 --port "${PORT}" --reload

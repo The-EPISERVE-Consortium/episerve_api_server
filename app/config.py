@@ -25,5 +25,8 @@ class Settings:
     # DOIP server
     doip_url: str = os.environ.get("DOIP_URL", "https://doip.episerve.zib.de")
 
+    # Server
+    port: int = int(os.environ.get("PORT", "8000"))
+
 
 settings = Settings()
