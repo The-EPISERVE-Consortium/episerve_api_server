@@ -6,7 +6,6 @@ def _get(action: str, params: dict) -> dict:
     response = requests.get(
         f"{settings.ckan_url}/api/3/action/{action}",
         params=params,
-        headers={"Authorization": settings.ckan_api_token},
     )
     response.raise_for_status()
     body = response.json()
