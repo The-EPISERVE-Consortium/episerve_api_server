@@ -4,6 +4,10 @@ from lakefs import Client
 from app.config import settings
 
 
+def _doip_url(qid: str) -> str:
+    return f"{settings.doip_url.rstrip('/')}/doip/retrieve/{qid}"
+
+
 def _client() -> Client:
     return Client(
         host=settings.lakefs_url,
@@ -40,13 +44,15 @@ def list_processed_datasets() -> list[dict]:
     for obj in fdo_objects:
         content = branch.object(obj.path).reader().read()
         fdo = json.loads(content)
+        qid = fdo.get("@id", "")
         datasets.append({
-            "qid": fdo.get("@id", ""),
+            "qid": qid,
             "name": fdo.get("name", obj.path),
             "description": fdo.get("description", ""),
             "source_url": fdo.get("url", ""),
             "lakefs_path": f"lakefs://{settings.lakefs_processed_repo}/{settings.lakefs_branch}/{obj.path}",
             "last_modified": str(obj.mtime),
+            "doip_url": _doip_url(qid) if qid else "",
         })
     return datasets
 
@@ -66,8 +72,10 @@ def list_model_runs() -> list[dict]:
         content = branch.object(obj.path).reader().read()
         metadata = json.loads(content)
         run_id = obj.path.split("/")[0]
+        qid = metadata.get("qid", "")
         runs.append({
             "run_id": run_id,
+            "qid": qid,
             "model_name": metadata.get("model_name", ""),
             "docker_tag": metadata.get("docker_tag", ""),
             "status": metadata.get("status", ""),
@@ -75,6 +83,7 @@ def list_model_runs() -> list[dict]:
             "computation_time": metadata.get("computation_time", ""),
             "input_files": metadata.get("input_files", []),
             "output_files": metadata.get("output_files", []),
+            "doip_url": _doip_url(qid) if qid else "",
         })
     return runs
 
@@ -86,8 +95,10 @@ def get_model_run(run_id: str) -> dict | None:
     try:
         content = branch.object(f"{run_id}/metadata.json").reader().read()
         metadata = json.loads(content)
+        qid = metadata.get("qid", "")
         return {
             "run_id": run_id,
+            "qid": qid,
             "model_name": metadata.get("model_name", ""),
             "docker_tag": metadata.get("docker_tag", ""),
             "status": metadata.get("status", ""),
@@ -95,6 +106,7 @@ def get_model_run(run_id: str) -> dict | None:
             "computation_time": metadata.get("computation_time", ""),
             "input_files": metadata.get("input_files", []),
             "output_files": metadata.get("output_files", []),
+            "doip_url": _doip_url(qid) if qid else "",
         }
     except Exception:
         return None

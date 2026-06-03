@@ -22,5 +22,8 @@ class Settings:
         "PREFECT_MODEL_RUNNER_DEPLOYMENT", "model-runner/model-pipeline"
     )
 
+    # DOIP server
+    doip_url: str = os.environ.get("DOIP_URL", "https://doip.episerve.zib.de")
+
 
 settings = Settings()

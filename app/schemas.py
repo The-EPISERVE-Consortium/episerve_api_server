@@ -15,6 +15,7 @@ class ProcessedDataset(BaseModel):
     source_url: str
     lakefs_path: str
     last_modified: str
+    doip_url: str
 
 
 class Model(BaseModel):
@@ -39,6 +40,7 @@ class ModelRunResponse(BaseModel):
 
 class ModelRunStatus(BaseModel):
     run_id: str
+    qid: str
     model_name: str
     docker_tag: str
     status: str
@@ -46,3 +48,4 @@ class ModelRunStatus(BaseModel):
     computation_time: str
     input_files: list[str]
     output_files: list[str]
+    doip_url: str
