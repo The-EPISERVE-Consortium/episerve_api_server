@@ -19,7 +19,7 @@ class Settings:
     prefect_api_url: str = os.environ.get("PREFECT_API_URL", "")
     prefect_api_key: str = os.environ.get("PREFECT_API_KEY", "")
     prefect_model_runner_deployment: str = (
-        os.environ.get("PREFECT_MODEL_RUNNER_DEPLOYMENT") or "model-runner/model-pipeline"
+        os.environ.get("PREFECT_MODEL_RUNNER_DEPLOYMENT") or "model-pipeline/model-runner"
     )
 
     # DOIP server
