@@ -1,7 +1,7 @@
 fastapi>=0.115
 uvicorn[standard]>=0.30
 lakefs
-ckanapi
+requests
 httpx
 pydantic>=2.0
 pytest

@@ -1,17 +1,25 @@
-import ckanapi
+import requests
 from app.config import settings
 
 
-def _client() -> ckanapi.RemoteCKAN:
-    return ckanapi.RemoteCKAN(settings.ckan_url, apikey=settings.ckan_api_token)
+def _get(action: str, params: dict) -> dict:
+    response = requests.get(
+        f"{settings.ckan_url}/api/3/action/{action}",
+        params=params,
+        headers={"Authorization": settings.ckan_api_token},
+    )
+    response.raise_for_status()
+    body = response.json()
+    if not body.get("success"):
+        raise RuntimeError(f"CKAN {action} failed: {body.get('error')}")
+    return body["result"]
 
 
 def list_models() -> list[dict]:
-    """Return all CKAN datasets tagged as 'model'."""
-    ckan = _client()
-    results = ckan.action.package_search(fq="tags:model", rows=1000)
+    """Return all CKAN datasets in the type-model group."""
+    result = _get("package_search", {"fq": "groups:type-model", "rows": 1000})
     models = []
-    for pkg in results.get("results", []):
+    for pkg in result.get("results", []):
         extras = {e["key"]: e["value"] for e in pkg.get("extras", [])}
         models.append({
             "name": pkg.get("name", ""),
