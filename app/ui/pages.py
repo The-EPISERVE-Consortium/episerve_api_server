@@ -446,9 +446,11 @@ def register_pages():
                 filename_inputs.clear()
                 inputs_container.clear()
                 with inputs_container:
-                    for row in dataset_table.selected:
+                    for idx, row in enumerate(dataset_table.selected):
                         qid = row["qid"]
-                        default_name = row["data_path"].split("/")[-1] if row.get("data_path") else ""
+                        original_name = row["data_path"].split("/")[-1] if row.get("data_path") else ""
+                        suffix = "." + original_name.rsplit(".", 1)[-1] if "." in original_name else ""
+                        default_name = f"input{'' if idx == 0 else idx + 1}{suffix}"
                         sql_val = dataset_sql_inputs[qid].value.strip() if qid in dataset_sql_inputs else ""
                         with ui.column().classes("w-full gap-3 border border-gray-200 rounded p-3"):
                             ui.label(row["name"]).classes("text-xs text-gray-500 uppercase tracking-wide font-semibold")
