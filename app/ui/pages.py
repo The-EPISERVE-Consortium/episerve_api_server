@@ -5,7 +5,6 @@ import pandas as pd
 import duckdb
 from nicegui import ui, run
 
-from app.clients import lakefs as lakefs_client
 from app.clients import ckan as ckan_client
 from app.config import settings
 
@@ -44,7 +43,7 @@ def register_pages():
         with ui.column().classes("p-6 w-full"):
             ui.label("Raw Datasets").classes("text-xl font-semibold mb-4")
             try:
-                rows = lakefs_client.list_raw_objects()
+                rows = ckan_client.list_raw_datasets()
                 filter_input = ui.input(placeholder="Filter by path…").classes("w-64 mb-2")
                 table = ui.table(
                     columns=[
@@ -66,7 +65,7 @@ def register_pages():
         with ui.column().classes("p-6 w-full"):
             ui.label("Datasets").classes("text-xl font-semibold mb-4")
             try:
-                rows = lakefs_client.list_processed_datasets()
+                rows = ckan_client.list_processed_datasets()
                 filter_input = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
                 selected_label = ui.label("No row selected.").classes("text-sm text-gray-500 mt-3")
                 table = ui.table(
@@ -192,7 +191,7 @@ def register_pages():
         with ui.column().classes("p-6 w-full"):
             ui.label("Model Runs").classes("text-xl font-semibold mb-4")
             try:
-                rows = lakefs_client.list_model_runs()
+                rows = ckan_client.list_model_runs()
                 filter_input = ui.input(placeholder="Filter by model…").classes("w-64 mb-2")
                 table = ui.table(
                     columns=[
@@ -238,7 +237,7 @@ def register_pages():
             # ── Step 1: Input Datasets ──────────────────────────────────
             card1, dataset_status = _step_card(1, "Input Datasets", "Select one or more datasets")
             try:
-                dataset_rows = lakefs_client.list_processed_datasets()
+                dataset_rows = ckan_client.list_processed_datasets()
                 dataset_filter = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
                 dataset_table = ui.table(
                     columns=[
@@ -456,7 +455,7 @@ def register_pages():
                             ui.label(row["name"]).classes("text-xs text-gray-500 uppercase tracking-wide font-semibold")
                             with ui.column().classes("gap-0"):
                                 ui.label("Original filename").classes("text-xs text-gray-400")
-                                ui.label(default_name).classes("text-sm font-mono text-gray-700")
+                                ui.label(original_name).classes("text-sm font-mono text-gray-700")
                             with ui.column().classes("gap-0 w-full"):
                                 ui.label("New filename").classes("text-xs text-gray-400")
                                 ui.label("(filename the model-runner will see)").style("font-size: 0.65rem").classes("text-red-400 -mt-1")

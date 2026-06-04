@@ -1,6 +1,6 @@
 import json
 from fastapi import APIRouter, HTTPException
-from app.clients import lakefs as lakefs_client
+from app.clients import ckan as ckan_client
 from app.clients import prefect as prefect_client
 from app.schemas import ModelRunRequest, ModelRunResponse, ModelRunStatus
 
@@ -29,17 +29,18 @@ def start_model_run(request: ModelRunRequest):
 @router.get("", response_model=list[ModelRunStatus])
 def list_model_runs():
     try:
-        return lakefs_client.list_model_runs()
+        return ckan_client.list_model_runs()
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"lakeFS error: {e}")
+        raise HTTPException(status_code=502, detail=f"CKAN error: {e}")
 
 
 @router.get("/{run_id}", response_model=ModelRunStatus)
 def get_model_run(run_id: str):
     try:
-        run = lakefs_client.get_model_run(run_id)
+        runs = ckan_client.list_model_runs()
+        run = next((r for r in runs if r["qid"].upper() == run_id.upper()), None)
     except Exception as e:
-        raise HTTPException(status_code=502, detail=f"lakeFS error: {e}")
+        raise HTTPException(status_code=502, detail=f"CKAN error: {e}")
     if run is None:
         raise HTTPException(status_code=404, detail=f"Model run '{run_id}' not found")
     return run
