@@ -20,7 +20,7 @@ def _deployment_id(deployment_name: str) -> str:
 
 
 def trigger_model_run(
-    input_path: str,
+    input_data_files: list,
     model_image: str,
     config_json: str,
     model_tag: str = "latest",
@@ -30,7 +30,7 @@ def trigger_model_run(
     url = f"{settings.prefect_api_url}/deployments/{deployment_id}/create_flow_run"
     payload = {
         "parameters": {
-            "input_path": input_path,
+            "input_data_files": input_data_files,
             "model_image": model_image,
             "model_tag": model_tag,
             "config_json": config_json,

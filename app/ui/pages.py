@@ -234,7 +234,7 @@ def register_pages():
                     ],
                     rows=dataset_rows,
                     row_key="qid",
-                    selection="single",
+                    selection="multiple",
                     pagination={"rowsPerPage": 5},
                 ).classes("w-full mb-4")
                 dataset_filter.bind_value(dataset_table, "filter")
@@ -296,13 +296,15 @@ def register_pages():
             result_label = ui.label("").classes("text-sm text-gray-500")
 
             # Pre-flight dialog
+            filename_inputs = []  # list of (data_path, ui.input) populated on open
+
             with ui.dialog() as preflight_dialog:
-                with ui.card().classes("min-w-96 p-6"):
+                with ui.card().classes("min-w-[32rem] p-6"):
                     ui.label("Pre-flight Check").classes("text-lg font-semibold mb-4")
                     with ui.column().classes("gap-3 w-full"):
-                        with ui.column().classes("gap-0"):
-                            ui.label("Dataset").classes("text-xs text-gray-500 uppercase tracking-wide")
-                            dataset_summary = ui.label("").classes("text-sm text-gray-800")
+                        with ui.column().classes("gap-1"):
+                            ui.label("Input Datasets").classes("text-xs text-gray-500 uppercase tracking-wide")
+                            inputs_container = ui.column().classes("w-full gap-2")
                         with ui.column().classes("gap-0"):
                             ui.label("Model").classes("text-xs text-gray-500 uppercase tracking-wide")
                             model_summary = ui.label("").classes("text-sm text-gray-800")
@@ -312,23 +314,25 @@ def register_pages():
                         with ui.column().classes("gap-0"):
                             ui.label("Config").classes("text-xs text-gray-500 uppercase tracking-wide")
                             config_summary = ui.label("").classes("text-sm text-gray-800 font-mono whitespace-pre-wrap")
-                    with ui.row().classes("mt-6 gap-2 justify-end w-full"):
+                    with ui.expansion("Prefect Payload").classes("w-full mt-4 text-xs text-gray-500"):
+                        payload_label = ui.label("").classes("font-mono text-xs whitespace-pre-wrap text-gray-700")
+                    with ui.row().classes("mt-4 gap-2 justify-end w-full"):
                         ui.button("Cancel", on_click=preflight_dialog.close).classes("text-gray-600")
                         confirm_btn = ui.button("Trigger Run", icon="play_arrow").classes("bg-blue-700 text-white").props(f"{'disabled' if not settings.prefect_api_url else ''}")
 
             def do_submit():
                 preflight_dialog.close()
-                dataset = dataset_table.selected[0]
-                m       = model_table.selected[0]
+                m = model_table.selected[0]
                 try:
                     config = json.loads(config_input.value)
                 except json.JSONDecodeError as e:
                     ui.notify(f"Invalid JSON: {e}", type="negative", position="top")
                     return
+                input_data_files = [[data_path, inp.value.strip()] for data_path, inp in filename_inputs]
                 from app.clients import prefect as prefect_client
                 try:
                     result = prefect_client.trigger_model_run(
-                        input_path=dataset["data_path"],
+                        input_data_files=input_data_files,
                         model_image=m["docker_image"],
                         model_tag=m["docker_tag"],
                         config_json=json.dumps(config),
@@ -342,7 +346,7 @@ def register_pages():
 
             def open_preflight():
                 if not dataset_table or not dataset_table.selected:
-                    ui.notify("Select an input dataset", type="warning", position="top")
+                    ui.notify("Select at least one input dataset", type="warning", position="top")
                     return
                 if not model_table or not model_table.selected:
                     ui.notify("Select a model", type="warning", position="top")
@@ -352,10 +356,33 @@ def register_pages():
                 except json.JSONDecodeError as e:
                     ui.notify(f"Invalid JSON: {e}", type="negative", position="top")
                     return
-                dataset_summary.set_text(dataset_table.selected[0]["name"])
-                model_summary.set_text(f"{model_table.selected[0]['name']} ({model_table.selected[0]['docker_tag']})")
+                m = model_table.selected[0]
+
+                def update_payload():
+                    payload = {
+                        "parameters": {
+                            "input_data_files": [[dp, inp.value.strip()] for dp, inp in filename_inputs],
+                            "model_image": m["docker_image"],
+                            "model_tag":   m["docker_tag"],
+                            "config_json": config_input.value.strip(),
+                        }
+                    }
+                    payload_label.set_text(json.dumps(payload, indent=2))
+
+                filename_inputs.clear()
+                inputs_container.clear()
+                with inputs_container:
+                    for row in dataset_table.selected:
+                        default_name = row["data_path"].split("/")[-1] if row.get("data_path") else ""
+                        with ui.row().classes("items-center gap-2 w-full"):
+                            ui.label(row["name"]).classes("text-sm text-gray-600 w-40 truncate shrink-0")
+                            inp = ui.input(value=default_name, on_change=update_payload).classes("flex-1 font-mono text-sm")
+                        filename_inputs.append((row["data_path"], inp))
+
+                model_summary.set_text(f"{m['name']} ({m['docker_tag']})")
                 transformation_summary.set_text(sql_query_input.value.strip() or "— none —")
                 config_summary.set_text(config_input.value.strip())
+                update_payload()
                 preflight_dialog.open()
 
             if not settings.prefect_api_url:
