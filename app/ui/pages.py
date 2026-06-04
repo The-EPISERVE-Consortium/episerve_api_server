@@ -328,7 +328,7 @@ def register_pages():
                 from app.clients import prefect as prefect_client
                 try:
                     result = prefect_client.trigger_model_run(
-                        input_path=dataset["lakefs_path"],
+                        input_path=dataset["data_path"],
                         model_image=m["docker_image"],
                         model_tag=m["docker_tag"],
                         config_json=json.dumps(config),

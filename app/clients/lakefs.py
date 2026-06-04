@@ -87,17 +87,25 @@ def list_processed_datasets() -> list[dict]:
         fdo = json.loads(content)
         qid = fdo.get("@id", "")
         profile = fdo.get("profile", {})
+        fdo_dir = obj.path.rsplit("/", 1)[0]
+        base    = f"lakefs://{settings.lakefs_processed_repo}/{settings.lakefs_branch}/{fdo_dir}"
         components = [
-            {"name": c["componentId"], "url": _doip_component_url(qid, c["componentId"])}
+            {
+                "name": c["componentId"],
+                "url": _doip_component_url(qid, c["componentId"]),
+                "lakefs_path": f"{base}/{c['@id']}",
+            }
             for c in fdo.get("kernel", {}).get("fdo:hasComponent", [])
-            if c.get("componentId")
+            if c.get("componentId") and c.get("@id")
         ]
+        data_path = components[0]["lakefs_path"] if components else ""
         datasets.append({
             "qid": qid,
             "name": profile.get("name", ""),
             "description": profile.get("description", ""),
             "source_url": profile.get("url", ""),
             "lakefs_path": f"lakefs://{settings.lakefs_processed_repo}/{settings.lakefs_branch}/{obj.path}",
+            "data_path": data_path,
             "last_modified": str(obj.mtime),
             "doip_url": _doip_url(qid) if qid else "",
             "components": components,
