@@ -213,16 +213,30 @@ def register_pages():
     @ui.page("/ui/trigger")
     def trigger():
         _header("/ui/trigger")
-        with ui.column().classes("p-6 w-full"):
+
+        def _step_card(n: int, title: str, status_text: str, status_done: bool = False):
+            """Returns (card context, status_label). Use as: with _step_card(...) as (card, lbl):"""
+            card = ui.card().classes("w-full p-5")
+            card.__enter__()
+            with ui.row().classes("items-center gap-3 mb-4"):
+                ui.label(str(n)).classes(
+                    "bg-blue-700 text-white rounded-full w-7 h-7 flex items-center "
+                    "justify-center text-sm font-bold shrink-0"
+                )
+                ui.label(title).classes("text-base font-semibold text-gray-800")
+                lbl = ui.label(status_text).classes(
+                    "text-sm ml-auto " + ("text-green-600" if status_done else "text-gray-400")
+                )
+            return card, lbl
+
+        with ui.column().classes("p-6 w-full gap-4"):
             ui.label("Run a forecast model").classes("text-xl font-semibold")
             ui.label(
-                "Select a processed dataset and a registered model, adjust the configuration if needed, "
-                "and submit a new model run. The run will be executed on the cluster and results will "
-                "appear in the Model Runs page once complete."
-            ).classes("text-sm text-gray-500 mb-4")
+                "Complete each step below, then click Pre-flight Check to review and submit."
+            ).classes("text-sm text-gray-500")
 
-            # Dataset selection table
-            ui.label("Input dataset").classes("text-sm font-medium text-gray-700 mb-1")
+            # ── Step 1: Input Datasets ──────────────────────────────────
+            card1, dataset_status = _step_card(1, "Input Datasets", "Select one or more datasets")
             try:
                 dataset_rows = lakefs_client.list_processed_datasets()
                 dataset_filter = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
@@ -236,41 +250,53 @@ def register_pages():
                     row_key="qid",
                     selection="multiple",
                     pagination={"rowsPerPage": 5},
-                ).classes("w-full mb-4")
+                ).classes("w-full")
                 dataset_filter.bind_value(dataset_table, "filter")
             except Exception as e:
                 _error_label(f"Could not load datasets: {e}")
                 dataset_table = None
+            card1.__exit__(None, None, None)
 
-            # Model selection table
-            ui.label("Model").classes("text-sm font-medium text-gray-700 mb-1")
+            # ── Step 2: Model ───────────────────────────────────────────
+            card2, model_status = _step_card(2, "Model", "Select a model")
             try:
                 model_rows = ckan_client.list_models()
                 model_filter = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
                 model_table = ui.table(
                     columns=[
-                        {"name": "name",         "label": "Name",        "field": "name",         "align": "left", "sortable": True},
-                        {"name": "docker_tag",   "label": "Tag",         "field": "docker_tag",   "align": "left", "sortable": True},
-                        {"name": "description",  "label": "Description", "field": "description",  "align": "left"},
+                        {"name": "name",        "label": "Name",        "field": "name",        "align": "left", "sortable": True},
+                        {"name": "docker_tag",  "label": "Tag",         "field": "docker_tag",  "align": "left", "sortable": True},
+                        {"name": "description", "label": "Description", "field": "description", "align": "left"},
                     ],
                     rows=model_rows,
                     row_key="name",
                     selection="single",
                     pagination={"rowsPerPage": 5},
-                ).classes("w-full mb-4")
+                ).classes("w-full")
                 model_filter.bind_value(model_table, "filter")
+
+                def on_model_selection(e):
+                    if model_table.selected:
+                        m = model_table.selected[0]
+                        model_status.set_text(f"✓ {m['name']} ({m['docker_tag']})")
+                        model_status.classes(remove="text-gray-400", add="text-green-600")
+                    else:
+                        model_status.set_text("Select a model")
+                        model_status.classes(remove="text-green-600", add="text-gray-400")
+
+                model_table.on("selection", on_model_selection)
             except Exception as e:
                 _error_label(f"Could not load models: {e}")
                 model_table = None
+            card2.__exit__(None, None, None)
 
-            # Per-dataset SQL transformation inputs
-            ui.label("Dataset Transformation").classes("text-sm font-medium text-gray-700 mb-1")
+            # ── Step 3: Dataset Transformation ──────────────────────────
+            card3, sql_status = _step_card(3, "Dataset Transformation", "Optional")
             ui.label(
-                "You can specify a SQL query per selected dataset that is applied before it is "
-                "copied to the model-runner and used for the model."
-            ).classes("text-sm text-gray-500 mb-2")
-            dataset_sql_inputs = {}  # qid -> ui.textarea
-            sql_container = ui.column().classes("w-full gap-3 mb-4")
+                "SQL applied to each selected dataset before it is passed to the model-runner."
+            ).classes("text-sm text-gray-500 mb-3")
+            dataset_sql_inputs = {}
+            sql_container = ui.column().classes("w-full gap-4")
 
             def _make_verify(inp):
                 def verify():
@@ -290,7 +316,6 @@ def register_pages():
             def rebuild_sql_inputs(e):
                 selected = dataset_table.selected if dataset_table else []
                 current_qids = {row["qid"] for row in selected}
-                # remove inputs for deselected rows
                 for qid in list(dataset_sql_inputs):
                     if qid not in current_qids:
                         del dataset_sql_inputs[qid]
@@ -298,9 +323,9 @@ def register_pages():
                 with sql_container:
                     for row in selected:
                         qid = row["qid"]
-                        existing_val = dataset_sql_inputs.get(qid, {})
-                        prev = existing_val.value if hasattr(existing_val, "value") else ""
-                        with ui.column().classes("w-full gap-1"):
+                        existing = dataset_sql_inputs.get(qid)
+                        prev = existing.value if existing else ""
+                        with ui.column().classes("w-full gap-1 border-l-2 border-blue-200 pl-3"):
                             ui.label(row["name"]).classes("text-sm font-medium text-gray-700")
                             with ui.row().classes("w-full items-end gap-2"):
                                 inp = ui.textarea(
@@ -310,19 +335,38 @@ def register_pages():
                                 ).classes("flex-1 font-mono text-sm")
                                 ui.button("Verify", icon="check", on_click=_make_verify(inp)).classes("bg-gray-600 text-white shrink-0")
                         dataset_sql_inputs[qid] = inp
+                # update dataset status
+                n = len(selected)
+                if n:
+                    dataset_status.set_text(f"✓ {n} dataset(s) selected")
+                    dataset_status.classes(remove="text-gray-400", add="text-green-600")
+                else:
+                    dataset_status.set_text("Select one or more datasets")
+                    dataset_status.classes(remove="text-green-600", add="text-gray-400")
+                # update sql status
+                filled = sum(1 for inp in dataset_sql_inputs.values() if inp.value.strip())
+                if filled:
+                    sql_status.set_text(f"✓ {filled} transformation(s) defined")
+                    sql_status.classes(remove="text-gray-400", add="text-green-600")
+                else:
+                    sql_status.set_text("Optional")
+                    sql_status.classes(remove="text-green-600", add="text-gray-400")
 
             if dataset_table:
                 dataset_table.on("selection", rebuild_sql_inputs)
+            card3.__exit__(None, None, None)
 
+            # ── Step 4: Config ──────────────────────────────────────────
+            card4, _ = _step_card(4, "Config (JSON)", "")
             config_input = ui.textarea(
-                label="Config (JSON)",
                 value='{"horizon_weeks": 4, "n_reference_weeks": 4}',
             ).classes("w-full max-w-xl font-mono")
+            card4.__exit__(None, None, None)
 
             result_label = ui.label("").classes("text-sm text-gray-500")
 
-            # Pre-flight dialog
-            filename_inputs = []  # list of (data_path, ui.input) populated on open
+            # ── Pre-flight dialog ───────────────────────────────────────
+            filename_inputs = []
 
             with ui.dialog() as preflight_dialog:
                 with ui.card().classes("min-w-[32rem] p-6"):
@@ -354,7 +398,7 @@ def register_pages():
                 except json.JSONDecodeError as e:
                     ui.notify(f"Invalid JSON: {e}", type="negative", position="top")
                     return
-                input_data_files       = [[data_path, inp.value.strip()] for data_path, inp, _ in filename_inputs]
+                input_data_files        = [[dp, inp.value.strip()] for dp, inp, _ in filename_inputs]
                 data_transformation_sql = [sql_inp.value.strip() for _, _, sql_inp in filename_inputs]
                 from app.clients import prefect as prefect_client
                 try:
