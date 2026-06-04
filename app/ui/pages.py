@@ -1,5 +1,8 @@
+import io
 import json
-from nicegui import ui
+import httpx
+import pandas as pd
+from nicegui import ui, run
 
 from app.clients import lakefs as lakefs_client
 from app.clients import ckan as ckan_client
@@ -106,10 +109,42 @@ def register_pages():
                 table.add_slot('body-cell-doip_url', r'<q-td :props="props"><a :href="props.row.doip_url" target="_blank" class="text-blue-600 hover:underline">Show Metadata</a></q-td>')
                 table.add_slot('body-cell-components', r'<q-td :props="props"><span v-for="c in props.row.components" :key="c.name"><a :href="c.url" target="_blank" class="text-blue-600 hover:underline block">{{ c.name }}</a></span></q-td>')
                 filter_input.bind_value(table, "filter")
-                table.on("selection", lambda e: selected_label.set_text(
-                    f"Selected: {e.args['rows'][0]['name']} ({e.args['rows'][0]['qid']})"
-                    if e.args.get("rows") else "No row selected."
-                ))
+
+                data_container = ui.column().classes("w-full mt-6")
+
+                async def on_selection(e):
+                    selected_rows = e.args.get("rows", [])
+                    data_container.clear()
+                    if not selected_rows:
+                        selected_label.set_text("No row selected.")
+                        return
+                    row = selected_rows[0]
+                    selected_label.set_text(f"Selected: {row['name']} ({row['qid']})")
+                    components = row.get("components", [])
+                    if not components:
+                        with data_container:
+                            ui.label("No downloadable components for this dataset.").classes("text-sm text-gray-500")
+                        return
+                    component = components[0]
+                    with data_container:
+                        spinner = ui.spinner(size="lg")
+                    try:
+                        async with httpx.AsyncClient() as client:
+                            response = await client.get(component["url"])
+                            response.raise_for_status()
+                        df = await run.io_bound(pd.read_parquet, io.BytesIO(response.content))
+                        data_container.clear()
+                        with data_container:
+                            ui.label(f"{component['name']} — {len(df):,} rows × {len(df.columns)} columns").classes("text-sm text-gray-500 mb-2")
+                            cols = [{"name": c, "label": c, "field": c, "align": "left", "sortable": True} for c in df.columns]
+                            preview_rows = df.head(500).astype(str).to_dict("records")
+                            ui.table(columns=cols, rows=preview_rows, row_key=df.columns[0], pagination={"rowsPerPage": 10}).classes("w-full")
+                    except Exception as ex:
+                        data_container.clear()
+                        with data_container:
+                            _error_label(f"Could not load component: {ex}")
+
+                table.on("selection", on_selection)
             except Exception as e:
                 _error_label(f"Could not load processed datasets: {e}")
 
