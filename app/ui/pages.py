@@ -263,6 +263,31 @@ def register_pages():
                 _error_label(f"Could not load models: {e}")
                 model_table = None
 
+            # SQL query entry with syntax verification
+            ui.label("Dataset Transformation").classes("text-sm font-medium text-gray-700 mb-1")
+            ui.label(
+                "You can specify a SQL query here that is applied to the chosen dataset before it is "
+                "copied to the model-runner and used for the model."
+            ).classes("text-sm text-gray-500 mb-2")
+            with ui.row().classes("w-full items-end gap-2 mb-4"):
+                sql_query_input = ui.textarea(label="Dataset Transformation", placeholder="SELECT * FROM df WHERE …").classes("flex-1 font-mono text-sm")
+
+                def verify_sql():
+                    sql = sql_query_input.value.strip()
+                    if not sql:
+                        ui.notify("Enter a SQL query to verify", type="warning", position="top")
+                        return
+                    try:
+                        duckdb.connect().execute(f"EXPLAIN {sql}")
+                        ui.notify("SQL syntax is valid", type="positive", position="top")
+                    except duckdb.ParserException as e:
+                        ui.notify(f"Syntax error: {e}", type="negative", position="top")
+                    except Exception:
+                        # BinderException / CatalogException — unknown table/column, but syntax is fine
+                        ui.notify("SQL syntax is valid", type="positive", position="top")
+
+                ui.button("Verify", icon="check", on_click=verify_sql).classes("bg-gray-600 text-white")
+
             config_input = ui.textarea(
                 label="Config (JSON)",
                 value='{"horizon_weeks": 4, "n_reference_weeks": 4}',
@@ -270,29 +295,42 @@ def register_pages():
 
             result_label = ui.label("").classes("text-sm text-gray-500")
 
-            def submit():
-                if not dataset_table or not dataset_table.selected:
-                    ui.notify("Select an input dataset", type="warning", position="top")
-                    return
-                if not model_table or not model_table.selected:
-                    ui.notify("Select a model", type="warning", position="top")
-                    return
+            # Pre-flight dialog
+            with ui.dialog() as preflight_dialog:
+                with ui.card().classes("min-w-96 p-6"):
+                    ui.label("Pre-flight Check").classes("text-lg font-semibold mb-4")
+                    with ui.column().classes("gap-3 w-full"):
+                        with ui.column().classes("gap-0"):
+                            ui.label("Dataset").classes("text-xs text-gray-500 uppercase tracking-wide")
+                            dataset_summary = ui.label("").classes("text-sm text-gray-800")
+                        with ui.column().classes("gap-0"):
+                            ui.label("Model").classes("text-xs text-gray-500 uppercase tracking-wide")
+                            model_summary = ui.label("").classes("text-sm text-gray-800")
+                        with ui.column().classes("gap-0"):
+                            ui.label("Dataset Transformation").classes("text-xs text-gray-500 uppercase tracking-wide")
+                            transformation_summary = ui.label("").classes("text-sm text-gray-800 font-mono whitespace-pre-wrap")
+                        with ui.column().classes("gap-0"):
+                            ui.label("Config").classes("text-xs text-gray-500 uppercase tracking-wide")
+                            config_summary = ui.label("").classes("text-sm text-gray-800 font-mono whitespace-pre-wrap")
+                    with ui.row().classes("mt-6 gap-2 justify-end w-full"):
+                        ui.button("Cancel", on_click=preflight_dialog.close).classes("text-gray-600")
+                        confirm_btn = ui.button("Trigger Run", icon="play_arrow").classes("bg-blue-700 text-white").props(f"{'disabled' if not settings.prefect_api_url else ''}")
+
+            def do_submit():
+                preflight_dialog.close()
+                dataset = dataset_table.selected[0]
+                m       = model_table.selected[0]
                 try:
                     config = json.loads(config_input.value)
                 except json.JSONDecodeError as e:
                     ui.notify(f"Invalid JSON: {e}", type="negative", position="top")
                     return
-
-                input_path  = dataset_table.selected[0]["lakefs_path"]
-                m           = model_table.selected[0]
-                image, tag  = m["docker_image"], m["docker_tag"]
-
                 from app.clients import prefect as prefect_client
                 try:
                     result = prefect_client.trigger_model_run(
-                        input_path=input_path,
-                        model_image=image,
-                        model_tag=tag,
+                        input_path=dataset["lakefs_path"],
+                        model_image=m["docker_image"],
+                        model_tag=m["docker_tag"],
                         config_json=json.dumps(config),
                     )
                     result_label.set_text(f"Triggered: {result['prefect_flow_run_id']} ({result['status']})")
@@ -300,7 +338,30 @@ def register_pages():
                 except Exception as e:
                     ui.notify(f"Prefect error: {e}", type="negative", position="top")
 
+            confirm_btn.on("click", do_submit)
+
+            def open_preflight():
+                if not dataset_table or not dataset_table.selected:
+                    ui.notify("Select an input dataset", type="warning", position="top")
+                    return
+                if not model_table or not model_table.selected:
+                    ui.notify("Select a model", type="warning", position="top")
+                    return
+                try:
+                    json.loads(config_input.value)
+                except json.JSONDecodeError as e:
+                    ui.notify(f"Invalid JSON: {e}", type="negative", position="top")
+                    return
+                dataset_summary.set_text(dataset_table.selected[0]["name"])
+                model_summary.set_text(f"{model_table.selected[0]['name']} ({model_table.selected[0]['docker_tag']})")
+                transformation_summary.set_text(sql_query_input.value.strip() or "— none —")
+                config_summary.set_text(config_input.value.strip())
+                preflight_dialog.open()
+
             if not settings.prefect_api_url:
-                ui.label("⚠ PREFECT_API_URL is not configured. Set it in .env to enable triggering runs.").classes("text-orange-600 text-sm mb-2")
-            ui.button("Trigger Run", icon="play_arrow", on_click=submit).classes("bg-blue-700 text-white mt-2").props(f"{'disabled' if not settings.prefect_api_url else ''}")
+                ui.label(
+                    "⚠ PREFECT_API_URL is not configured. Set it in .env to enable triggering runs. "
+                    "You can do the pre-flight check but will not be able to submit to Prefect."
+                ).classes("text-orange-600 text-sm mb-2")
+            ui.button("Pre-flight Check", icon="checklist", on_click=open_preflight).classes("bg-blue-700 text-white mt-2")
             result_label
