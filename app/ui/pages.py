@@ -369,19 +369,16 @@ def register_pages():
             filename_inputs = []
 
             with ui.dialog() as preflight_dialog:
-                with ui.card().classes("min-w-[32rem] p-6"):
+                with ui.card().classes("w-full min-w-[32rem] p-6"):
                     ui.label("Pre-flight Check").classes("text-lg font-semibold mb-4")
                     with ui.column().classes("gap-3 w-full"):
-                        with ui.column().classes("gap-1"):
-                            ui.label("Input Datasets").classes("text-xs text-gray-500 uppercase tracking-wide")
+                        with ui.column().classes("gap-1 border border-gray-200 rounded p-3 w-full"):
+                            ui.label("Input Datasets").classes("text-xs text-gray-500 uppercase tracking-wide mb-1")
                             inputs_container = ui.column().classes("w-full gap-2")
-                        with ui.column().classes("gap-0"):
+                        with ui.column().classes("gap-1 border border-gray-200 rounded p-3 w-full"):
                             ui.label("Model").classes("text-xs text-gray-500 uppercase tracking-wide")
                             model_summary = ui.label("").classes("text-sm text-gray-800")
-                        with ui.column().classes("gap-0"):
-                            ui.label("Dataset Transformation").classes("text-xs text-gray-500 uppercase tracking-wide")
-                            transformation_summary = ui.label("").classes("text-sm text-gray-800 font-mono whitespace-pre-wrap")
-                        with ui.column().classes("gap-0"):
+                        with ui.column().classes("gap-1 border border-gray-200 rounded p-3 w-full"):
                             ui.label("Config").classes("text-xs text-gray-500 uppercase tracking-wide")
                             config_summary = ui.label("").classes("text-sm text-gray-800 font-mono whitespace-pre-wrap")
                     with ui.expansion("Prefect Payload").classes("w-full mt-4 text-xs text-gray-500"):
@@ -391,15 +388,19 @@ def register_pages():
                         confirm_btn = ui.button("Trigger Run", icon="play_arrow").classes("bg-blue-700 text-white").props(f"{'disabled' if not settings.prefect_api_url else ''}")
 
             def do_submit():
-                preflight_dialog.close()
                 m = model_table.selected[0]
                 try:
                     config = json.loads(config_input.value)
                 except json.JSONDecodeError as e:
                     ui.notify(f"Invalid JSON: {e}", type="negative", position="top")
                     return
+                filenames = [inp.value.strip() for _, inp, _sql in filename_inputs]
+                if len(filenames) != len(set(filenames)):
+                    ui.notify("All target filenames must be unique", type="negative", position="top")
+                    return
+                preflight_dialog.close()
                 input_data_files        = [[dp, inp.value.strip()] for dp, inp, _ in filename_inputs]
-                data_transformation_sql = [sql_inp.value.strip() for _, _, sql_inp in filename_inputs]
+                data_transformation_sql = [sql for _, _, sql in filename_inputs]
                 from app.clients import prefect as prefect_client
                 try:
                     result = prefect_client.trigger_model_run(
@@ -437,7 +438,7 @@ def register_pages():
                             "model_image":             m["docker_image"],
                             "model_tag":               m["docker_tag"],
                             "config_json":             config_input.value.strip(),
-                            "data_transformation_sql": [sql_inp.value.strip() for _, _, sql_inp in filename_inputs],
+                            "data_transformation_sql": [sql for _, _, sql in filename_inputs],
                         }
                     }
                     payload_label.set_text(json.dumps(payload, indent=2))
@@ -449,16 +450,22 @@ def register_pages():
                         qid = row["qid"]
                         default_name = row["data_path"].split("/")[-1] if row.get("data_path") else ""
                         sql_val = dataset_sql_inputs[qid].value.strip() if qid in dataset_sql_inputs else ""
-                        with ui.column().classes("w-full gap-1 border-b border-gray-100 pb-2"):
-                            with ui.row().classes("items-center gap-2 w-full"):
-                                ui.label(row["name"]).classes("text-sm text-gray-600 w-40 truncate shrink-0")
-                                inp = ui.input(value=default_name, on_change=update_payload).classes("flex-1 font-mono text-sm")
-                            sql_inp = ui.input(label="SQL transformation", value=sql_val, on_change=update_payload).classes("w-full font-mono text-sm")
-                        filename_inputs.append((row["data_path"], inp, sql_inp))
+                        with ui.column().classes("w-full gap-3 border border-gray-200 rounded p-3"):
+                            ui.label(row["name"]).classes("text-xs text-gray-500 uppercase tracking-wide font-semibold")
+                            with ui.column().classes("gap-0"):
+                                ui.label("Original filename").classes("text-xs text-gray-400")
+                                ui.label(default_name).classes("text-sm font-mono text-gray-700")
+                            with ui.column().classes("gap-0 w-full"):
+                                ui.label("New filename").classes("text-xs text-gray-400")
+                                ui.label("(filename the model-runner will see)").style("font-size: 0.65rem").classes("text-red-400 -mt-1")
+                                with ui.element("div").classes("w-full"):
+                                    inp = ui.input(value=default_name, on_change=update_payload).classes("w-full font-mono text-sm").style("background-color: #f0fdf4")
+                            with ui.column().classes("gap-0"):
+                                ui.label("Transform (SQL)").classes("text-xs text-gray-400")
+                                ui.label(sql_val or "— none —").classes("text-sm font-mono text-gray-600")
+                        filename_inputs.append((row["data_path"], inp, sql_val))
 
-                sqls = [dataset_sql_inputs[r["qid"]].value.strip() for r in dataset_table.selected if r["qid"] in dataset_sql_inputs]
                 model_summary.set_text(f"{m['name']} ({m['docker_tag']})")
-                transformation_summary.set_text(", ".join(s for s in sqls if s) or "— none —")
                 config_summary.set_text(config_input.value.strip())
                 update_payload()
                 preflight_dialog.open()
