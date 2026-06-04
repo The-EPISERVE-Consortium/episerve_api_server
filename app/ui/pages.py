@@ -263,30 +263,56 @@ def register_pages():
                 _error_label(f"Could not load models: {e}")
                 model_table = None
 
-            # SQL query entry with syntax verification
+            # Per-dataset SQL transformation inputs
             ui.label("Dataset Transformation").classes("text-sm font-medium text-gray-700 mb-1")
             ui.label(
-                "You can specify a SQL query here that is applied to the chosen dataset before it is "
+                "You can specify a SQL query per selected dataset that is applied before it is "
                 "copied to the model-runner and used for the model."
             ).classes("text-sm text-gray-500 mb-2")
-            with ui.row().classes("w-full items-end gap-2 mb-4"):
-                sql_query_input = ui.textarea(label="Dataset Transformation", placeholder="SELECT * FROM df WHERE …").classes("flex-1 font-mono text-sm")
+            dataset_sql_inputs = {}  # qid -> ui.textarea
+            sql_container = ui.column().classes("w-full gap-3 mb-4")
 
-                def verify_sql():
-                    sql = sql_query_input.value.strip()
+            def _make_verify(inp):
+                def verify():
+                    sql = inp.value.strip()
                     if not sql:
                         ui.notify("Enter a SQL query to verify", type="warning", position="top")
                         return
                     try:
                         duckdb.connect().execute(f"EXPLAIN {sql}")
                         ui.notify("SQL syntax is valid", type="positive", position="top")
-                    except duckdb.ParserException as e:
-                        ui.notify(f"Syntax error: {e}", type="negative", position="top")
+                    except duckdb.ParserException as ex:
+                        ui.notify(f"Syntax error: {ex}", type="negative", position="top")
                     except Exception:
-                        # BinderException / CatalogException — unknown table/column, but syntax is fine
                         ui.notify("SQL syntax is valid", type="positive", position="top")
+                return verify
 
-                ui.button("Verify", icon="check", on_click=verify_sql).classes("bg-gray-600 text-white")
+            def rebuild_sql_inputs(e):
+                selected = dataset_table.selected if dataset_table else []
+                current_qids = {row["qid"] for row in selected}
+                # remove inputs for deselected rows
+                for qid in list(dataset_sql_inputs):
+                    if qid not in current_qids:
+                        del dataset_sql_inputs[qid]
+                sql_container.clear()
+                with sql_container:
+                    for row in selected:
+                        qid = row["qid"]
+                        existing_val = dataset_sql_inputs.get(qid, {})
+                        prev = existing_val.value if hasattr(existing_val, "value") else ""
+                        with ui.column().classes("w-full gap-1"):
+                            ui.label(row["name"]).classes("text-sm font-medium text-gray-700")
+                            with ui.row().classes("w-full items-end gap-2"):
+                                inp = ui.textarea(
+                                    label="SQL transformation",
+                                    value=prev,
+                                    placeholder="SELECT * FROM df WHERE …",
+                                ).classes("flex-1 font-mono text-sm")
+                                ui.button("Verify", icon="check", on_click=_make_verify(inp)).classes("bg-gray-600 text-white shrink-0")
+                        dataset_sql_inputs[qid] = inp
+
+            if dataset_table:
+                dataset_table.on("selection", rebuild_sql_inputs)
 
             config_input = ui.textarea(
                 label="Config (JSON)",
@@ -363,30 +389,32 @@ def register_pages():
                 def update_payload():
                     payload = {
                         "parameters": {
-                            "input_data_files":       [[dp, inp.value.strip()] for dp, inp, _ in filename_inputs],
-                            "model_image":            m["docker_image"],
-                            "model_tag":              m["docker_tag"],
-                            "config_json":            config_input.value.strip(),
+                            "input_data_files":        [[dp, inp.value.strip()] for dp, inp, _ in filename_inputs],
+                            "model_image":             m["docker_image"],
+                            "model_tag":               m["docker_tag"],
+                            "config_json":             config_input.value.strip(),
                             "data_transformation_sql": [sql_inp.value.strip() for _, _, sql_inp in filename_inputs],
                         }
                     }
                     payload_label.set_text(json.dumps(payload, indent=2))
 
-                default_sql = sql_query_input.value.strip()
                 filename_inputs.clear()
                 inputs_container.clear()
                 with inputs_container:
                     for row in dataset_table.selected:
+                        qid = row["qid"]
                         default_name = row["data_path"].split("/")[-1] if row.get("data_path") else ""
+                        sql_val = dataset_sql_inputs[qid].value.strip() if qid in dataset_sql_inputs else ""
                         with ui.column().classes("w-full gap-1 border-b border-gray-100 pb-2"):
                             with ui.row().classes("items-center gap-2 w-full"):
                                 ui.label(row["name"]).classes("text-sm text-gray-600 w-40 truncate shrink-0")
                                 inp = ui.input(value=default_name, on_change=update_payload).classes("flex-1 font-mono text-sm")
-                            sql_inp = ui.input(label="SQL transformation", value=default_sql, on_change=update_payload).classes("w-full font-mono text-sm")
+                            sql_inp = ui.input(label="SQL transformation", value=sql_val, on_change=update_payload).classes("w-full font-mono text-sm")
                         filename_inputs.append((row["data_path"], inp, sql_inp))
 
+                sqls = [dataset_sql_inputs[r["qid"]].value.strip() for r in dataset_table.selected if r["qid"] in dataset_sql_inputs]
                 model_summary.set_text(f"{m['name']} ({m['docker_tag']})")
-                transformation_summary.set_text(default_sql or "— none —")
+                transformation_summary.set_text(", ".join(s for s in sqls if s) or "— none —")
                 config_summary.set_text(config_input.value.strip())
                 update_payload()
                 preflight_dialog.open()
