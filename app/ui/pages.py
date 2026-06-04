@@ -7,11 +7,12 @@ from app.config import settings
 
 
 NAV_ITEMS = [
-    ("Datasets – Raw",       "/ui/datasets/raw"),
-    ("Datasets – Processed", "/ui/datasets/processed"),
-    ("Models",               "/ui/models"),
-    ("Model Runs",           "/ui/model-runs"),
-    ("Trigger",              "/ui/trigger"),
+    ("Datasets – Raw",            "/ui/datasets/raw"),
+    ("Datasets – Processed",      "/ui/datasets/processed"),
+    ("Datasets – Processed (Lab)", "/ui/datasets/processed-lab"),
+    ("Models",                    "/ui/models"),
+    ("Model Runs",                "/ui/model-runs"),
+    ("Trigger",                   "/ui/trigger"),
 ]
 
 
@@ -41,7 +42,8 @@ def register_pages():
             ui.label("Raw Datasets").classes("text-xl font-semibold mb-4")
             try:
                 rows = lakefs_client.list_raw_objects()
-                ui.table(
+                filter_input = ui.input(placeholder="Filter by path…").classes("w-64 mb-2")
+                table = ui.table(
                     columns=[
                         {"name": "path",          "label": "Path",          "field": "path",          "align": "left",  "sortable": True},
                         {"name": "size_bytes",    "label": "Size (bytes)",  "field": "size_bytes",    "align": "right", "sortable": True},
@@ -49,7 +51,9 @@ def register_pages():
                     ],
                     rows=rows,
                     row_key="path",
+                    pagination={"rowsPerPage": 20},
                 ).classes("w-full")
+                filter_input.bind_value(table, "filter")
             except Exception as e:
                 _error_label(f"Could not load raw datasets: {e}")
 
@@ -60,16 +64,52 @@ def register_pages():
             ui.label("Processed Datasets").classes("text-xl font-semibold mb-4")
             try:
                 rows = lakefs_client.list_processed_datasets()
-                ui.table(
+                filter_input = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
+                table = ui.table(
                     columns=[
                         {"name": "name",          "label": "Name",          "field": "name",          "align": "left", "sortable": True},
                         {"name": "qid",           "label": "QID",           "field": "qid",           "align": "left", "sortable": True},
                         {"name": "description",   "label": "Description",   "field": "description",   "align": "left"},
-                        {"name": "doip_url",      "label": "DOIP",          "field": "doip_url",      "align": "left"},
+                        {"name": "doip_url",      "label": "Source",        "field": "doip_url",      "align": "left"},
                     ],
                     rows=rows,
                     row_key="qid",
+                    pagination={"rowsPerPage": 20},
                 ).classes("w-full")
+                table.add_slot('body-cell-doip_url', r'<q-td :props="props"><a :href="props.row.doip_url" target="_blank" class="text-blue-600 hover:underline">Show Metadata</a></q-td>')
+                filter_input.bind_value(table, "filter")
+            except Exception as e:
+                _error_label(f"Could not load processed datasets: {e}")
+
+    @ui.page("/ui/datasets/processed-lab")
+    def datasets_processed_lab():
+        _header("/ui/datasets/processed-lab")
+        with ui.column().classes("p-6 w-full"):
+            ui.label("Processed Datasets – Lab").classes("text-xl font-semibold mb-4")
+            try:
+                rows = lakefs_client.list_processed_datasets()
+                filter_input = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
+                selected_label = ui.label("No row selected.").classes("text-sm text-gray-500 mt-3")
+                table = ui.table(
+                    columns=[
+                        {"name": "name",        "label": "Name",        "field": "name",        "align": "left", "sortable": True},
+                        {"name": "qid",         "label": "QID",         "field": "qid",         "align": "left", "sortable": True},
+                        {"name": "description", "label": "Description", "field": "description", "align": "left"},
+                        {"name": "doip_url",    "label": "Metadata",    "field": "doip_url",    "align": "left"},
+                        {"name": "components",  "label": "Download",    "field": "components",  "align": "left"},
+                    ],
+                    rows=rows,
+                    row_key="qid",
+                    selection="single",
+                    pagination={"rowsPerPage": 5},
+                ).classes("w-full")
+                table.add_slot('body-cell-doip_url', r'<q-td :props="props"><a :href="props.row.doip_url" target="_blank" class="text-blue-600 hover:underline">Show Metadata</a></q-td>')
+                table.add_slot('body-cell-components', r'<q-td :props="props"><span v-for="c in props.row.components" :key="c.name"><a :href="c.url" target="_blank" class="text-blue-600 hover:underline block">{{ c.name }}</a></span></q-td>')
+                filter_input.bind_value(table, "filter")
+                table.on("selection", lambda e: selected_label.set_text(
+                    f"Selected: {e.args['rows'][0]['name']} ({e.args['rows'][0]['qid']})"
+                    if e.args.get("rows") else "No row selected."
+                ))
             except Exception as e:
                 _error_label(f"Could not load processed datasets: {e}")
 
@@ -80,7 +120,8 @@ def register_pages():
             ui.label("Models").classes("text-xl font-semibold mb-4")
             try:
                 rows = ckan_client.list_models()
-                ui.table(
+                filter_input = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
+                table = ui.table(
                     columns=[
                         {"name": "name",         "label": "Name",        "field": "name",         "align": "left", "sortable": True},
                         {"name": "docker_image", "label": "Image",       "field": "docker_image", "align": "left"},
@@ -89,7 +130,9 @@ def register_pages():
                     ],
                     rows=rows,
                     row_key="name",
+                    pagination={"rowsPerPage": 20},
                 ).classes("w-full")
+                filter_input.bind_value(table, "filter")
             except Exception as e:
                 _error_label(f"Could not load models: {e}")
 
@@ -100,7 +143,8 @@ def register_pages():
             ui.label("Model Runs").classes("text-xl font-semibold mb-4")
             try:
                 rows = lakefs_client.list_model_runs()
-                ui.table(
+                filter_input = ui.input(placeholder="Filter by model…").classes("w-64 mb-2")
+                table = ui.table(
                     columns=[
                         {"name": "qid",           "label": "QID",       "field": "qid",           "align": "left", "sortable": True},
                         {"name": "model_name",    "label": "Model",     "field": "model_name",    "align": "left", "sortable": True},
@@ -110,7 +154,9 @@ def register_pages():
                     ],
                     rows=rows,
                     row_key="qid",
+                    pagination={"rowsPerPage": 20},
                 ).classes("w-full")
+                filter_input.bind_value(table, "filter")
             except Exception as e:
                 _error_label(f"Could not load model runs: {e}")
 

@@ -8,6 +8,10 @@ def _doip_url(qid: str) -> str:
     return f"{settings.doip_url.rstrip('/')}/doip/retrieve/{qid}"
 
 
+def _doip_component_url(qid: str, component_id: str) -> str:
+    return f"{settings.doip_url.rstrip('/')}/doip/retrieve/{qid}/{component_id}"
+
+
 def _shard_qid(qid: str) -> str:
     digits = qid.upper().lstrip("Q").zfill(6)
     return f"{digits[0:2]}/{digits[2:4]}/{digits[4:6]}/{qid.upper()}"
@@ -83,6 +87,11 @@ def list_processed_datasets() -> list[dict]:
         fdo = json.loads(content)
         qid = fdo.get("@id", "")
         profile = fdo.get("profile", {})
+        components = [
+            {"name": c["componentId"], "url": _doip_component_url(qid, c["componentId"])}
+            for c in fdo.get("kernel", {}).get("fdo:hasComponent", [])
+            if c.get("componentId")
+        ]
         datasets.append({
             "qid": qid,
             "name": profile.get("name", ""),
@@ -91,6 +100,7 @@ def list_processed_datasets() -> list[dict]:
             "lakefs_path": f"lakefs://{settings.lakefs_processed_repo}/{settings.lakefs_branch}/{obj.path}",
             "last_modified": str(obj.mtime),
             "doip_url": _doip_url(qid) if qid else "",
+            "components": components,
         })
     return datasets
 
