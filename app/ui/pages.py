@@ -328,7 +328,8 @@ def register_pages():
                 except json.JSONDecodeError as e:
                     ui.notify(f"Invalid JSON: {e}", type="negative", position="top")
                     return
-                input_data_files = [[data_path, inp.value.strip()] for data_path, inp in filename_inputs]
+                input_data_files       = [[data_path, inp.value.strip()] for data_path, inp, _ in filename_inputs]
+                data_transformation_sql = [sql_inp.value.strip() for _, _, sql_inp in filename_inputs]
                 from app.clients import prefect as prefect_client
                 try:
                     result = prefect_client.trigger_model_run(
@@ -336,6 +337,7 @@ def register_pages():
                         model_image=m["docker_image"],
                         model_tag=m["docker_tag"],
                         config_json=json.dumps(config),
+                        data_transformation_sql=data_transformation_sql,
                     )
                     result_label.set_text(f"Triggered: {result['prefect_flow_run_id']} ({result['status']})")
                     ui.notify("Model run triggered", type="positive", position="top")
@@ -361,26 +363,30 @@ def register_pages():
                 def update_payload():
                     payload = {
                         "parameters": {
-                            "input_data_files": [[dp, inp.value.strip()] for dp, inp in filename_inputs],
-                            "model_image": m["docker_image"],
-                            "model_tag":   m["docker_tag"],
-                            "config_json": config_input.value.strip(),
+                            "input_data_files":       [[dp, inp.value.strip()] for dp, inp, _ in filename_inputs],
+                            "model_image":            m["docker_image"],
+                            "model_tag":              m["docker_tag"],
+                            "config_json":            config_input.value.strip(),
+                            "data_transformation_sql": [sql_inp.value.strip() for _, _, sql_inp in filename_inputs],
                         }
                     }
                     payload_label.set_text(json.dumps(payload, indent=2))
 
+                default_sql = sql_query_input.value.strip()
                 filename_inputs.clear()
                 inputs_container.clear()
                 with inputs_container:
                     for row in dataset_table.selected:
                         default_name = row["data_path"].split("/")[-1] if row.get("data_path") else ""
-                        with ui.row().classes("items-center gap-2 w-full"):
-                            ui.label(row["name"]).classes("text-sm text-gray-600 w-40 truncate shrink-0")
-                            inp = ui.input(value=default_name, on_change=update_payload).classes("flex-1 font-mono text-sm")
-                        filename_inputs.append((row["data_path"], inp))
+                        with ui.column().classes("w-full gap-1 border-b border-gray-100 pb-2"):
+                            with ui.row().classes("items-center gap-2 w-full"):
+                                ui.label(row["name"]).classes("text-sm text-gray-600 w-40 truncate shrink-0")
+                                inp = ui.input(value=default_name, on_change=update_payload).classes("flex-1 font-mono text-sm")
+                            sql_inp = ui.input(label="SQL transformation", value=default_sql, on_change=update_payload).classes("w-full font-mono text-sm")
+                        filename_inputs.append((row["data_path"], inp, sql_inp))
 
                 model_summary.set_text(f"{m['name']} ({m['docker_tag']})")
-                transformation_summary.set_text(sql_query_input.value.strip() or "— none —")
+                transformation_summary.set_text(default_sql or "— none —")
                 config_summary.set_text(config_input.value.strip())
                 update_payload()
                 preflight_dialog.open()

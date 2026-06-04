@@ -23,6 +23,7 @@ def trigger_model_run(
     input_data_files: list,
     model_image: str,
     config_json: str,
+    data_transformation_sql: list = None,
     model_tag: str = "latest",
 ) -> dict:
     """Create a Prefect flow run for the model-runner deployment."""
@@ -34,6 +35,7 @@ def trigger_model_run(
             "model_image": model_image,
             "model_tag": model_tag,
             "config_json": config_json,
+            "data_transformation_sql": data_transformation_sql,
         }
     }
     response = httpx.post(url, headers=_headers(), content=json.dumps(payload))
