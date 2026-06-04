@@ -2,6 +2,7 @@ import io
 import json
 import httpx
 import pandas as pd
+import duckdb
 from nicegui import ui, run
 
 from app.clients import lakefs as lakefs_client
@@ -11,8 +12,7 @@ from app.config import settings
 
 NAV_ITEMS = [
     ("Datasets – Raw",            "/ui/datasets/raw"),
-    ("Datasets – Processed",      "/ui/datasets/processed"),
-    ("Datasets – Processed (Lab)", "/ui/datasets/processed-lab"),
+    ("Datasets",                   "/ui/datasets/processed-lab"),
     ("Models",                    "/ui/models"),
     ("Model Runs",                "/ui/model-runs"),
     ("Trigger",                   "/ui/trigger"),
@@ -60,35 +60,11 @@ def register_pages():
             except Exception as e:
                 _error_label(f"Could not load raw datasets: {e}")
 
-    @ui.page("/ui/datasets/processed")
-    def datasets_processed():
-        _header("/ui/datasets/processed")
-        with ui.column().classes("p-6 w-full"):
-            ui.label("Processed Datasets").classes("text-xl font-semibold mb-4")
-            try:
-                rows = lakefs_client.list_processed_datasets()
-                filter_input = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
-                table = ui.table(
-                    columns=[
-                        {"name": "name",          "label": "Name",          "field": "name",          "align": "left", "sortable": True},
-                        {"name": "qid",           "label": "QID",           "field": "qid",           "align": "left", "sortable": True},
-                        {"name": "description",   "label": "Description",   "field": "description",   "align": "left"},
-                        {"name": "doip_url",      "label": "Source",        "field": "doip_url",      "align": "left"},
-                    ],
-                    rows=rows,
-                    row_key="qid",
-                    pagination={"rowsPerPage": 20},
-                ).classes("w-full")
-                table.add_slot('body-cell-doip_url', r'<q-td :props="props"><a :href="props.row.doip_url" target="_blank" class="text-blue-600 hover:underline">Show Metadata</a></q-td>')
-                filter_input.bind_value(table, "filter")
-            except Exception as e:
-                _error_label(f"Could not load processed datasets: {e}")
-
     @ui.page("/ui/datasets/processed-lab")
     def datasets_processed_lab():
         _header("/ui/datasets/processed-lab")
         with ui.column().classes("p-6 w-full"):
-            ui.label("Processed Datasets – Lab").classes("text-xl font-semibold mb-4")
+            ui.label("Datasets").classes("text-xl font-semibold mb-4")
             try:
                 rows = lakefs_client.list_processed_datasets()
                 filter_input = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
@@ -110,11 +86,51 @@ def register_pages():
                 table.add_slot('body-cell-components', r'<q-td :props="props"><span v-for="c in props.row.components" :key="c.name"><a :href="c.url" target="_blank" class="text-blue-600 hover:underline block">{{ c.name }}</a></span></q-td>')
                 filter_input.bind_value(table, "filter")
 
-                data_container = ui.column().classes("w-full mt-6")
+                # mutable state shared across closures
+                current_df   = [None]
+                current_name = [""]
+
+                # SQL input row — hidden until a dataset is loaded
+                with ui.row().classes("w-full mt-6 items-end gap-2") as sql_row:
+                    sql_input = ui.input(label="SQL query", value="SELECT * FROM df").classes("flex-1 font-mono text-sm")
+                    run_btn   = ui.button("Run", icon="play_arrow").classes("bg-blue-700 text-white")
+                sql_row.set_visibility(False)
+
+                data_container = ui.column().classes("w-full mt-2")
+
+                def render_preview(df):
+                    data_container.clear()
+                    with data_container:
+                        ui.label(f"{current_name[0]} — {len(df):,} rows × {len(df.columns)} columns").classes("text-sm text-gray-500 mb-2")
+                        cols = [{"name": c, "label": c, "field": c, "align": "left", "sortable": True} for c in df.columns]
+                        preview_rows = df.head(500).astype(str).to_dict("records")
+                        ui.table(columns=cols, rows=preview_rows, row_key=df.columns[0], pagination={"rowsPerPage": 10}).classes("w-full")
+
+                def run_sql():
+                    df = current_df[0]
+                    if df is None:
+                        return
+                    if not sql_input.value.strip():
+                        sql_input.value = "SELECT * FROM df"
+                        render_preview(df)
+                        return
+                    try:
+                        conn = duckdb.connect()
+                        conn.register("df", df)
+                        result = conn.execute(sql_input.value).df()
+                        render_preview(result)
+                    except Exception as ex:
+                        data_container.clear()
+                        with data_container:
+                            _error_label(f"SQL error: {ex}")
+
+                run_btn.on("click", run_sql)
 
                 async def on_selection(e):
                     selected_rows = e.args.get("rows", [])
                     data_container.clear()
+                    sql_row.set_visibility(False)
+                    current_df[0] = None
                     if not selected_rows:
                         selected_label.set_text("No row selected.")
                         return
@@ -126,19 +142,18 @@ def register_pages():
                             ui.label("No downloadable components for this dataset.").classes("text-sm text-gray-500")
                         return
                     component = components[0]
+                    current_name[0] = component["name"]
                     with data_container:
-                        spinner = ui.spinner(size="lg")
+                        ui.spinner(size="lg")
                     try:
                         async with httpx.AsyncClient() as client:
                             response = await client.get(component["url"])
                             response.raise_for_status()
                         df = await run.io_bound(pd.read_parquet, io.BytesIO(response.content))
-                        data_container.clear()
-                        with data_container:
-                            ui.label(f"{component['name']} — {len(df):,} rows × {len(df.columns)} columns").classes("text-sm text-gray-500 mb-2")
-                            cols = [{"name": c, "label": c, "field": c, "align": "left", "sortable": True} for c in df.columns]
-                            preview_rows = df.head(500).astype(str).to_dict("records")
-                            ui.table(columns=cols, rows=preview_rows, row_key=df.columns[0], pagination={"rowsPerPage": 10}).classes("w-full")
+                        current_df[0] = df
+                        sql_input.value = "SELECT * FROM df"
+                        sql_row.set_visibility(True)
+                        render_preview(df)
                     except Exception as ex:
                         data_container.clear()
                         with data_container:
@@ -198,7 +213,7 @@ def register_pages():
     @ui.page("/ui/trigger")
     def trigger():
         _header("/ui/trigger")
-        with ui.column().classes("p-6 w-full max-w-2xl"):
+        with ui.column().classes("p-6 w-full"):
             ui.label("Run a forecast model").classes("text-xl font-semibold")
             ui.label(
                 "Select a processed dataset and a registered model, adjust the configuration if needed, "
@@ -206,49 +221,60 @@ def register_pages():
                 "appear in the Model Runs page once complete."
             ).classes("text-sm text-gray-500 mb-4")
 
-            # Load options
+            # Dataset selection table
+            ui.label("Input dataset").classes("text-sm font-medium text-gray-700 mb-1")
             try:
-                raw_repo = settings.lakefs_raw_repo
-                branch   = settings.lakefs_branch
-                dataset_options = {
-                    obj["path"]: f"lakefs://{raw_repo}/{branch}/{obj['path']}"
-                    for obj in lakefs_client.list_raw_objects()
-                }
+                dataset_rows = lakefs_client.list_processed_datasets()
+                dataset_filter = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
+                dataset_table = ui.table(
+                    columns=[
+                        {"name": "name",        "label": "Name",        "field": "name",        "align": "left", "sortable": True},
+                        {"name": "qid",         "label": "QID",         "field": "qid",         "align": "left", "sortable": True},
+                        {"name": "description", "label": "Description", "field": "description", "align": "left"},
+                    ],
+                    rows=dataset_rows,
+                    row_key="qid",
+                    selection="single",
+                    pagination={"rowsPerPage": 5},
+                ).classes("w-full mb-4")
+                dataset_filter.bind_value(dataset_table, "filter")
             except Exception as e:
                 _error_label(f"Could not load datasets: {e}")
-                dataset_options = {}
+                dataset_table = None
 
+            # Model selection table
+            ui.label("Model").classes("text-sm font-medium text-gray-700 mb-1")
             try:
-                model_options = {
-                    m["name"]: f"{m['docker_image']}:{m['docker_tag']}"
-                    for m in ckan_client.list_models()
-                }
+                model_rows = ckan_client.list_models()
+                model_filter = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
+                model_table = ui.table(
+                    columns=[
+                        {"name": "name",         "label": "Name",        "field": "name",         "align": "left", "sortable": True},
+                        {"name": "docker_tag",   "label": "Tag",         "field": "docker_tag",   "align": "left", "sortable": True},
+                        {"name": "description",  "label": "Description", "field": "description",  "align": "left"},
+                    ],
+                    rows=model_rows,
+                    row_key="name",
+                    selection="single",
+                    pagination={"rowsPerPage": 5},
+                ).classes("w-full mb-4")
+                model_filter.bind_value(model_table, "filter")
             except Exception as e:
                 _error_label(f"Could not load models: {e}")
-                model_options = {}
-
-            input_select = ui.select(
-                label="Input dataset",
-                options=list(dataset_options.keys()),
-            ).classes("w-full")
-
-            model_select = ui.select(
-                label="Model",
-                options=list(model_options.keys()),
-            ).classes("w-full")
+                model_table = None
 
             config_input = ui.textarea(
                 label="Config (JSON)",
                 value='{"horizon_weeks": 4, "n_reference_weeks": 4}',
-            ).classes("w-full font-mono")
+            ).classes("w-full max-w-xl font-mono")
 
             result_label = ui.label("").classes("text-sm text-gray-500")
 
             def submit():
-                if not input_select.value:
+                if not dataset_table or not dataset_table.selected:
                     ui.notify("Select an input dataset", type="warning", position="top")
                     return
-                if not model_select.value:
+                if not model_table or not model_table.selected:
                     ui.notify("Select a model", type="warning", position="top")
                     return
                 try:
@@ -257,9 +283,9 @@ def register_pages():
                     ui.notify(f"Invalid JSON: {e}", type="negative", position="top")
                     return
 
-                input_path  = dataset_options[input_select.value]
-                full_image  = model_options[model_select.value]
-                image, tag  = full_image.rsplit(":", 1) if ":" in full_image else (full_image, "latest")
+                input_path  = dataset_table.selected[0]["lakefs_path"]
+                m           = model_table.selected[0]
+                image, tag  = m["docker_image"], m["docker_tag"]
 
                 from app.clients import prefect as prefect_client
                 try:
