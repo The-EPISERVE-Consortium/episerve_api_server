@@ -211,32 +211,47 @@ def register_pages():
     def trigger():
         _header("/ui/trigger")
 
-        def _step_card(n: int, title: str, status_text: str, status_done: bool = False):
-            """Returns (card context, status_label). Use as: with _step_card(...) as (card, lbl):"""
-            card = ui.card().classes("w-full p-5")
-            card.__enter__()
-            with ui.row().classes("items-center gap-3 mb-4"):
-                ui.label(str(n)).classes(
-                    "bg-blue-700 text-white rounded-full w-7 h-7 flex items-center "
-                    "justify-center text-sm font-bold shrink-0"
-                )
-                ui.label(title).classes("text-base font-semibold text-gray-800")
-                lbl = ui.label(status_text).classes(
-                    "text-sm ml-auto " + ("text-green-600" if status_done else "text-gray-400")
-                )
-            return card, lbl
+        class _StepCtx:
+            def __init__(self, row, panel, status_lbl):
+                self._row        = row
+                self._panel      = panel
+                self.status_lbl  = status_lbl
+            def __exit__(self, *a):
+                self._panel.__exit__(*a)
+                self._row.__exit__(*a)
 
-        with ui.column().classes("p-6 w-full gap-4"):
-            ui.label("Run a forecast model").classes("text-xl font-semibold")
-            ui.label(
-                "Complete each step below, then click Pre-flight Check to review and submit."
-            ).classes("text-sm text-gray-500")
+        def _step_row(n: int, title: str, description: str, is_last: bool = False):
+            row = ui.row().classes("w-full gap-6 items-stretch")
+            row.__enter__()
+            with ui.column().classes("w-48 shrink-0 gap-0"):
+                with ui.row().classes("items-center gap-3"):
+                    ui.label(str(n)).classes(
+                        "bg-blue-700 text-white rounded-full w-7 h-7 flex items-center "
+                        "justify-center text-sm font-bold shrink-0"
+                    )
+                    ui.label(title).classes("text-sm font-semibold text-gray-800")
+                ui.label(description).classes("text-xs text-gray-500 ml-10 mt-1")
+                status_lbl = ui.label("").classes("ml-10 mt-2 text-xs text-gray-400")
+                if not is_last:
+                    ui.element("div").classes("ml-3 border-l-2 border-gray-200 flex-1 mt-2")
+            panel = ui.column().classes("flex-1 border border-gray-200 rounded-lg p-4 min-w-0 gap-3")
+            panel.__enter__()
+            return _StepCtx(row, panel, status_lbl), status_lbl
+
+        with ui.column().classes("p-8 w-full gap-6"):
+            with ui.column().classes("gap-1 mb-2"):
+                ui.label("Run a forecast model").classes("text-2xl font-bold text-gray-900")
+                ui.label(
+                    "Complete each step below, then click Pre-flight Check to review and submit."
+                ).classes("text-sm text-gray-500")
 
             # ── Step 1: Input Datasets ──────────────────────────────────
-            card1, dataset_status = _step_card(1, "Input Datasets", "Select one or more datasets")
+            ctx1, dataset_status = _step_row(1, "Input Datasets", "Select the dataset(s)\nto use as input.")
             try:
                 dataset_rows = ckan_client.list_processed_datasets()
-                dataset_filter = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
+                with ui.row().classes("w-full items-center gap-2 pb-2 border-b border-gray-100"):
+                    ui.icon("search").classes("text-gray-400 text-lg")
+                    dataset_filter = ui.input(placeholder="Filter datasets...").classes("flex-1 text-sm").props("borderless dense")
                 dataset_table = ui.table(
                     columns=[
                         {"name": "name",        "label": "Name",        "field": "name",        "align": "left", "sortable": True},
@@ -252,13 +267,15 @@ def register_pages():
             except Exception as e:
                 _error_label(f"Could not load datasets: {e}")
                 dataset_table = None
-            card1.__exit__(None, None, None)
+            ctx1.__exit__(None, None, None)
 
             # ── Step 2: Model ───────────────────────────────────────────
-            card2, model_status = _step_card(2, "Model", "Select a model")
+            ctx2, model_status = _step_row(2, "Model", "Select the model\nto run.")
             try:
                 model_rows = ckan_client.list_models()
-                model_filter = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
+                with ui.row().classes("w-full items-center gap-2 pb-2 border-b border-gray-100"):
+                    ui.icon("search").classes("text-gray-400 text-lg")
+                    model_filter = ui.input(placeholder="Filter by name...").classes("flex-1 text-sm").props("borderless dense")
                 model_table = ui.table(
                     columns=[
                         {"name": "name",        "label": "Name",        "field": "name",        "align": "left", "sortable": True},
@@ -270,6 +287,11 @@ def register_pages():
                     selection="single",
                     pagination={"rowsPerPage": 5},
                 ).classes("w-full")
+                model_table.add_slot('body-cell-docker_tag', r'''
+                    <q-td :props="props">
+                        <span class="bg-blue-100 text-blue-700 px-2 py-0.5 rounded text-xs font-mono">{{ props.row.docker_tag }}</span>
+                    </q-td>
+                ''')
                 model_filter.bind_value(model_table, "filter")
 
                 def on_model_selection(e):
@@ -278,22 +300,21 @@ def register_pages():
                         model_status.set_text(f"✓ {m['name']} ({m['docker_tag']})")
                         model_status.classes(remove="text-gray-400", add="text-green-600")
                     else:
-                        model_status.set_text("Select a model")
+                        model_status.set_text("")
                         model_status.classes(remove="text-green-600", add="text-gray-400")
 
                 model_table.on("selection", on_model_selection)
             except Exception as e:
                 _error_label(f"Could not load models: {e}")
                 model_table = None
-            card2.__exit__(None, None, None)
+            ctx2.__exit__(None, None, None)
 
             # ── Step 3: Dataset Transformation ──────────────────────────
-            card3, sql_status = _step_card(3, "Dataset Transformation", "Optional")
-            ui.label(
-                "SQL applied to each selected dataset before it is passed to the model-runner."
-            ).classes("text-sm text-gray-500 mb-3")
+            ctx3, sql_status = _step_row(3, "Dataset Transformation", "SQL applied to each\nselected dataset before\nit is passed to the\nmodel-runner.")
+            sql_status.set_text("Optional")
             dataset_sql_inputs = {}
             sql_container = ui.column().classes("w-full gap-4")
+            sql_hint = ui.label("Select a dataset in step 1 to define a SQL transformation.").classes("text-sm text-gray-400 italic")
 
             def _make_verify(inp):
                 def verify():
@@ -310,6 +331,17 @@ def register_pages():
                         ui.notify("SQL syntax is valid", type="positive", position="top")
                 return verify
 
+            def _make_format_sql(inp):
+                def fmt():
+                    try:
+                        import sqlparse
+                        inp.value = sqlparse.format(inp.value, reindent=True, keyword_case='upper')
+                    except ImportError:
+                        ui.notify("sqlparse not available", type="warning", position="top")
+                    except Exception as ex:
+                        ui.notify(f"Format error: {ex}", type="negative", position="top")
+                return fmt
+
             def rebuild_sql_inputs(e):
                 selected = dataset_table.selected if dataset_table else []
                 current_qids = {row["qid"] for row in selected}
@@ -322,28 +354,27 @@ def register_pages():
                         qid = row["qid"]
                         existing = dataset_sql_inputs.get(qid)
                         prev = existing.value if existing else ""
-                        with ui.column().classes("w-full gap-1 border-l-2 border-blue-200 pl-3"):
+                        with ui.column().classes("w-full gap-2"):
                             ui.label(row["name"]).classes("text-sm font-medium text-gray-700")
-                            with ui.row().classes("w-full items-end gap-2"):
-                                inp = ui.textarea(
-                                    label="SQL transformation",
-                                    value=prev,
-                                    placeholder="SELECT * FROM df WHERE …",
-                                ).classes("flex-1 font-mono text-sm")
-                                ui.button("Verify", icon="check", on_click=_make_verify(inp)).classes("bg-gray-600 text-white shrink-0")
+                            inp = ui.codemirror(
+                                value=prev if prev else "-- SELECT * FROM df WHERE column = 'value'",
+                                language="sql",
+                            ).classes("w-full text-sm rounded border border-gray-200").style("height: 120px")
+                            with ui.row().classes("w-full justify-end gap-2"):
+                                ui.button("Format SQL", icon="auto_fix_high", on_click=_make_format_sql(inp)).props("flat dense").classes("text-xs text-gray-500")
+                                ui.button("Verify SQL", icon="check", on_click=_make_verify(inp)).classes("bg-blue-700 text-white text-xs")
                         dataset_sql_inputs[qid] = inp
-                # update dataset status
                 n = len(selected)
+                sql_hint.set_visibility(n == 0)
                 if n:
-                    dataset_status.set_text(f"✓ {n} dataset(s) selected")
-                    dataset_status.classes(remove="text-gray-400", add="text-green-600")
+                    dataset_status.set_text(f"{n} selected")
+                    dataset_status.classes(remove="text-gray-400", add="bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium")
                 else:
-                    dataset_status.set_text("Select one or more datasets")
-                    dataset_status.classes(remove="text-green-600", add="text-gray-400")
-                # update sql status
+                    dataset_status.set_text("")
+                    dataset_status.classes(remove="bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium", add="text-gray-400")
                 filled = sum(1 for inp in dataset_sql_inputs.values() if inp.value.strip())
                 if filled:
-                    sql_status.set_text(f"✓ {filled} transformation(s) defined")
+                    sql_status.set_text(f"✓ {filled} transformation(s)")
                     sql_status.classes(remove="text-gray-400", add="text-green-600")
                 else:
                     sql_status.set_text("Optional")
@@ -351,14 +382,26 @@ def register_pages():
 
             if dataset_table:
                 dataset_table.on("selection", rebuild_sql_inputs)
-            card3.__exit__(None, None, None)
+            ctx3.__exit__(None, None, None)
 
             # ── Step 4: Config ──────────────────────────────────────────
-            card4, _ = _step_card(4, "Config (JSON)", "")
-            config_input = ui.textarea(
-                value='{"horizon_weeks": 4, "n_reference_weeks": 4}',
-            ).classes("w-full max-w-xl font-mono")
-            card4.__exit__(None, None, None)
+            ctx4, _ = _step_row(4, "Config (JSON)", "Provide configuration\nin JSON format.", is_last=True)
+
+            def format_json():
+                try:
+                    val = json.loads(config_input.value)
+                    config_input.value = json.dumps(val, indent=2)
+                except json.JSONDecodeError as e:
+                    ui.notify(f"Invalid JSON: {e}", type="negative", position="top")
+
+            with ui.row().classes("w-full justify-end items-center gap-1"):
+                ui.button(icon="close", on_click=lambda: config_input.set_value("")).props("flat round dense").classes("text-gray-400 text-xs")
+                ui.button("Format JSON", icon="auto_fix_high", on_click=format_json).props("flat dense").classes("text-xs text-gray-500")
+            config_input = ui.codemirror(
+                value='{\n  "horizon_weeks": 4,\n  "n_reference_weeks": 4\n}',
+                language="json",
+            ).classes("w-full font-mono")
+            ctx4.__exit__(None, None, None)
 
             result_label = ui.label("").classes("text-sm text-gray-500")
 
@@ -473,6 +516,8 @@ def register_pages():
                 ui.label(
                     "⚠ PREFECT_API_URL is not configured. Set it in .env to enable triggering runs. "
                     "You can do the pre-flight check but will not be able to submit to Prefect."
-                ).classes("text-orange-600 text-sm mb-2")
-            ui.button("Pre-flight Check", icon="checklist", on_click=open_preflight).classes("bg-blue-700 text-white mt-2")
+                ).classes("text-orange-600 text-sm")
+            with ui.row().classes("w-full items-center gap-4 mt-2"):
+                ui.button("Pre-flight Check", icon="checklist", on_click=open_preflight).classes("bg-blue-700 text-white")
+                ui.label("Validate all steps before running the model.").classes("text-sm text-gray-500")
             result_label
