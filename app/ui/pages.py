@@ -1,7 +1,4 @@
-import io
 import json
-import httpx
-import pandas as pd
 import duckdb
 from nicegui import ui, run
 
@@ -88,6 +85,7 @@ def register_pages():
                 # mutable state shared across closures
                 current_df   = [None]
                 current_name = [""]
+                current_url  = [None]
 
                 # SQL input row — hidden until a dataset is loaded
                 with ui.row().classes("w-full mt-6 items-end gap-2") as sql_row:
@@ -105,18 +103,21 @@ def register_pages():
                         preview_rows = df.head(500).astype(str).to_dict("records")
                         ui.table(columns=cols, rows=preview_rows, row_key=df.columns[0], pagination={"rowsPerPage": 10}).classes("w-full")
 
-                def run_sql():
-                    df = current_df[0]
-                    if df is None:
+                def _duckdb_query(url: str, sql: str) -> "pd.DataFrame":
+                    conn = duckdb.connect()
+                    conn.execute("LOAD httpfs")
+                    conn.execute(f"CREATE VIEW df AS SELECT * FROM read_parquet('{url}')")
+                    result = conn.execute(sql).df()
+                    conn.close()
+                    return result
+
+                async def run_sql():
+                    url = current_url[0]
+                    if url is None:
                         return
-                    if not sql_input.value.strip():
-                        sql_input.value = "SELECT * FROM df"
-                        render_preview(df)
-                        return
+                    query = sql_input.value.strip() or "SELECT * FROM df LIMIT 500"
                     try:
-                        conn = duckdb.connect()
-                        conn.register("df", df)
-                        result = conn.execute(sql_input.value).df()
+                        result = await run.io_bound(_duckdb_query, url, query)
                         render_preview(result)
                     except Exception as ex:
                         data_container.clear()
@@ -129,7 +130,7 @@ def register_pages():
                     selected_rows = e.args.get("rows", [])
                     data_container.clear()
                     sql_row.set_visibility(False)
-                    current_df[0] = None
+                    current_url[0] = None
                     if not selected_rows:
                         selected_label.set_text("No row selected.")
                         return
@@ -142,15 +143,12 @@ def register_pages():
                         return
                     component = components[0]
                     current_name[0] = component["name"]
+                    current_url[0]  = component["url"]
                     with data_container:
                         ui.spinner(size="lg")
                     try:
-                        async with httpx.AsyncClient() as client:
-                            response = await client.get(component["url"])
-                            response.raise_for_status()
-                        df = await run.io_bound(pd.read_parquet, io.BytesIO(response.content))
-                        current_df[0] = df
-                        sql_input.value = "SELECT * FROM df"
+                        df = await run.io_bound(_duckdb_query, component["url"], "SELECT * FROM df LIMIT 500")
+                        sql_input.value = "SELECT * FROM df LIMIT 500"
                         sql_row.set_visibility(True)
                         render_preview(df)
                     except Exception as ex:
