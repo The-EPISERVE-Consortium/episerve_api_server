@@ -105,7 +105,7 @@ def register_pages():
 
                 def _duckdb_query(url: str, sql: str) -> "pd.DataFrame":
                     conn = duckdb.connect()
-                    conn.execute("LOAD httpfs")
+                    conn.execute("INSTALL httpfs; LOAD httpfs")
                     conn.execute(f"CREATE VIEW df AS SELECT * FROM read_parquet('{url}')")
                     result = conn.execute(sql).df()
                     conn.close()
