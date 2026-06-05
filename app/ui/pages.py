@@ -310,6 +310,12 @@ def register_pages():
             ctx2.__exit__(None, None, None)
 
             # ── Step 3: Dataset Transformation ──────────────────────────
+            def _has_sql(val: str) -> bool:
+                return any(
+                    line.strip() and not line.strip().startswith("--")
+                    for line in val.splitlines()
+                )
+
             ctx3, sql_status = _step_row(3, "Dataset Transformation", "SQL applied to each\nselected dataset before\nit is passed to the\nmodel-runner.")
             sql_status.set_text("Optional")
             dataset_sql_inputs = {}
@@ -372,9 +378,9 @@ def register_pages():
                 else:
                     dataset_status.set_text("")
                     dataset_status.classes(remove="bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-medium", add="text-gray-400")
-                filled = sum(1 for inp in dataset_sql_inputs.values() if inp.value.strip())
+                filled = sum(1 for inp in dataset_sql_inputs.values() if _has_sql(inp.value))
                 if filled:
-                    sql_status.set_text(f"✓ {filled} transformation(s)")
+                    sql_status.set_text(f"✓ {filled} transformation active")
                     sql_status.classes(remove="text-gray-400", add="text-green-600")
                 else:
                     sql_status.set_text("Optional")
@@ -504,7 +510,7 @@ def register_pages():
                                     inp = ui.input(value=default_name, on_change=update_payload).classes("w-full font-mono text-sm").style("background-color: #f0fdf4")
                             with ui.column().classes("gap-0"):
                                 ui.label("Transform (SQL)").classes("text-xs text-gray-400")
-                                ui.label(sql_val or "— none —").classes("text-sm font-mono text-gray-600")
+                                ui.label(sql_val if _has_sql(sql_val) else "— none —").classes("text-sm font-mono text-gray-600")
                         filename_inputs.append((row["data_path"], inp, sql_val))
 
                 model_summary.set_text(f"{m['name']} ({m['docker_tag']})")
