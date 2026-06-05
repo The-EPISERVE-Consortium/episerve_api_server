@@ -446,7 +446,7 @@ def register_pages():
                     return
                 preflight_dialog.close()
                 input_data_files        = [[dp, inp.value.strip()] for dp, inp, _ in filename_inputs]
-                data_transformation_sql = [sql for _, _, sql in filename_inputs]
+                data_transformation_sql = [sql if _has_sql(sql) else "" for _, _, sql in filename_inputs]
                 from app.clients import prefect as prefect_client
                 try:
                     result = prefect_client.trigger_model_run(
@@ -484,7 +484,7 @@ def register_pages():
                             "model_image":             m["docker_image"],
                             "model_tag":               m["docker_tag"],
                             "config_json":             config_input.value.strip(),
-                            "data_transformation_sql": [sql for _, _, sql in filename_inputs],
+                            "data_transformation_sql": [sql if _has_sql(sql) else "" for _, _, sql in filename_inputs],
                         }
                     }
                     payload_label.set_text(json.dumps(payload, indent=2))
