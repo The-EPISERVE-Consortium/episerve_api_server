@@ -144,7 +144,7 @@ def _tv2_summary(state: dict, hint: str = ""):
                 else:
                     ui.label("Not selected yet").classes("text-xs text-gray-400")
 
-        with ui.row().classes("w-full items-start gap-3 py-3 border-b border-gray-100"):
+        with ui.row().classes("w-full items-start gap-3 py-3"):
             ui.icon("tune").classes("text-blue-600 mt-0.5 shrink-0")
             with ui.column().classes("flex-1 gap-0"):
                 ui.label("Configuration").classes("text-sm font-semibold text-gray-800")
@@ -156,12 +156,6 @@ def _tv2_summary(state: dict, hint: str = ""):
                     ui.label(summary).classes("text-xs text-gray-600")
                 except Exception:
                     ui.label("Not configured yet").classes("text-xs text-gray-400")
-
-        with ui.row().classes("w-full items-start gap-3 py-3"):
-            ui.icon("schedule").classes("text-blue-600 mt-0.5 shrink-0")
-            with ui.column().classes("flex-1 gap-0"):
-                ui.label("Estimated Runtime").classes("text-sm font-semibold text-gray-800")
-                ui.label("—").classes("text-xs text-gray-400")
 
     if hint:
         with ui.row().classes("w-72 shrink-0 items-center gap-3 p-4 bg-blue-50 rounded-xl border border-blue-100 mt-3"):
