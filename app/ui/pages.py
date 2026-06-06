@@ -7,7 +7,6 @@ from app.config import settings
 
 
 NAV_ITEMS = [
-    ("Datasets – Raw",  "/ui/datasets/raw"),
     ("Datasets",        "/ui/datasets/processed-lab"),
     ("Models",          "/ui/models"),
     ("Model Runs",      "/ui/model-runs"),
@@ -176,27 +175,8 @@ def _tv2_footer():
 def register_pages():
 
     @ui.page("/ui")
-    @ui.page("/ui/datasets/raw")
-    def datasets_raw():
-        _header("/ui/datasets/raw")
-        with ui.column().classes("p-6 w-full"):
-            ui.label("Raw Datasets").classes("text-xl font-semibold mb-4")
-            try:
-                rows = ckan_client.list_raw_datasets()
-                filter_input = ui.input(placeholder="Filter by path…").classes("w-64 mb-2")
-                table = ui.table(
-                    columns=[
-                        {"name": "path",          "label": "Path",          "field": "path",          "align": "left",  "sortable": True},
-                        {"name": "size_bytes",    "label": "Size (bytes)",  "field": "size_bytes",    "align": "right", "sortable": True},
-                        {"name": "last_modified", "label": "Last Modified", "field": "last_modified", "align": "left",  "sortable": True},
-                    ],
-                    rows=rows,
-                    row_key="path",
-                    pagination={"rowsPerPage": 20},
-                ).classes("w-full")
-                filter_input.bind_value(table, "filter")
-            except Exception as e:
-                _error_label(f"Could not load raw datasets: {e}")
+    def _root():
+        ui.navigate.to("/ui/datasets/processed-lab")
 
     @ui.page("/ui/datasets/processed-lab")
     def datasets_processed_lab():
