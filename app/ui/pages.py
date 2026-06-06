@@ -7,7 +7,7 @@ from app.config import settings
 
 
 NAV_ITEMS = [
-    ("Datasets",        "/ui/datasets/processed-lab"),
+    ("Datasets",        "/ui/datasets"),
     ("Models",          "/ui/models"),
     ("Model Runs",      "/ui/model-runs"),
     ("Run Workflow",        "/ui/trigger-v2/1"),
@@ -176,13 +176,13 @@ def register_pages():
 
     @ui.page("/ui")
     def _root():
-        ui.navigate.to("/ui/datasets/processed-lab")
+        ui.navigate.to("/ui/datasets")
 
-    @ui.page("/ui/datasets/processed-lab")
+    @ui.page("/ui/datasets")
     def datasets_processed_lab():
         from datetime import datetime
 
-        _header("/ui/datasets/processed-lab")
+        _header("/ui/datasets")
 
         def _ds_type_info(name: str) -> tuple:
             n = name.lower()
