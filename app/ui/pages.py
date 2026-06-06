@@ -11,8 +11,8 @@ NAV_ITEMS = [
     ("Datasets",        "/ui/datasets/processed-lab"),
     ("Models",          "/ui/models"),
     ("Model Runs",      "/ui/model-runs"),
-    ("Trigger",         "/ui/trigger"),
-    ("Trigger v2",      "/ui/trigger-v2/1"),
+    ("Run Workflow",        "/ui/trigger-v2/1"),
+    ("Run Workflow Simple", "/ui/trigger"),
 ]
 
 
