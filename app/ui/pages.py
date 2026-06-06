@@ -630,6 +630,7 @@ def register_pages():
                 ],
                 rows=filtered_rows,
                 row_key="qid",
+                selection="single",
                 pagination={"rowsPerPage": 10, "sortBy": "run_timestamp", "descending": True},
             ).classes("w-full")
 
@@ -676,6 +677,103 @@ def register_pages():
                     </q-btn>
                 </q-td>''')
 
+            async def on_selection(e):
+                selected = e.args.get("rows", [])
+                preview_container[0].clear()
+                if not selected:
+                    return
+                row = selected[0]
+                doip_url = row.get("doip_url", "")
+                if not doip_url:
+                    return
+
+                dc = preview_container[0]
+                with dc:
+                    with ui.row().classes("items-center gap-2"):
+                        ui.spinner(size="sm")
+                        ui.label("Fetching metadata…").classes("text-sm text-gray-400")
+
+                def _fetch_metadata(url: str) -> dict:
+                    import requests
+                    return requests.get(url, timeout=30).json()
+
+                def _find_predictions(meta: dict):
+                    # structure: meta["kernel"]["fdo:hasComponent"] list
+                    components = meta.get("kernel", {}).get("fdo:hasComponent", [])
+                    if isinstance(components, dict):
+                        components = [components]
+                    for comp in components:
+                        cid = str(comp.get("componentId", ""))
+                        for ext in (".parquet", ".tsv", ".csv"):
+                            if cid.lower() == f"predictions{ext}":
+                                return comp, cid, ext
+                    return None
+
+                def _fetch_preview(url: str, ext: str):
+                    if ext == ".parquet":
+                        conn = duckdb.connect()
+                        conn.execute("INSTALL httpfs; LOAD httpfs")
+                        df = conn.execute(f"SELECT * FROM read_parquet('{url}') LIMIT 500").df()
+                        conn.close()
+                        return df
+                    import requests, io, pandas as pd
+                    resp = requests.get(url, timeout=60)
+                    resp.raise_for_status()
+                    sep = "\t" if ext == ".tsv" else ","
+                    return pd.read_csv(io.StringIO(resp.text), sep=sep, nrows=500)
+
+                try:
+                    meta = await run.io_bound(_fetch_metadata, doip_url)
+                except Exception as exc:
+                    dc.clear()
+                    with dc:
+                        _error_label(f"Could not fetch metadata: {exc}")
+                    return
+
+                result = _find_predictions(meta)
+                dc.clear()
+                if not result:
+                    with dc:
+                        ui.label("No predictions component found in metadata.").classes("text-sm text-gray-400 italic")
+                    return
+
+                comp, cid, ext = result
+                qid = meta.get("@id", row.get("qid", ""))
+                component_path = comp.get("@id", f"output/{cid}").removeprefix("components/")
+                file_url = f"{settings.doip_url.rstrip('/')}/doip/retrieve/{qid}/{component_path}"
+
+                with dc:
+                    with ui.row().classes("items-center gap-2"):
+                        ui.spinner(size="sm")
+                        ui.label(f"Loading {cid}…").classes("text-sm text-gray-400")
+
+                try:
+                    df = await run.io_bound(_fetch_preview, file_url, ext)
+                except Exception as exc:
+                    dc.clear()
+                    with dc:
+                        _error_label(f"Could not load {cid}: {exc}")
+                    return
+
+                dc.clear()
+                with dc:
+                    with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-hidden"):
+                        with ui.row().classes("px-5 py-3 border-b border-gray-100 items-center gap-2"):
+                            ui.icon("table_chart").classes("text-blue-600")
+                            ui.label(f"Predictions — {cid}").classes("text-sm font-semibold text-gray-800")
+                            ui.label(f"{len(df):,} rows × {len(df.columns)} columns").classes("text-xs text-gray-400 ml-2")
+                        cols = [{"name": c, "label": c, "field": c, "align": "left", "sortable": True} for c in df.columns]
+                        ui.table(
+                            columns=cols,
+                            rows=df.astype(str).to_dict("records"),
+                            row_key=df.columns[0],
+                            pagination={"rowsPerPage": 10},
+                        ).classes("w-full")
+
+            tbl.on("selection", on_selection)
+
+        preview_container = [None]
+
         with ui.column().classes("px-8 py-6 w-full gap-4"):
             ui.label("Model Runs").classes("text-3xl font-bold text-gray-900")
             ui.label("Browse past model run results.").classes("text-sm text-gray-500 -mt-2")
@@ -697,6 +795,8 @@ def register_pages():
 
             with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-hidden"):
                 runs_table()
+
+            preview_container[0] = ui.column().classes("w-full")
 
     @ui.page("/ui/trigger")
     def trigger():
