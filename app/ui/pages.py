@@ -90,7 +90,9 @@ def _tv2_stepper(current_step: int):
         for i, (n, title, desc) in enumerate(_TV2_STEPS):
             active = n == current_step
             done   = n < current_step
-            with ui.row().classes("items-center gap-3 shrink-0"):
+            clickable = not active
+            row_cls = "items-center gap-3 shrink-0 " + ("cursor-pointer" if clickable else "")
+            with ui.row().classes(row_cls).on("click", lambda _, step=n: ui.navigate.to(f"/ui/trigger-v2/{step}") if step != current_step else None):
                 circle_cls = (
                     "w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 "
                     + ("bg-blue-700 text-white" if (active or done) else "border-2 border-gray-300 text-gray-400")
@@ -103,7 +105,7 @@ def _tv2_stepper(current_step: int):
                 with ui.column().classes("gap-0"):
                     ui.label(title).classes(
                         "text-sm font-semibold "
-                        + ("text-blue-700" if active else "text-gray-700" if done else "text-gray-400")
+                        + ("text-blue-700" if active else "text-gray-700 hover:text-blue-600" if done else "text-gray-400 hover:text-blue-400")
                     )
                     ui.label(desc).classes("text-xs text-gray-400")
             if i < len(_TV2_STEPS) - 1:
@@ -782,12 +784,12 @@ def register_pages():
                             ).props("borderless dense").classes("w-44 text-sm")
                     dataset_cards()
                     bottom_bar()
-                with ui.column().classes("shrink-0 gap-0"):
+                with ui.column().classes("shrink-0 gap-3"):
                     run_summary()
-            with ui.row().classes("w-full justify-center"):
-                ui.button(
-                    "Continue to Transformations", icon="arrow_forward", on_click=on_continue,
-                ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
+                    with ui.row().classes("w-full justify-end"):
+                        ui.button(
+                            "Continue to Transformations", icon="arrow_forward", on_click=on_continue,
+                        ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
         _tv2_footer()
 
     # Step 2 — Dataset Transformations ────────────────────────────────────────
@@ -864,13 +866,13 @@ def register_pages():
                                 ui.button(
                                     "Verify SQL", icon="check", on_click=make_verify(inp),
                                 ).classes("bg-blue-700 text-white text-xs").props("no-caps dense")
-                with ui.column().classes("shrink-0 gap-0"):
+                with ui.column().classes("shrink-0 gap-3"):
                     _tv2_summary(state)
-            with ui.row().classes("w-full justify-between items-center"):
-                ui.button("Back to Datasets", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/1")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
-                ui.button(
-                    "Continue to Model", icon="arrow_forward", on_click=on_continue,
-                ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
+                    with ui.row().classes("w-full justify-between items-center"):
+                        ui.button("Back to Datasets", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/1")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
+                        ui.button(
+                            "Continue to Model", icon="arrow_forward", on_click=on_continue,
+                        ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
         _tv2_footer()
 
     # Step 3 — Model ──────────────────────────────────────────────────────────
@@ -967,13 +969,13 @@ def register_pages():
                                 on_change=lambda e: do_filter(e.value),
                             ).props("borderless dense").classes("w-44 text-sm")
                     model_cards()
-                with ui.column().classes("shrink-0 gap-0"):
+                with ui.column().classes("shrink-0 gap-3"):
                     run_summary()
-            with ui.row().classes("w-full justify-between items-center"):
-                ui.button("Back to Transformations", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/2")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
-                ui.button(
-                    "Continue to Configuration", icon="arrow_forward", on_click=on_continue,
-                ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
+                    with ui.row().classes("w-full justify-between items-center"):
+                        ui.button("Back to Transformations", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/2")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
+                        ui.button(
+                            "Continue to Configuration", icon="arrow_forward", on_click=on_continue,
+                        ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
         _tv2_footer()
 
     # Step 4 — Configuration ──────────────────────────────────────────────────
@@ -1018,13 +1020,13 @@ def register_pages():
                         value=state.get("config", '{\n  "horizon_weeks": 4,\n  "n_reference_weeks": 4\n}'),
                         language="json",
                     ).classes("w-full font-mono")
-                with ui.column().classes("shrink-0 gap-0"):
+                with ui.column().classes("shrink-0 gap-3"):
                     _tv2_summary(state)
-            with ui.row().classes("w-full justify-between items-center"):
-                ui.button("Back to Model", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/3")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
-                ui.button(
-                    "Continue to Review", icon="arrow_forward", on_click=on_continue,
-                ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
+                    with ui.row().classes("w-full justify-between items-center"):
+                        ui.button("Back to Model", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/3")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
+                        ui.button(
+                            "Continue to Review", icon="arrow_forward", on_click=on_continue,
+                        ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
         _tv2_footer()
 
     # Step 5 — Review & Run ───────────────────────────────────────────────────
@@ -1096,6 +1098,13 @@ def register_pages():
                 ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
                 ui.label("Configure and run a forecast model in a few simple steps.").classes("text-sm text-gray-500")
             _tv2_stepper(5)
+            with ui.row().classes("w-full justify-between items-center"):
+                ui.button("Back to Configuration", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/4")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
+                ui.button(
+                    "Trigger Run", icon="play_arrow", on_click=do_submit,
+                ).classes("bg-blue-700 text-white px-8 rounded-lg").props(
+                    f"{'disabled' if not settings.prefect_api_url else ''} no-caps"
+                )
             with ui.column().classes("w-full gap-4"):
 
                     # Input datasets + filename editing
@@ -1157,13 +1166,6 @@ def register_pages():
 
             result_lbl = ui.label("").classes("text-sm text-gray-500")
 
-            with ui.row().classes("w-full justify-between items-center"):
-                ui.button("Back to Configuration", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/4")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
-                ui.button(
-                    "Trigger Run", icon="play_arrow", on_click=do_submit,
-                ).classes("bg-blue-700 text-white px-8 rounded-lg").props(
-                    f"{'disabled' if not settings.prefect_api_url else ''} no-caps"
-                )
         _tv2_footer()
 
         update_payload()
