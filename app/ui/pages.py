@@ -200,105 +200,270 @@ def register_pages():
 
     @ui.page("/ui/datasets/processed-lab")
     def datasets_processed_lab():
+        from datetime import datetime
+
         _header("/ui/datasets/processed-lab")
-        with ui.column().classes("p-6 w-full"):
-            ui.label("Datasets").classes("text-xl font-semibold mb-4")
+
+        def _ds_type_info(name: str) -> tuple:
+            n = name.lower()
+            if any(k in n for k in ("wastewater", "water")):      return "Wastewater",      "bg-blue-100 text-blue-700"
+            if any(k in n for k in ("consultation", "are ")):      return "Consultation",    "bg-green-100 text-green-700"
+            if any(k in n for k in ("influenza", "flu", "virus")): return "Influenza",       "bg-purple-100 text-purple-700"
+            if any(k in n for k in ("notaufnahme", "emergency")):  return "Emergency",       "bg-orange-100 text-orange-700"
+            if any(k in n for k in ("covid", "hospital")):         return "Hospitalization", "bg-red-100 text-red-700"
+            return "Dataset", "bg-gray-100 text-gray-600"
+
+        def _fmt_date(dt_str: str) -> tuple:
+            if not dt_str:
+                return "—", ""
             try:
-                rows = ckan_client.list_processed_datasets()
-                filter_input = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
-                selected_label = ui.label("No row selected.").classes("text-sm text-gray-500 mt-3")
-                table = ui.table(
-                    columns=[
-                        {"name": "name",        "label": "Name",        "field": "name",        "align": "left", "sortable": True},
-                        {"name": "qid",         "label": "QID",         "field": "qid",         "align": "left", "sortable": True},
-                        {"name": "description", "label": "Description", "field": "description", "align": "left"},
-                        {"name": "doip_url",    "label": "Metadata",    "field": "doip_url",    "align": "left"},
-                        {"name": "components",  "label": "Download",    "field": "components",  "align": "left"},
-                    ],
-                    rows=rows,
-                    row_key="qid",
-                    selection="single",
-                    pagination={"rowsPerPage": 5},
+                s = dt_str.strip()
+                dt = None
+                for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                    try:
+                        dt = datetime.strptime(s[:len(fmt) - fmt.count("%") * 1], fmt)
+                        break
+                    except ValueError:
+                        pass
+                if dt is None:
+                    dt = datetime.strptime(s[:10], "%Y-%m-%d")
+                days = (datetime.now() - dt).days
+                rel = "Today" if days == 0 else "1 day ago" if days == 1 else f"{days} days ago"
+                return dt.strftime("%b %-d, %Y"), rel
+            except Exception:
+                return dt_str, ""
+
+        try:
+            raw_rows = ckan_client.list_processed_datasets()
+        except Exception as e:
+            with ui.column().classes("px-8 py-6"):
+                _error_label(f"Could not load datasets: {e}")
+            return
+
+        all_rows = []
+        for idx, r in enumerate(raw_rows):
+            icon_n, icon_bg, icon_txt = _ds_icon(r["name"], idx)
+            type_label, type_cls      = _ds_type_info(r["name"])
+            date_display, rel_time    = _fmt_date(r.get("last_modified", ""))
+            all_rows.append({**r,
+                "_icon": icon_n, "_icon_bg": icon_bg, "_icon_txt": icon_txt,
+                "_type_label": type_label, "_type_cls": type_cls,
+                "_date_display": date_display, "_rel_time": rel_time,
+            })
+
+        all_types = ["All Types"] + sorted(set(r["_type_label"] for r in all_rows))
+        filtered_rows: list = list(all_rows)
+        current_search = [""]
+        current_type   = ["All Types"]
+        current_sort   = ["Recently Updated"]
+
+        current_url  = [None]
+        current_name = [""]
+
+        def apply_filters():
+            s  = current_search[0].lower()
+            t  = current_type[0]
+            rs = [
+                r for r in all_rows
+                if (not s or s in r["name"].lower() or s in r.get("description", "").lower())
+                and (t == "All Types" or r["_type_label"] == t)
+            ]
+            if current_sort[0] == "Recently Updated":
+                rs.sort(key=lambda r: r.get("last_modified", ""), reverse=True)
+            else:
+                rs.sort(key=lambda r: r["name"].lower())
+            filtered_rows.clear()
+            filtered_rows.extend(rs)
+            count_lbl.refresh()
+            ds_table.refresh()
+
+        @ui.refreshable
+        def count_lbl():
+            n = len(filtered_rows)
+            ui.label(f"Showing {n} dataset{'s' if n != 1 else ''}").classes("text-sm text-gray-500")
+
+        sql_row       = [None]
+        sql_input_ref = [None]
+        data_container_ref = [None]
+
+        def _duckdb_query(url: str, sql: str):
+            conn = duckdb.connect()
+            conn.execute("INSTALL httpfs; LOAD httpfs")
+            conn.execute(f"CREATE VIEW df AS SELECT * FROM read_parquet('{url}')")
+            result = conn.execute(sql).df()
+            conn.close()
+            return result
+
+        def render_preview(df, container):
+            container.clear()
+            with container:
+                ui.label(f"{current_name[0]} — {len(df):,} rows × {len(df.columns)} columns").classes("text-sm text-gray-500 mb-2")
+                cols = [{"name": c, "label": c, "field": c, "align": "left", "sortable": True} for c in df.columns]
+                ui.table(
+                    columns=cols,
+                    rows=df.head(500).astype(str).to_dict("records"),
+                    row_key=df.columns[0],
+                    pagination={"rowsPerPage": 10},
                 ).classes("w-full")
-                table.add_slot('body-cell-doip_url', r'<q-td :props="props"><a :href="props.row.doip_url" target="_blank" class="text-blue-600 hover:underline">Show Metadata</a></q-td>')
-                table.add_slot('body-cell-components', r'<q-td :props="props"><span v-for="c in props.row.components" :key="c.name"><a :href="c.url" target="_blank" class="text-blue-600 hover:underline block">{{ c.name }}</a></span></q-td>')
-                filter_input.bind_value(table, "filter")
 
-                current_df   = [None]
-                current_name = [""]
-                current_url  = [None]
+        @ui.refreshable
+        def ds_table():
+            if not filtered_rows:
+                ui.label("No datasets match your search.").classes("text-sm text-gray-400 py-8 text-center w-full")
+                return
 
-                with ui.row().classes("w-full mt-6 items-end gap-2") as sql_row:
-                    sql_input = ui.input(label="SQL query", value="SELECT * FROM df").classes("flex-1 font-mono text-sm")
-                    run_btn   = ui.button("Run", icon="play_arrow").classes("bg-blue-700 text-white")
-                sql_row.set_visibility(False)
+            tbl = ui.table(
+                columns=[
+                    {"name": "icon",    "label": "",         "field": "name",          "align": "left"},
+                    {"name": "name",    "label": "Name",     "field": "name",          "align": "left", "sortable": True},
+                    {"name": "qid",     "label": "QID",      "field": "qid",           "align": "left"},
+                    {"name": "updated", "label": "Updated",  "field": "last_modified", "align": "left", "sortable": True},
+                    {"name": "type",    "label": "Type",     "field": "_type_label",   "align": "left"},
+                    {"name": "actions", "label": "",         "field": "qid",           "align": "right"},
+                ],
+                rows=filtered_rows,
+                row_key="qid",
+                selection="single",
+                pagination={"rowsPerPage": 5, "sortBy": "last_modified", "descending": True},
+            ).classes("w-full")
 
-                data_container = ui.column().classes("w-full mt-2")
+            tbl.add_slot("body-cell-icon", r'''
+                <q-td :props="props" style="width:56px; padding-right:0">
+                    <div :class="'w-10 h-10 rounded-lg flex items-center justify-center ' + props.row._icon_bg">
+                        <q-icon :name="props.row._icon" :class="props.row._icon_txt" style="font-size:1.2rem"/>
+                    </div>
+                </q-td>''')
 
-                def render_preview(df):
-                    data_container.clear()
-                    with data_container:
-                        ui.label(f"{current_name[0]} — {len(df):,} rows × {len(df.columns)} columns").classes("text-sm text-gray-500 mb-2")
-                        cols = [{"name": c, "label": c, "field": c, "align": "left", "sortable": True} for c in df.columns]
-                        preview_rows = df.head(500).astype(str).to_dict("records")
-                        ui.table(columns=cols, rows=preview_rows, row_key=df.columns[0], pagination={"rowsPerPage": 10}).classes("w-full")
+            tbl.add_slot("body-cell-name", r'''
+                <q-td :props="props" style="max-width:320px">
+                    <div class="font-semibold text-gray-800 text-sm">{{ props.row.name }}</div>
+                    <div class="text-xs text-gray-500 mt-0.5" style="white-space:normal;line-height:1.3">{{ props.row.description }}</div>
+                </q-td>''')
 
-                def _duckdb_query(url: str, sql: str) -> "pd.DataFrame":
-                    conn = duckdb.connect()
-                    conn.execute("INSTALL httpfs; LOAD httpfs")
-                    conn.execute(f"CREATE VIEW df AS SELECT * FROM read_parquet('{url}')")
-                    result = conn.execute(sql).df()
-                    conn.close()
-                    return result
+            tbl.add_slot("body-cell-qid", r'''
+                <q-td :props="props">
+                    <span class="font-mono text-xs text-gray-600">{{ props.row.qid }}</span>
+                </q-td>''')
 
-                async def run_sql():
-                    url = current_url[0]
-                    if url is None:
-                        return
-                    query = sql_input.value.strip() or "SELECT * FROM df LIMIT 500"
-                    try:
-                        result = await run.io_bound(_duckdb_query, url, query)
-                        render_preview(result)
-                    except Exception as ex:
-                        data_container.clear()
-                        with data_container:
-                            _error_label(f"SQL error: {ex}")
+            tbl.add_slot("body-cell-updated", r'''
+                <q-td :props="props">
+                    <div class="text-sm text-gray-700">{{ props.row._date_display }}</div>
+                    <div class="text-xs text-gray-400">{{ props.row._rel_time }}</div>
+                </q-td>''')
 
-                run_btn.on("click", run_sql)
+            tbl.add_slot("body-cell-type", r'''
+                <q-td :props="props">
+                    <span :class="'px-2 py-0.5 rounded-full text-xs font-medium ' + props.row._type_cls">{{ props.row._type_label }}</span>
+                </q-td>''')
 
-                async def on_selection(e):
-                    selected_rows = e.args.get("rows", [])
-                    data_container.clear()
-                    sql_row.set_visibility(False)
-                    current_url[0] = None
-                    if not selected_rows:
-                        selected_label.set_text("No row selected.")
-                        return
-                    row = selected_rows[0]
-                    selected_label.set_text(f"Selected: {row['name']} ({row['qid']})")
-                    components = row.get("components", [])
-                    if not components:
-                        with data_container:
+            tbl.add_slot("body-cell-actions", r'''
+                <q-td :props="props">
+                    <q-btn flat round dense icon="more_vert" size="sm" class="text-gray-400">
+                        <q-menu>
+                            <q-list dense>
+                                <q-item clickable v-close-popup :href="props.row.doip_url" target="_blank">
+                                    <q-item-section>Show Metadata</q-item-section>
+                                </q-item>
+                                <q-item v-for="c in props.row.components" :key="c.name" clickable v-close-popup :href="c.url" target="_blank">
+                                    <q-item-section>Download {{ c.name }}</q-item-section>
+                                </q-item>
+                            </q-list>
+                        </q-menu>
+                    </q-btn>
+                </q-td>''')
+
+            async def on_selection(e):
+                selected = e.args.get("rows", [])
+                sr = sql_row[0]
+                dc = data_container_ref[0]
+                if sr:
+                    sr.set_visibility(False)
+                if dc:
+                    dc.clear()
+                current_url[0] = None
+                if not selected:
+                    return
+                row = selected[0]
+                components = row.get("components", [])
+                if not components:
+                    if dc:
+                        with dc:
                             ui.label("No downloadable components for this dataset.").classes("text-sm text-gray-500")
-                        return
-                    component = components[0]
-                    current_name[0] = component["name"]
-                    current_url[0]  = component["url"]
-                    with data_container:
+                    return
+                component = components[0]
+                current_name[0] = component["name"]
+                current_url[0]  = component["url"]
+                if dc:
+                    with dc:
                         ui.spinner(size="lg")
-                    try:
-                        df = await run.io_bound(_duckdb_query, component["url"], "SELECT * FROM df LIMIT 500")
-                        sql_input.value = "SELECT * FROM df LIMIT 500"
-                        sql_row.set_visibility(True)
-                        render_preview(df)
-                    except Exception as ex:
-                        data_container.clear()
-                        with data_container:
+                try:
+                    df = await run.io_bound(_duckdb_query, component["url"], "SELECT * FROM df LIMIT 500")
+                    if sql_input_ref[0]:
+                        sql_input_ref[0].value = "SELECT * FROM df LIMIT 500"
+                    if sr:
+                        sr.set_visibility(True)
+                    if dc:
+                        render_preview(df, dc)
+                except Exception as ex:
+                    if dc:
+                        dc.clear()
+                        with dc:
                             _error_label(f"Could not load component: {ex}")
 
-                table.on("selection", on_selection)
-            except Exception as e:
-                _error_label(f"Could not load processed datasets: {e}")
+            tbl.on("selection", on_selection)
+
+        with ui.column().classes("px-8 py-6 w-full gap-4"):
+            ui.label("Datasets").classes("text-3xl font-bold text-gray-900")
+            ui.label("Browse, explore and download available datasets.").classes("text-sm text-gray-500 -mt-2")
+
+            with ui.row().classes("w-full items-center gap-3"):
+                with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
+                    ui.icon("search").classes("text-gray-400 shrink-0")
+                    ui.input(
+                        placeholder="Search datasets...",
+                        on_change=lambda e: (current_search.__setitem__(0, e.value), apply_filters()),
+                    ).props("borderless dense").classes("flex-1 text-sm")
+                ui.select(
+                    options=all_types,
+                    value="All Types",
+                    on_change=lambda e: (current_type.__setitem__(0, e.value), apply_filters()),
+                ).props("outlined dense options-dense").classes("text-sm")
+                ui.select(
+                    options=["Recently Updated", "Name A–Z"],
+                    value="Recently Updated",
+                    on_change=lambda e: (current_sort.__setitem__(0, e.value), apply_filters()),
+                ).props("outlined dense options-dense").classes("text-sm")
+
+            count_lbl()
+
+            with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-hidden"):
+                ds_table()
+
+            async def run_sql():
+                url = current_url[0]
+                if url is None:
+                    return
+                dc = data_container_ref[0]
+                query = sql_input_ref[0].value.strip() if sql_input_ref[0] else "SELECT * FROM df LIMIT 500"
+                try:
+                    result = await run.io_bound(_duckdb_query, url, query or "SELECT * FROM df LIMIT 500")
+                    if dc:
+                        render_preview(result, dc)
+                except Exception as ex:
+                    if dc:
+                        dc.clear()
+                        with dc:
+                            _error_label(f"SQL error: {ex}")
+
+            with ui.row().classes("w-full items-end gap-2") as _sql_row:
+                sql_inp = ui.input(label="SQL query", value="SELECT * FROM df LIMIT 500").classes("flex-1 font-mono text-sm")
+                ui.button("Run", icon="play_arrow", on_click=run_sql).classes("bg-blue-700 text-white")
+            _sql_row.set_visibility(False)
+            sql_row[0]       = _sql_row
+            sql_input_ref[0] = sql_inp
+
+            _dc = ui.column().classes("w-full")
+            data_container_ref[0] = _dc
 
     @ui.page("/ui/models")
     def models():
