@@ -1,17 +1,18 @@
 import json
 import duckdb
-from nicegui import ui, run
+from nicegui import ui, run, app as _napp
 
 from app.clients import ckan as ckan_client
 from app.config import settings
 
 
 NAV_ITEMS = [
-    ("Datasets – Raw",            "/ui/datasets/raw"),
-    ("Datasets",                   "/ui/datasets/processed-lab"),
-    ("Models",                    "/ui/models"),
-    ("Model Runs",                "/ui/model-runs"),
-    ("Trigger",                   "/ui/trigger"),
+    ("Datasets – Raw",  "/ui/datasets/raw"),
+    ("Datasets",        "/ui/datasets/processed-lab"),
+    ("Models",          "/ui/models"),
+    ("Model Runs",      "/ui/model-runs"),
+    ("Trigger",         "/ui/trigger"),
+    ("Trigger v2",      "/ui/trigger-v2/1"),
 ]
 
 
@@ -20,7 +21,9 @@ def _header(current: str = ""):
         ui.label("EPISERVE").classes("text-lg font-bold tracking-wide")
         with ui.row().classes("gap-8 items-center"):
             for label, path in NAV_ITEMS:
-                active = current == path
+                active = current == path or (
+                    "/trigger-v2" in path and current.startswith("/ui/trigger-v2")
+                )
                 ui.link(label, path).classes(
                     "text-sm no-underline font-medium " +
                     ("text-blue-700 border-b-2 border-blue-700 pb-0.5" if active else "text-gray-600 hover:text-blue-700")
@@ -30,6 +33,149 @@ def _header(current: str = ""):
 def _error_label(msg: str):
     ui.label(f"⚠ {msg}").classes("text-red-600 text-sm mt-2")
 
+
+# ─── Trigger v2 helpers ────────────────────────────────────────────────────────
+
+_TV2_STEPS = [
+    (1, "Datasets",      "Choose input datasets"),
+    (2, "Transforms",    "SQL per dataset"),
+    (3, "Model",         "Select model"),
+    (4, "Configuration", "JSON parameters"),
+    (5, "Review & Run",  "Validate and run"),
+]
+
+_DS_PALETTE = [
+    ("water_drop",              "bg-blue-100",   "text-blue-500"),
+    ("groups",                  "bg-green-100",  "text-green-600"),
+    ("science",                 "bg-purple-100", "text-purple-600"),
+    ("trending_up",             "bg-orange-100", "text-orange-500"),
+    ("local_hospital",          "bg-red-100",    "text-red-500"),
+    ("analytics",               "bg-teal-100",   "text-teal-600"),
+    ("hub",                     "bg-indigo-100", "text-indigo-600"),
+]
+
+_MODEL_PALETTE = [
+    ("precision_manufacturing", "bg-blue-100",   "text-blue-500"),
+    ("psychology",              "bg-purple-100", "text-purple-600"),
+    ("auto_graph",              "bg-green-100",  "text-green-600"),
+    ("hub",                     "bg-orange-100", "text-orange-500"),
+    ("biotech",                 "bg-teal-100",   "text-teal-600"),
+]
+
+
+def _tv2_state() -> dict:
+    if "tv2" not in _napp.storage.user:
+        _napp.storage.user["tv2"] = {
+            "datasets": [],
+            "model": None,
+            "sql": {},
+            "config": '{\n  "horizon_weeks": 4,\n  "n_reference_weeks": 4\n}',
+            "filenames": {},
+        }
+    return _napp.storage.user["tv2"]
+
+
+def _ds_icon(name: str, idx: int):
+    n = name.lower()
+    if any(k in n for k in ("wastewater", "water")):      return _DS_PALETTE[0]
+    if any(k in n for k in ("consultation", "are ")):      return _DS_PALETTE[1]
+    if any(k in n for k in ("influenza", "flu", "virus")): return _DS_PALETTE[2]
+    if any(k in n for k in ("notaufnahme", "emergency")):  return _DS_PALETTE[3]
+    if any(k in n for k in ("covid", "hospital")):         return _DS_PALETTE[4]
+    return _DS_PALETTE[idx % len(_DS_PALETTE)]
+
+
+def _tv2_stepper(current_step: int):
+    with ui.row().classes("w-full items-center gap-0"):
+        for i, (n, title, desc) in enumerate(_TV2_STEPS):
+            active = n == current_step
+            done   = n < current_step
+            with ui.row().classes("items-center gap-3 shrink-0"):
+                circle_cls = (
+                    "w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 "
+                    + ("bg-blue-700 text-white" if (active or done) else "border-2 border-gray-300 text-gray-400")
+                )
+                with ui.element("div").classes(circle_cls):
+                    if done:
+                        ui.icon("check").classes("text-sm")
+                    else:
+                        ui.label(str(n))
+                with ui.column().classes("gap-0"):
+                    ui.label(title).classes(
+                        "text-sm font-semibold "
+                        + ("text-blue-700" if active else "text-gray-700" if done else "text-gray-400")
+                    )
+                    ui.label(desc).classes("text-xs text-gray-400")
+            if i < len(_TV2_STEPS) - 1:
+                ui.element("div").classes(
+                    "flex-1 h-px mx-4 " + ("bg-blue-300" if done else "bg-gray-200")
+                )
+
+
+def _tv2_summary(state: dict, hint: str = ""):
+    DOT = ["bg-blue-500", "bg-green-500", "bg-purple-500", "bg-orange-500", "bg-red-500", "bg-teal-500"]
+    with ui.element("div").classes("w-72 shrink-0 border border-gray-200 rounded-xl p-5 bg-white"):
+        ui.label("Run Summary").classes("text-base font-bold text-gray-900")
+        ui.label("Your selections will appear here.").classes("text-xs text-gray-400 mb-3")
+
+        with ui.row().classes("w-full items-start gap-3 py-3 border-b border-gray-100"):
+            ui.icon("storage").classes("text-blue-600 mt-0.5 shrink-0")
+            with ui.column().classes("flex-1 gap-1 min-w-0"):
+                with ui.row().classes("w-full items-center justify-between"):
+                    ui.label("Datasets").classes("text-sm font-semibold text-gray-800")
+                    n_ds = len(state.get("datasets", []))
+                    if n_ds:
+                        with ui.element("div").classes("bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full font-medium shrink-0"):
+                            ui.label(f"{n_ds} selected")
+                for i, ds in enumerate(state.get("datasets", [])):
+                    with ui.row().classes("items-center gap-2"):
+                        ui.element("div").classes(f"w-2 h-2 rounded-full shrink-0 {DOT[i % len(DOT)]}")
+                        ui.label(ds["name"]).classes("text-xs text-gray-600 truncate")
+                if not state.get("datasets"):
+                    ui.label("None selected").classes("text-xs text-gray-400")
+
+        with ui.row().classes("w-full items-start gap-3 py-3 border-b border-gray-100"):
+            ui.icon("view_in_ar").classes("text-blue-600 mt-0.5 shrink-0")
+            with ui.column().classes("flex-1 gap-0"):
+                ui.label("Model").classes("text-sm font-semibold text-gray-800")
+                m = state.get("model")
+                if m:
+                    ui.label(f"{m['name']} ({m['docker_tag']})").classes("text-xs text-gray-600")
+                else:
+                    ui.label("Not selected yet").classes("text-xs text-gray-400")
+
+        with ui.row().classes("w-full items-start gap-3 py-3 border-b border-gray-100"):
+            ui.icon("tune").classes("text-blue-600 mt-0.5 shrink-0")
+            with ui.column().classes("flex-1 gap-0"):
+                ui.label("Configuration").classes("text-sm font-semibold text-gray-800")
+                cfg = state.get("config", "").strip()
+                try:
+                    parsed = json.loads(cfg)
+                    keys = list(parsed.keys())
+                    summary = ", ".join(f"{k}: {parsed[k]}" for k in keys[:2]) if keys else "Configured"
+                    ui.label(summary).classes("text-xs text-gray-600")
+                except Exception:
+                    ui.label("Not configured yet").classes("text-xs text-gray-400")
+
+        with ui.row().classes("w-full items-start gap-3 py-3"):
+            ui.icon("schedule").classes("text-blue-600 mt-0.5 shrink-0")
+            with ui.column().classes("flex-1 gap-0"):
+                ui.label("Estimated Runtime").classes("text-sm font-semibold text-gray-800")
+                ui.label("—").classes("text-xs text-gray-400")
+
+    if hint:
+        with ui.row().classes("w-72 shrink-0 items-center gap-3 p-4 bg-blue-50 rounded-xl border border-blue-100 mt-3"):
+            ui.icon("info_outline").classes("text-blue-500 shrink-0")
+            ui.label(hint).classes("text-sm text-blue-700")
+
+
+def _tv2_footer():
+    with ui.row().classes("w-full justify-center items-center gap-2 py-6 mt-4 border-t border-gray-100"):
+        ui.icon("lock").classes("text-gray-400 text-sm")
+        ui.label("All runs are logged and reproducible.").classes("text-xs text-gray-400")
+
+
+# ─── Page registrations ────────────────────────────────────────────────────────
 
 def register_pages():
 
@@ -82,12 +228,10 @@ def register_pages():
                 table.add_slot('body-cell-components', r'<q-td :props="props"><span v-for="c in props.row.components" :key="c.name"><a :href="c.url" target="_blank" class="text-blue-600 hover:underline block">{{ c.name }}</a></span></q-td>')
                 filter_input.bind_value(table, "filter")
 
-                # mutable state shared across closures
                 current_df   = [None]
                 current_name = [""]
                 current_url  = [None]
 
-                # SQL input row — hidden until a dataset is loaded
                 with ui.row().classes("w-full mt-6 items-end gap-2") as sql_row:
                     sql_input = ui.input(label="SQL query", value="SELECT * FROM df").classes("flex-1 font-mono text-sm")
                     run_btn   = ui.button("Run", icon="play_arrow").classes("bg-blue-700 text-white")
@@ -245,7 +389,6 @@ def register_pages():
                     "Complete each step below, then click Pre-flight Check to review and submit."
                 ).classes("text-sm text-gray-500")
 
-            # ── Step 1: Input Datasets ──────────────────────────────────
             ctx1, dataset_status = _step_row(1, "Input Datasets", "Select the dataset(s)\nto use as input.")
             try:
                 dataset_rows = ckan_client.list_processed_datasets()
@@ -269,7 +412,6 @@ def register_pages():
                 dataset_table = None
             ctx1.__exit__(None, None, None)
 
-            # ── Step 2: Model ───────────────────────────────────────────
             ctx2, model_status = _step_row(2, "Model", "Select the model\nto run.")
             try:
                 model_rows = ckan_client.list_models()
@@ -309,7 +451,6 @@ def register_pages():
                 model_table = None
             ctx2.__exit__(None, None, None)
 
-            # ── Step 3: Dataset Transformation ──────────────────────────
             def _has_sql(val: str) -> bool:
                 return any(
                     line.strip() and not line.strip().startswith("--")
@@ -390,7 +531,6 @@ def register_pages():
                 dataset_table.on("selection", rebuild_sql_inputs)
             ctx3.__exit__(None, None, None)
 
-            # ── Step 4: Config ──────────────────────────────────────────
             ctx4, _ = _step_row(4, "Config (JSON)", "Provide configuration\nin JSON format.", is_last=True)
 
             def format_json():
@@ -411,7 +551,6 @@ def register_pages():
 
             result_label = ui.label("").classes("text-sm text-gray-500")
 
-            # ── Pre-flight dialog ───────────────────────────────────────
             filename_inputs = []
 
             with ui.dialog() as preflight_dialog:
@@ -527,3 +666,510 @@ def register_pages():
                 ui.button("Pre-flight Check", icon="checklist", on_click=open_preflight).classes("bg-blue-700 text-white")
                 ui.label("Validate all steps before running the model.").classes("text-sm text-gray-500")
             result_label
+
+    # ─── Trigger v2 wizard (5 steps) ─────────────────────────────────────────
+
+    @ui.page("/ui/trigger-v2")
+    def _tv2_redirect():
+        ui.navigate.to("/ui/trigger-v2/1")
+
+    # Step 1 — Datasets ───────────────────────────────────────────────────────
+
+    @ui.page("/ui/trigger-v2/1")
+    def trigger_v2_step1():
+        state = _tv2_state()
+        try:
+            all_ds = ckan_client.list_processed_datasets()
+        except Exception:
+            all_ds = []
+
+        selected_qids: set = set(d["qid"] for d in state.get("datasets", []))
+        visible: list = list(all_ds)
+
+        def toggle(qid: str):
+            if qid in selected_qids:
+                selected_qids.discard(qid)
+            else:
+                selected_qids.add(qid)
+            state["datasets"] = [r for r in all_ds if r["qid"] in selected_qids]
+            _napp.storage.user["tv2"] = state
+            dataset_cards.refresh()
+            bottom_bar.refresh()
+            run_summary.refresh()
+
+        def clear_all():
+            selected_qids.clear()
+            state["datasets"] = []
+            _napp.storage.user["tv2"] = state
+            dataset_cards.refresh()
+            bottom_bar.refresh()
+            run_summary.refresh()
+
+        def do_filter(v: str):
+            vl = v.lower()
+            visible.clear()
+            visible.extend(
+                r for r in all_ds
+                if not vl or vl in r["name"].lower() or vl in r.get("description", "").lower()
+            )
+            dataset_cards.refresh()
+
+        def on_continue():
+            if not selected_qids:
+                ui.notify("Select at least one dataset", type="warning", position="top")
+                return
+            ui.navigate.to("/ui/trigger-v2/2")
+
+        @ui.refreshable
+        def dataset_cards():
+            if not visible:
+                ui.label(
+                    "No datasets match your filter." if all_ds else "No datasets available."
+                ).classes("text-sm text-gray-400 py-8 text-center w-full")
+                return
+            for idx, row in enumerate(visible):
+                qid = row["qid"]
+                sel = qid in selected_qids
+                icon_n, icon_bg, icon_txt = _ds_icon(row["name"], idx)
+                card_cls = (
+                    "w-full border rounded-xl p-4 cursor-pointer flex items-center gap-4 mb-2 "
+                    + ("border-blue-500 bg-blue-50" if sel else "border-gray-200 bg-white hover:border-gray-300")
+                )
+                with ui.element("div").classes(card_cls).on("click", lambda _, q=qid: toggle(q)):
+                    with ui.element("div").classes(f"w-10 h-10 rounded-lg flex items-center justify-center shrink-0 {icon_bg}"):
+                        ui.icon(icon_n).classes(f"text-xl {icon_txt}")
+                    with ui.column().classes("flex-1 gap-0 min-w-0"):
+                        ui.label(row["name"]).classes("text-sm font-semibold text-gray-800")
+                        desc = (row.get("description") or "")[:100]
+                        if desc:
+                            ui.label(desc).classes("text-xs text-gray-500 mt-0.5")
+                    with ui.element("div").classes("bg-gray-100 text-gray-500 text-xs px-2 py-0.5 rounded font-mono shrink-0"):
+                        ui.label(row.get("qid", ""))
+                    if sel:
+                        with ui.element("div").classes("w-5 h-5 bg-blue-600 rounded flex items-center justify-center shrink-0"):
+                            ui.icon("check").classes("text-white").style("font-size: 14px")
+                    else:
+                        ui.element("div").classes("w-5 h-5 border-2 border-gray-300 rounded shrink-0")
+
+        @ui.refreshable
+        def bottom_bar():
+            n = len(selected_qids)
+            with ui.row().classes("w-full items-center justify-between pt-3 border-t border-gray-100 mt-2"):
+                if n:
+                    with ui.row().classes("items-center gap-2"):
+                        ui.icon("check_circle").classes("text-green-500")
+                        ui.label(f"{n} dataset{'s' if n != 1 else ''} selected").classes("text-sm font-medium text-gray-700")
+                else:
+                    ui.label("No datasets selected").classes("text-sm text-gray-400")
+                if n:
+                    ui.button("Clear selection", on_click=clear_all).props("flat dense no-caps").classes("text-sm text-blue-600")
+
+        @ui.refreshable
+        def run_summary():
+            _tv2_summary(state, hint="" if selected_qids else "Select datasets to continue.")
+
+        _header("/ui/trigger-v2/1")
+        with ui.column().classes("px-8 py-6 w-full gap-5"):
+            with ui.column().classes("gap-1"):
+                ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
+                ui.label("Configure and run a forecast model in a few simple steps.").classes("text-sm text-gray-500")
+            _tv2_stepper(1)
+            with ui.row().classes("w-full gap-6 items-start"):
+                with ui.element("div").classes("flex-1 border border-gray-200 rounded-xl p-5 bg-white"):
+                    with ui.row().classes("w-full items-start justify-between mb-4"):
+                        with ui.column().classes("gap-0"):
+                            ui.label("1. Select Input Datasets").classes("text-lg font-bold text-gray-900")
+                            ui.label("Choose one or more datasets to use as input.").classes("text-sm text-gray-500 mt-1")
+                        with ui.row().classes("border border-gray-200 rounded-lg px-3 py-1.5 items-center gap-2 shrink-0"):
+                            ui.icon("search").classes("text-gray-400")
+                            ui.input(
+                                placeholder="Search datasets...",
+                                on_change=lambda e: do_filter(e.value),
+                            ).props("borderless dense").classes("w-44 text-sm")
+                    dataset_cards()
+                    bottom_bar()
+                with ui.column().classes("shrink-0 gap-0"):
+                    run_summary()
+            with ui.row().classes("w-full justify-center"):
+                ui.button(
+                    "Continue to Transformations", icon="arrow_forward", on_click=on_continue,
+                ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
+        _tv2_footer()
+
+    # Step 2 — Dataset Transformations ────────────────────────────────────────
+
+    @ui.page("/ui/trigger-v2/2")
+    def trigger_v2_step2():
+        state = _tv2_state()
+        if not state.get("datasets"):
+            ui.navigate.to("/ui/trigger-v2/1")
+            return
+
+        datasets = state.get("datasets", [])
+        sql_refs: dict = {}
+
+        def make_verify(inp):
+            def verify():
+                sql = inp.value.strip()
+                if not sql:
+                    ui.notify("Enter a SQL query to verify", type="warning", position="top")
+                    return
+                try:
+                    duckdb.connect().execute(f"EXPLAIN {sql}")
+                    ui.notify("SQL syntax is valid", type="positive", position="top")
+                except duckdb.ParserException as ex:
+                    ui.notify(f"Syntax error: {ex}", type="negative", position="top")
+                except Exception:
+                    ui.notify("SQL syntax is valid", type="positive", position="top")
+            return verify
+
+        def make_format_sql(inp):
+            def fmt():
+                try:
+                    import sqlparse
+                    inp.value = sqlparse.format(inp.value, reindent=True, keyword_case="upper")
+                except ImportError:
+                    ui.notify("sqlparse not available", type="warning", position="top")
+                except Exception as ex:
+                    ui.notify(f"Format error: {ex}", type="negative", position="top")
+            return fmt
+
+        def on_continue():
+            state["sql"] = {qid: inp.value for qid, inp in sql_refs.items()}
+            _napp.storage.user["tv2"] = state
+            ui.navigate.to("/ui/trigger-v2/3")
+
+        _header("/ui/trigger-v2/2")
+        with ui.column().classes("px-8 py-6 w-full gap-5"):
+            with ui.column().classes("gap-1"):
+                ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
+                ui.label("Configure and run a forecast model in a few simple steps.").classes("text-sm text-gray-500")
+            _tv2_stepper(2)
+            with ui.row().classes("w-full gap-6 items-start"):
+                with ui.element("div").classes("flex-1 border border-gray-200 rounded-xl p-5 bg-white"):
+                    with ui.column().classes("gap-0 mb-4"):
+                        ui.label("2. Dataset Transformations").classes("text-lg font-bold text-gray-900")
+                        ui.label(
+                            "Optionally define a SQL transformation for each selected dataset. "
+                            "Leave the default comment to skip."
+                        ).classes("text-sm text-gray-500 mt-1")
+                    for row in datasets:
+                        qid = row["qid"]
+                        prev = state.get("sql", {}).get(qid, "")
+                        with ui.column().classes("w-full gap-2 mb-5"):
+                            ui.label(row["name"]).classes("text-sm font-semibold text-gray-700")
+                            inp = ui.codemirror(
+                                value=prev if prev else "-- SELECT * FROM df WHERE column = 'value'",
+                                language="sql",
+                            ).classes("w-full text-sm rounded border border-gray-200").style("height: 120px")
+                            sql_refs[qid] = inp
+                            with ui.row().classes("w-full justify-end gap-2"):
+                                ui.button(
+                                    "Format SQL", icon="auto_fix_high", on_click=make_format_sql(inp),
+                                ).props("flat dense no-caps").classes("text-xs text-gray-500")
+                                ui.button(
+                                    "Verify SQL", icon="check", on_click=make_verify(inp),
+                                ).classes("bg-blue-700 text-white text-xs").props("no-caps dense")
+                with ui.column().classes("shrink-0 gap-0"):
+                    _tv2_summary(state)
+            with ui.row().classes("w-full justify-between items-center"):
+                ui.button("Back to Datasets", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/1")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
+                ui.button(
+                    "Continue to Model", icon="arrow_forward", on_click=on_continue,
+                ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
+        _tv2_footer()
+
+    # Step 3 — Model ──────────────────────────────────────────────────────────
+
+    @ui.page("/ui/trigger-v2/3")
+    def trigger_v2_step3():
+        state = _tv2_state()
+        if not state.get("datasets"):
+            ui.navigate.to("/ui/trigger-v2/1")
+            return
+
+        try:
+            all_models = ckan_client.list_models()
+        except Exception:
+            all_models = []
+
+        sel_name: list = [state["model"]["name"] if state.get("model") else ""]
+        visible_models: list = list(all_models)
+
+        def select_model(name: str):
+            if sel_name[0] == name:
+                sel_name[0] = ""
+                state["model"] = None
+            else:
+                sel_name[0] = name
+                state["model"] = next((m for m in all_models if m["name"] == name), None)
+            _napp.storage.user["tv2"] = state
+            model_cards.refresh()
+            run_summary.refresh()
+
+        def do_filter(v: str):
+            vl = v.lower()
+            visible_models.clear()
+            visible_models.extend(
+                m for m in all_models
+                if not vl or vl in m["name"].lower() or vl in m.get("description", "").lower()
+            )
+            model_cards.refresh()
+
+        def on_continue():
+            if not sel_name[0]:
+                ui.notify("Select a model", type="warning", position="top")
+                return
+            ui.navigate.to("/ui/trigger-v2/4")
+
+        @ui.refreshable
+        def model_cards():
+            if not visible_models:
+                ui.label("No models available.").classes("text-sm text-gray-400 py-8 text-center w-full")
+                return
+            for idx, m in enumerate(visible_models):
+                sel = sel_name[0] == m["name"]
+                icon_n, icon_bg, icon_txt = _MODEL_PALETTE[idx % len(_MODEL_PALETTE)]
+                card_cls = (
+                    "w-full border rounded-xl p-4 cursor-pointer flex items-center gap-4 mb-2 "
+                    + ("border-blue-500 bg-blue-50" if sel else "border-gray-200 bg-white hover:border-gray-300")
+                )
+                with ui.element("div").classes(card_cls).on("click", lambda _, n=m["name"]: select_model(n)):
+                    with ui.element("div").classes(f"w-10 h-10 rounded-lg flex items-center justify-center shrink-0 {icon_bg}"):
+                        ui.icon(icon_n).classes(f"text-xl {icon_txt}")
+                    with ui.column().classes("flex-1 gap-0 min-w-0"):
+                        ui.label(m["name"]).classes("text-sm font-semibold text-gray-800")
+                        desc = (m.get("description") or "")[:100]
+                        if desc:
+                            ui.label(desc).classes("text-xs text-gray-500 mt-0.5")
+                    with ui.element("div").classes("bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded font-mono shrink-0"):
+                        ui.label(m.get("docker_tag", ""))
+                    if sel:
+                        with ui.element("div").classes("w-5 h-5 bg-blue-600 rounded-full flex items-center justify-center shrink-0"):
+                            ui.icon("check").classes("text-white").style("font-size: 14px")
+                    else:
+                        ui.element("div").classes("w-5 h-5 border-2 border-gray-300 rounded-full shrink-0")
+
+        @ui.refreshable
+        def run_summary():
+            _tv2_summary(state, hint="" if sel_name[0] else "Select a model to continue.")
+
+        _header("/ui/trigger-v2/3")
+        with ui.column().classes("px-8 py-6 w-full gap-5"):
+            with ui.column().classes("gap-1"):
+                ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
+                ui.label("Configure and run a forecast model in a few simple steps.").classes("text-sm text-gray-500")
+            _tv2_stepper(3)
+            with ui.row().classes("w-full gap-6 items-start"):
+                with ui.element("div").classes("flex-1 border border-gray-200 rounded-xl p-5 bg-white"):
+                    with ui.row().classes("w-full items-start justify-between mb-4"):
+                        with ui.column().classes("gap-0"):
+                            ui.label("3. Select Model").classes("text-lg font-bold text-gray-900")
+                            ui.label("Choose the forecasting model to run.").classes("text-sm text-gray-500 mt-1")
+                        with ui.row().classes("border border-gray-200 rounded-lg px-3 py-1.5 items-center gap-2 shrink-0"):
+                            ui.icon("search").classes("text-gray-400")
+                            ui.input(
+                                placeholder="Filter models...",
+                                on_change=lambda e: do_filter(e.value),
+                            ).props("borderless dense").classes("w-44 text-sm")
+                    model_cards()
+                with ui.column().classes("shrink-0 gap-0"):
+                    run_summary()
+            with ui.row().classes("w-full justify-between items-center"):
+                ui.button("Back to Transformations", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/2")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
+                ui.button(
+                    "Continue to Configuration", icon="arrow_forward", on_click=on_continue,
+                ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
+        _tv2_footer()
+
+    # Step 4 — Configuration ──────────────────────────────────────────────────
+
+    @ui.page("/ui/trigger-v2/4")
+    def trigger_v2_step4():
+        state = _tv2_state()
+        if not state.get("datasets"):
+            ui.navigate.to("/ui/trigger-v2/1")
+            return
+        if not state.get("model"):
+            ui.navigate.to("/ui/trigger-v2/3")
+            return
+
+        def format_json():
+            try:
+                config_inp.value = json.dumps(json.loads(config_inp.value), indent=2)
+            except json.JSONDecodeError as e:
+                ui.notify(f"Invalid JSON: {e}", type="negative", position="top")
+
+        def on_continue():
+            state["config"] = config_inp.value
+            _napp.storage.user["tv2"] = state
+            ui.navigate.to("/ui/trigger-v2/5")
+
+        _header("/ui/trigger-v2/4")
+        with ui.column().classes("px-8 py-6 w-full gap-5"):
+            with ui.column().classes("gap-1"):
+                ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
+                ui.label("Configure and run a forecast model in a few simple steps.").classes("text-sm text-gray-500")
+            _tv2_stepper(4)
+            with ui.row().classes("w-full gap-6 items-start"):
+                with ui.element("div").classes("flex-1 border border-gray-200 rounded-xl p-5 bg-white"):
+                    with ui.row().classes("w-full items-start justify-between mb-3"):
+                        with ui.column().classes("gap-0"):
+                            ui.label("4. Model Configuration (JSON)").classes("text-lg font-bold text-gray-900")
+                            ui.label("Provide configuration parameters for the model.").classes("text-sm text-gray-500 mt-1")
+                        with ui.row().classes("gap-1 shrink-0"):
+                            ui.button(icon="close", on_click=lambda: config_inp.set_value("")).props("flat round dense").classes("text-gray-400")
+                            ui.button("Format", icon="auto_fix_high", on_click=format_json).props("flat dense no-caps").classes("text-xs text-gray-500")
+                    config_inp = ui.codemirror(
+                        value=state.get("config", '{\n  "horizon_weeks": 4,\n  "n_reference_weeks": 4\n}'),
+                        language="json",
+                    ).classes("w-full font-mono")
+                with ui.column().classes("shrink-0 gap-0"):
+                    _tv2_summary(state)
+            with ui.row().classes("w-full justify-between items-center"):
+                ui.button("Back to Model", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/3")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
+                ui.button(
+                    "Continue to Review", icon="arrow_forward", on_click=on_continue,
+                ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
+        _tv2_footer()
+
+    # Step 5 — Review & Run ───────────────────────────────────────────────────
+
+    @ui.page("/ui/trigger-v2/5")
+    def trigger_v2_step5():
+        state = _tv2_state()
+        if not state.get("datasets"):
+            ui.navigate.to("/ui/trigger-v2/1")
+            return
+        if not state.get("model"):
+            ui.navigate.to("/ui/trigger-v2/3")
+            return
+
+        datasets = state.get("datasets", [])
+        model    = state["model"]
+        filename_refs: list = []  # (data_path, inp_widget, sql_val)
+
+        def _has_sql(val: str) -> bool:
+            return any(line.strip() and not line.strip().startswith("--") for line in val.splitlines())
+
+        def build_payload() -> dict:
+            try:
+                config = json.loads(state.get("config", "{}"))
+            except Exception:
+                config = {}
+            return {
+                "parameters": {
+                    "input_data_files":        [[dp, inp.value.strip()] for dp, inp, _ in filename_refs],
+                    "model_image":             model["docker_image"],
+                    "model_tag":               model["docker_tag"],
+                    "config_json":             json.dumps(config),
+                    "data_transformation_sql": [sql if _has_sql(sql) else "" for _, _, sql in filename_refs],
+                }
+            }
+
+        def update_payload():
+            payload_lbl.set_text(json.dumps(build_payload(), indent=2))
+
+        def do_submit():
+            filenames = [inp.value.strip() for _, inp, _ in filename_refs]
+            if len(filenames) != len(set(filenames)):
+                ui.notify("All target filenames must be unique", type="negative", position="top")
+                return
+            try:
+                json.loads(state.get("config", "{}"))
+            except json.JSONDecodeError as e:
+                ui.notify(f"Invalid config JSON: {e}", type="negative", position="top")
+                return
+            from app.clients import prefect as prefect_client
+            try:
+                p = build_payload()["parameters"]
+                result = prefect_client.trigger_model_run(
+                    input_data_files=p["input_data_files"],
+                    model_image=p["model_image"],
+                    model_tag=p["model_tag"],
+                    config_json=p["config_json"],
+                    data_transformation_sql=p["data_transformation_sql"],
+                )
+                result_lbl.set_text(f"Triggered: {result['prefect_flow_run_id']} ({result['status']})")
+                result_lbl.classes(remove="text-gray-500", add="text-green-600 font-medium")
+                ui.notify("Model run triggered", type="positive", position="top")
+            except Exception as exc:
+                ui.notify(f"Prefect error: {exc}", type="negative", position="top")
+
+        _header("/ui/trigger-v2/5")
+        with ui.column().classes("px-8 py-6 w-full gap-5"):
+            with ui.column().classes("gap-1"):
+                ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
+                ui.label("Configure and run a forecast model in a few simple steps.").classes("text-sm text-gray-500")
+            _tv2_stepper(5)
+            with ui.column().classes("w-full gap-4"):
+
+                    # Input datasets + filename editing
+                    with ui.element("div").classes("w-full border border-gray-200 rounded-xl p-5 bg-white"):
+                        ui.label("Input Datasets").classes("text-base font-bold text-gray-900 mb-3")
+                        for idx, row in enumerate(datasets):
+                            qid           = row["qid"]
+                            original_name = row["data_path"].split("/")[-1] if row.get("data_path") else ""
+                            suffix        = "." + original_name.rsplit(".", 1)[-1] if "." in original_name else ""
+                            default_fn    = state.get("filenames", {}).get(
+                                qid, f"input{'' if idx == 0 else idx + 1}{suffix}"
+                            )
+                            sql_val = state.get("sql", {}).get(qid, "")
+                            with ui.column().classes("w-full gap-2 border border-gray-100 rounded-lg p-3 mb-2"):
+                                ui.label(row["name"]).classes("text-xs text-gray-500 uppercase tracking-wide font-semibold")
+                                with ui.row().classes("w-full gap-6 items-start"):
+                                    with ui.column().classes("gap-0"):
+                                        ui.label("Original filename").classes("text-xs text-gray-400")
+                                        ui.label(original_name or "—").classes("text-sm font-mono text-gray-700")
+                                    with ui.column().classes("flex-1 gap-0"):
+                                        ui.label("Target filename").classes("text-xs text-gray-400")
+                                        ui.label("(name the model-runner will see)").classes("text-xs text-red-400")
+                                        inp = ui.input(
+                                            value=default_fn,
+                                            on_change=update_payload,
+                                        ).classes("w-full font-mono text-sm").style("background-color: #f0fdf4")
+                                if _has_sql(sql_val):
+                                    with ui.column().classes("gap-0 mt-1"):
+                                        ui.label("Transform (SQL)").classes("text-xs text-gray-400")
+                                        ui.label(sql_val[:150]).classes("text-xs font-mono text-gray-600 whitespace-pre-wrap")
+                            filename_refs.append((row["data_path"], inp, sql_val))
+
+                    # Model summary
+                    with ui.element("div").classes("w-full border border-gray-200 rounded-xl p-5 bg-white"):
+                        ui.label("Model").classes("text-base font-bold text-gray-900 mb-2")
+                        with ui.row().classes("items-center gap-3"):
+                            with ui.element("div").classes("w-8 h-8 rounded-lg bg-blue-100 flex items-center justify-center shrink-0"):
+                                ui.icon("precision_manufacturing").classes("text-blue-600")
+                            with ui.column().classes("gap-0.5"):
+                                ui.label(model["name"]).classes("text-sm font-semibold text-gray-800")
+                                with ui.element("div").classes("bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded font-mono inline-block"):
+                                    ui.label(model["docker_tag"])
+
+                    # Config summary
+                    with ui.element("div").classes("w-full border border-gray-200 rounded-xl p-5 bg-white"):
+                        ui.label("Configuration").classes("text-base font-bold text-gray-900 mb-2")
+                        ui.label(state.get("config", "")).classes("text-sm font-mono text-gray-600 whitespace-pre-wrap")
+
+                    # Payload preview
+                    with ui.expansion("Prefect Payload (preview)").classes("w-full border border-gray-200 rounded-xl"):
+                        payload_lbl = ui.label("").classes("font-mono text-xs whitespace-pre-wrap text-gray-700 p-3")
+
+            if not settings.prefect_api_url:
+                with ui.row().classes("w-full items-center gap-2 p-3 bg-orange-50 rounded-lg border border-orange-200"):
+                    ui.icon("warning").classes("text-orange-500 shrink-0")
+                    ui.label(
+                        "PREFECT_API_URL is not configured — pre-flight review only, cannot submit."
+                    ).classes("text-sm text-orange-700")
+
+            result_lbl = ui.label("").classes("text-sm text-gray-500")
+
+            with ui.row().classes("w-full justify-between items-center"):
+                ui.button("Back to Configuration", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/4")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
+                ui.button(
+                    "Trigger Run", icon="play_arrow", on_click=do_submit,
+                ).classes("bg-blue-700 text-white px-8 rounded-lg").props(
+                    f"{'disabled' if not settings.prefect_api_url else ''} no-caps"
+                )
+        _tv2_footer()
+
+        update_payload()

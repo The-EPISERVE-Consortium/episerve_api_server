@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from nicegui import ui
@@ -26,4 +27,10 @@ def health():
 
 
 register_pages()
-ui.run_with(app, title="EPISERVE", favicon="🔬", dark=False)
+ui.run_with(
+    app,
+    title="EPISERVE",
+    favicon="🔬",
+    dark=False,
+    storage_secret=os.environ.get("STORAGE_SECRET", "episerve-dev-secret-change-me"),
+)
