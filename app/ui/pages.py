@@ -697,17 +697,20 @@ def register_pages():
                     import requests
                     return requests.get(url, timeout=30).json()
 
-                def _find_predictions(meta: dict):
-                    # structure: meta["kernel"]["fdo:hasComponent"] list
+                def _find_components(meta: dict):
                     components = meta.get("kernel", {}).get("fdo:hasComponent", [])
                     if isinstance(components, dict):
                         components = [components]
+                    predictions = None
+                    input_file  = None
                     for comp in components:
                         cid = str(comp.get("componentId", ""))
                         for ext in (".parquet", ".tsv", ".csv"):
                             if cid.lower() == f"predictions{ext}":
-                                return comp, cid, ext
-                    return None
+                                predictions = (comp, cid, ext)
+                            elif cid.lower() == f"input{ext}":
+                                input_file = (comp, cid, ext)
+                    return predictions, input_file
 
                 def _fetch_preview(url: str, ext: str):
                     if ext == ".parquet":
@@ -722,6 +725,25 @@ def register_pages():
                     sep = "\t" if ext == ".tsv" else ","
                     return pd.read_csv(io.StringIO(resp.text), sep=sep, nrows=500)
 
+                def _component_url(base: str, qid: str, comp: dict, cid: str) -> str:
+                    path = comp.get("@id", f"output/{cid}").removeprefix("components/")
+                    return f"{base}/doip/retrieve/{qid}/{path}"
+
+                def _preview_card(dc, icon: str, label: str, df):
+                    with dc:
+                        with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-hidden"):
+                            with ui.row().classes("px-5 py-3 border-b border-gray-100 items-center gap-2"):
+                                ui.icon(icon).classes("text-blue-600")
+                                ui.label(label).classes("text-sm font-semibold text-gray-800")
+                                ui.label(f"{len(df):,} rows × {len(df.columns)} columns").classes("text-xs text-gray-400 ml-2")
+                            cols = [{"name": c, "label": c, "field": c, "align": "left", "sortable": True} for c in df.columns]
+                            ui.table(
+                                columns=cols,
+                                rows=df.astype(str).to_dict("records"),
+                                row_key=df.columns[0],
+                                pagination={"rowsPerPage": 10},
+                            ).classes("w-full")
+
                 try:
                     meta = await run.io_bound(_fetch_metadata, doip_url)
                 except Exception as exc:
@@ -730,25 +752,25 @@ def register_pages():
                         _error_label(f"Could not fetch metadata: {exc}")
                     return
 
-                result = _find_predictions(meta)
+                predictions, input_file = _find_components(meta)
                 dc.clear()
-                if not result:
+                if not predictions:
                     with dc:
                         ui.label("No predictions component found in metadata.").classes("text-sm text-gray-400 italic")
                     return
 
-                comp, cid, ext = result
-                qid = meta.get("@id", row.get("qid", ""))
-                component_path = comp.get("@id", f"output/{cid}").removeprefix("components/")
-                file_url = f"{settings.doip_url.rstrip('/')}/doip/retrieve/{qid}/{component_path}"
+                qid  = meta.get("@id", row.get("qid", ""))
+                base = settings.doip_url.rstrip("/")
 
                 with dc:
                     with ui.row().classes("items-center gap-2"):
                         ui.spinner(size="sm")
-                        ui.label(f"Loading {cid}…").classes("text-sm text-gray-400")
+                        ui.label("Loading files…").classes("text-sm text-gray-400")
 
+                comp, cid, ext = predictions
+                pred_url = _component_url(base, qid, comp, cid)
                 try:
-                    df = await run.io_bound(_fetch_preview, file_url, ext)
+                    pred_df = await run.io_bound(_fetch_preview, pred_url, ext)
                 except Exception as exc:
                     dc.clear()
                     with dc:
@@ -756,19 +778,81 @@ def register_pages():
                     return
 
                 dc.clear()
+                _preview_card(dc, "table_chart", f"Predictions — {cid}", pred_df)
+
+                inp_df = None
+                if input_file:
+                    icomp, icid, iext = input_file
+                    inp_url = _component_url(base, qid, icomp, icid)
+                    try:
+                        inp_df = await run.io_bound(_fetch_preview, inp_url, iext)
+                        _preview_card(dc, "input", f"Input — {icid}", inp_df)
+                    except Exception as exc:
+                        with dc:
+                            _error_label(f"Could not load {icid}: {exc}")
+
+                # Chart ─────────────────────────────────────────────────────
+                # Build a flat label→(df, col) map from all loaded files
+                col_map: dict = {}
+                for col in pred_df.columns:
+                    col_map[f"{cid}: {col}"] = (pred_df, col)
+                if inp_df is not None:
+                    for col in inp_df.columns:
+                        col_map[f"{icid}: {col}"] = (inp_df, col)
+
+                opt_labels = list(col_map.keys())
+                cur_x  = [opt_labels[0] if opt_labels else ""]
+                cur_ys = [[opt_labels[1]] if len(opt_labels) > 1 else ([opt_labels[0]] if opt_labels else [])]
+
                 with dc:
-                    with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-hidden"):
-                        with ui.row().classes("px-5 py-3 border-b border-gray-100 items-center gap-2"):
-                            ui.icon("table_chart").classes("text-blue-600")
-                            ui.label(f"Predictions — {cid}").classes("text-sm font-semibold text-gray-800")
-                            ui.label(f"{len(df):,} rows × {len(df.columns)} columns").classes("text-xs text-gray-400 ml-2")
-                        cols = [{"name": c, "label": c, "field": c, "align": "left", "sortable": True} for c in df.columns]
-                        ui.table(
-                            columns=cols,
-                            rows=df.astype(str).to_dict("records"),
-                            row_key=df.columns[0],
-                            pagination={"rowsPerPage": 10},
-                        ).classes("w-full")
+                    with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white p-5"):
+                        ui.label("Chart").classes("text-base font-bold text-gray-900 mb-1")
+
+                        chart = ui.echart({
+                            "tooltip": {"trigger": "axis"},
+                            "legend": {"top": 24},
+                            "xAxis":   {"type": "category", "data": []},
+                            "yAxis":   {"type": "value"},
+                            "series":  [],
+                            "dataZoom": [{"type": "inside"}, {"type": "slider", "height": 20}],
+                            "grid": {"left": "3%", "right": "4%", "bottom": "15%", "top": "60px", "containLabel": True},
+                        }).classes("w-full h-72")
+
+                        def update_chart():
+                            xl = cur_x[0]
+                            yl_list = cur_ys[0]
+                            if not xl or xl not in col_map or not yl_list:
+                                return
+                            x_df, x_col = col_map[xl]
+                            chart.options["xAxis"]["data"] = x_df[x_col].astype(str).tolist()
+                            chart.options["series"] = [
+                                {
+                                    "name": yl, "type": "line", "smooth": True,
+                                    "data": [None if str(v) in ("nan", "None", "") else v
+                                             for v in col_map[yl][0][col_map[yl][1]].tolist()],
+                                }
+                                for yl in yl_list if yl in col_map
+                            ]
+                            chart.update()
+
+                        def on_x(e): cur_x[0] = e.value; update_chart()
+                        def on_y(e): cur_ys[0] = e.value if isinstance(e.value, list) else [e.value]; update_chart()
+
+                        with ui.row().classes("gap-3 mb-4 items-end flex-wrap"):
+                            x_sel = ui.select(opt_labels, value=cur_x[0], label="X axis", on_change=on_x).classes("min-w-48")
+                            y_sel = ui.select(opt_labels, value=cur_ys[0], label="Y axis (multi)", multiple=True, on_change=on_y).classes("min-w-48")
+                            y_sel.add_slot("option", r'''
+                                <q-item v-bind="props.itemProps">
+                                    <q-item-section side>
+                                        <q-checkbox :model-value="props.selected" @update:model-value="props.toggleOption(props.opt)" />
+                                    </q-item-section>
+                                    <q-item-section>
+                                        <q-item-label>{{ props.opt }}</q-item-label>
+                                    </q-item-section>
+                                </q-item>
+                            ''')
+
+                        update_chart()
 
             tbl.on("selection", on_selection)
 
