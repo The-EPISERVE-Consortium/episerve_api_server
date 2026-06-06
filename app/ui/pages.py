@@ -468,25 +468,100 @@ def register_pages():
     @ui.page("/ui/models")
     def models():
         _header("/ui/models")
-        with ui.column().classes("p-6 w-full"):
-            ui.label("Models").classes("text-xl font-semibold mb-4")
-            try:
-                rows = ckan_client.list_models()
-                filter_input = ui.input(placeholder="Filter by name…").classes("w-64 mb-2")
-                table = ui.table(
-                    columns=[
-                        {"name": "name",         "label": "Name",        "field": "name",         "align": "left", "sortable": True},
-                        {"name": "docker_image", "label": "Image",       "field": "docker_image", "align": "left"},
-                        {"name": "docker_tag",   "label": "Tag",         "field": "docker_tag",   "align": "left", "sortable": True},
-                        {"name": "description",  "label": "Description", "field": "description",  "align": "left"},
-                    ],
-                    rows=rows,
-                    row_key="name",
-                    pagination={"rowsPerPage": 20},
-                ).classes("w-full")
-                filter_input.bind_value(table, "filter")
-            except Exception as e:
+
+        try:
+            raw_rows = ckan_client.list_models()
+        except Exception as e:
+            with ui.column().classes("px-8 py-6"):
                 _error_label(f"Could not load models: {e}")
+            return
+
+        all_rows = []
+        for idx, r in enumerate(raw_rows):
+            icon_n, icon_bg, icon_txt = _MODEL_PALETTE[idx % len(_MODEL_PALETTE)]
+            all_rows.append({**r, "_icon": icon_n, "_icon_bg": icon_bg, "_icon_txt": icon_txt})
+
+        filtered_rows: list = list(all_rows)
+        current_search = [""]
+        current_sort   = ["Name A–Z"]
+
+        def apply_filters():
+            s = current_search[0].lower()
+            rs = [r for r in all_rows if not s or s in r["name"].lower() or s in r.get("description", "").lower()]
+            if current_sort[0] == "Name A–Z":
+                rs.sort(key=lambda r: r["name"].lower())
+            filtered_rows.clear()
+            filtered_rows.extend(rs)
+            count_lbl.refresh()
+            model_table.refresh()
+
+        @ui.refreshable
+        def count_lbl():
+            n = len(filtered_rows)
+            ui.label(f"Showing {n} model{'s' if n != 1 else ''}").classes("text-sm text-gray-500")
+
+        @ui.refreshable
+        def model_table():
+            if not filtered_rows:
+                ui.label("No models match your search.").classes("text-sm text-gray-400 py-8 text-center w-full")
+                return
+
+            tbl = ui.table(
+                columns=[
+                    {"name": "icon",        "label": "",              "field": "name",         "align": "left"},
+                    {"name": "name",        "label": "Name",          "field": "name",         "align": "left", "sortable": True},
+                    {"name": "docker_tag",  "label": "Tag",           "field": "docker_tag",   "align": "left", "sortable": True},
+                    {"name": "docker_image","label": "Image",         "field": "docker_image", "align": "left"},
+                ],
+                rows=filtered_rows,
+                row_key="name",
+                pagination={"rowsPerPage": 10},
+            ).classes("w-full")
+
+            tbl.add_slot("body-cell-icon", r'''
+                <q-td :props="props" style="width:56px; padding-right:0">
+                    <div :class="'w-10 h-10 rounded-lg flex items-center justify-center ' + props.row._icon_bg">
+                        <q-icon :name="props.row._icon" :class="props.row._icon_txt" style="font-size:1.2rem"/>
+                    </div>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-name", r'''
+                <q-td :props="props" style="max-width:320px">
+                    <div class="font-semibold text-gray-800 text-sm">{{ props.row.name }}</div>
+                    <div class="text-xs text-gray-500 mt-0.5" style="white-space:normal;line-height:1.3">{{ props.row.description }}</div>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-docker_tag", r'''
+                <q-td :props="props">
+                    <span class="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded font-mono">{{ props.row.docker_tag }}</span>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-docker_image", r'''
+                <q-td :props="props">
+                    <span class="font-mono text-xs text-gray-600">{{ props.row.docker_image }}</span>
+                </q-td>''')
+
+        with ui.column().classes("px-8 py-6 w-full gap-4"):
+            ui.label("Models").classes("text-3xl font-bold text-gray-900")
+            ui.label("Browse available forecast models.").classes("text-sm text-gray-500 -mt-2")
+
+            with ui.row().classes("w-full items-center gap-3"):
+                with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
+                    ui.icon("search").classes("text-gray-400 shrink-0")
+                    ui.input(
+                        placeholder="Search models...",
+                        on_change=lambda e: (current_search.__setitem__(0, e.value), apply_filters()),
+                    ).props("borderless dense").classes("flex-1 text-sm")
+                ui.select(
+                    options=["Name A–Z"],
+                    value="Name A–Z",
+                    on_change=lambda e: (current_sort.__setitem__(0, e.value), apply_filters()),
+                ).props("outlined dense options-dense").classes("text-sm")
+
+            count_lbl()
+
+            with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-hidden"):
+                model_table()
 
     @ui.page("/ui/model-runs")
     def model_runs():
