@@ -10,7 +10,7 @@ NAV_ITEMS = [
     ("Datasets",        "/ui/datasets"),
     ("Models",          "/ui/models"),
     ("Model Runs",      "/ui/model-runs"),
-    ("Run Workflow",        "/ui/trigger-v2/1"),
+    ("Run Workflow",        "/ui/run_workflow/1"),
     ("Run Workflow Simple", "/ui/trigger"),
 ]
 
@@ -21,7 +21,7 @@ def _header(current: str = ""):
         with ui.row().classes("gap-8 items-center"):
             for label, path in NAV_ITEMS:
                 active = current == path or (
-                    "/trigger-v2" in path and current.startswith("/ui/trigger-v2")
+                    "/run_workflow" in path and current.startswith("/ui/run_workflow")
                 )
                 ui.link(label, path).classes(
                     "text-sm no-underline font-medium " +
@@ -43,24 +43,6 @@ _TV2_STEPS = [
     (5, "Review & Run",  "Validate and run"),
 ]
 
-_DS_PALETTE = [
-    ("water_drop",              "bg-blue-100",   "text-blue-500"),
-    ("groups",                  "bg-green-100",  "text-green-600"),
-    ("science",                 "bg-purple-100", "text-purple-600"),
-    ("trending_up",             "bg-orange-100", "text-orange-500"),
-    ("local_hospital",          "bg-red-100",    "text-red-500"),
-    ("analytics",               "bg-teal-100",   "text-teal-600"),
-    ("hub",                     "bg-indigo-100", "text-indigo-600"),
-]
-
-_MODEL_PALETTE = [
-    ("precision_manufacturing", "bg-blue-100",   "text-blue-500"),
-    ("psychology",              "bg-purple-100", "text-purple-600"),
-    ("auto_graph",              "bg-green-100",  "text-green-600"),
-    ("hub",                     "bg-orange-100", "text-orange-500"),
-    ("biotech",                 "bg-teal-100",   "text-teal-600"),
-]
-
 
 def _tv2_state() -> dict:
     if "tv2" not in _napp.storage.user:
@@ -74,16 +56,6 @@ def _tv2_state() -> dict:
     return _napp.storage.user["tv2"]
 
 
-def _ds_icon(name: str, idx: int):
-    n = name.lower()
-    if any(k in n for k in ("wastewater", "water")):      return _DS_PALETTE[0]
-    if any(k in n for k in ("consultation", "are ")):      return _DS_PALETTE[1]
-    if any(k in n for k in ("influenza", "flu", "virus")): return _DS_PALETTE[2]
-    if any(k in n for k in ("notaufnahme", "emergency")):  return _DS_PALETTE[3]
-    if any(k in n for k in ("covid", "hospital")):         return _DS_PALETTE[4]
-    return _DS_PALETTE[idx % len(_DS_PALETTE)]
-
-
 def _tv2_stepper(current_step: int):
     with ui.row().classes("w-full items-center gap-0"):
         for i, (n, title, desc) in enumerate(_TV2_STEPS):
@@ -91,7 +63,7 @@ def _tv2_stepper(current_step: int):
             done   = n < current_step
             clickable = not active
             row_cls = "items-center gap-3 shrink-0 " + ("cursor-pointer" if clickable else "")
-            with ui.row().classes(row_cls).on("click", lambda _, step=n: ui.navigate.to(f"/ui/trigger-v2/{step}") if step != current_step else None):
+            with ui.row().classes(row_cls).on("click", lambda _, step=n: ui.navigate.to(f"/ui/run_workflow/{step}") if step != current_step else None):
                 circle_cls = (
                     "w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 "
                     + ("bg-blue-700 text-white" if (active or done) else "border-2 border-gray-300 text-gray-400")
@@ -184,15 +156,6 @@ def register_pages():
 
         _header("/ui/datasets")
 
-        def _ds_type_info(name: str) -> tuple:
-            n = name.lower()
-            if any(k in n for k in ("wastewater", "water")):      return "Wastewater",      "bg-blue-100 text-blue-700"
-            if any(k in n for k in ("consultation", "are ")):      return "Consultation",    "bg-green-100 text-green-700"
-            if any(k in n for k in ("influenza", "flu", "virus")): return "Influenza",       "bg-purple-100 text-purple-700"
-            if any(k in n for k in ("notaufnahme", "emergency")):  return "Emergency",       "bg-orange-100 text-orange-700"
-            if any(k in n for k in ("covid", "hospital")):         return "Hospitalization", "bg-red-100 text-red-700"
-            return "Dataset", "bg-gray-100 text-gray-600"
-
         def _fmt_date(dt_str: str) -> tuple:
             if not dt_str:
                 return "—", ""
@@ -221,17 +184,13 @@ def register_pages():
             return
 
         all_rows = []
-        for idx, r in enumerate(raw_rows):
-            icon_n, icon_bg, icon_txt = _ds_icon(r["name"], idx)
-            type_label, type_cls      = _ds_type_info(r["name"])
-            date_display, rel_time    = _fmt_date(r.get("last_modified", ""))
+        for r in raw_rows:
+            date_display, rel_time = _fmt_date(r.get("last_modified", ""))
             all_rows.append({**r,
-                "_icon": icon_n, "_icon_bg": icon_bg, "_icon_txt": icon_txt,
-                "_type_label": type_label, "_type_cls": type_cls,
                 "_date_display": date_display, "_rel_time": rel_time,
             })
 
-        all_types = ["All Types"] + sorted(set(r["_type_label"] for r in all_rows))
+        all_types = ["All Types", "Dataset"]
         filtered_rows: list = list(all_rows)
         current_search = [""]
         current_type   = ["All Types"]
@@ -246,7 +205,7 @@ def register_pages():
             rs = [
                 r for r in all_rows
                 if (not s or s in r["name"].lower() or s in r.get("description", "").lower())
-                and (t == "All Types" or r["_type_label"] == t)
+                and (t == "All Types" or t == "Dataset")
             ]
             if current_sort[0] == "Recently Updated":
                 rs.sort(key=lambda r: r.get("last_modified", ""), reverse=True)
@@ -294,25 +253,17 @@ def register_pages():
 
             tbl = ui.table(
                 columns=[
-                    {"name": "icon",    "label": "",         "field": "name",          "align": "left"},
                     {"name": "name",    "label": "Name",     "field": "name",          "align": "left", "sortable": True},
                     {"name": "qid",     "label": "QID",      "field": "qid",           "align": "left"},
                     {"name": "updated", "label": "Updated",  "field": "last_modified", "align": "left", "sortable": True},
-                    {"name": "type",    "label": "Type",     "field": "_type_label",   "align": "left"},
+                    {"name": "type",    "label": "Type",     "field": "name",          "align": "left"},
                     {"name": "actions", "label": "",         "field": "qid",           "align": "right"},
                 ],
                 rows=filtered_rows,
                 row_key="qid",
                 selection="single",
-                pagination={"rowsPerPage": 5, "sortBy": "last_modified", "descending": True},
+                pagination={"rowsPerPage": 10, "sortBy": "last_modified", "descending": True},
             ).classes("w-full")
-
-            tbl.add_slot("body-cell-icon", r'''
-                <q-td :props="props" style="width:56px; padding-right:0">
-                    <div :class="'w-10 h-10 rounded-lg flex items-center justify-center ' + props.row._icon_bg">
-                        <q-icon :name="props.row._icon" :class="props.row._icon_txt" style="font-size:1.2rem"/>
-                    </div>
-                </q-td>''')
 
             tbl.add_slot("body-cell-name", r'''
                 <q-td :props="props" style="max-width:320px">
@@ -333,7 +284,7 @@ def register_pages():
 
             tbl.add_slot("body-cell-type", r'''
                 <q-td :props="props">
-                    <span :class="'px-2 py-0.5 rounded-full text-xs font-medium ' + props.row._type_cls">{{ props.row._type_label }}</span>
+                    <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">Dataset</span>
                 </q-td>''')
 
             tbl.add_slot("body-cell-actions", r'''
@@ -341,6 +292,9 @@ def register_pages():
                     <q-btn flat round dense icon="more_vert" size="sm" class="text-gray-400">
                         <q-menu>
                             <q-list dense>
+                                <q-item clickable v-close-popup :href="'https://data.episerve.zib.de/dataset/' + props.row.qid.toLowerCase()" target="_blank">
+                                    <q-item-section>Show in DataHub</q-item-section>
+                                </q-item>
                                 <q-item clickable v-close-popup :href="props.row.doip_url" target="_blank">
                                     <q-item-section>Show Metadata</q-item-section>
                                 </q-item>
@@ -456,10 +410,7 @@ def register_pages():
                 _error_label(f"Could not load models: {e}")
             return
 
-        all_rows = []
-        for idx, r in enumerate(raw_rows):
-            icon_n, icon_bg, icon_txt = _MODEL_PALETTE[idx % len(_MODEL_PALETTE)]
-            all_rows.append({**r, "_icon": icon_n, "_icon_bg": icon_bg, "_icon_txt": icon_txt})
+        all_rows = list(raw_rows)
 
         filtered_rows: list = list(all_rows)
         current_search = [""]
@@ -488,22 +439,15 @@ def register_pages():
 
             tbl = ui.table(
                 columns=[
-                    {"name": "icon",        "label": "",              "field": "name",         "align": "left"},
                     {"name": "name",        "label": "Name",          "field": "name",         "align": "left", "sortable": True},
                     {"name": "docker_tag",  "label": "Tag",           "field": "docker_tag",   "align": "left", "sortable": True},
                     {"name": "docker_image","label": "Image",         "field": "docker_image", "align": "left"},
+                    {"name": "actions",     "label": "",              "field": "name",         "align": "right"},
                 ],
                 rows=filtered_rows,
                 row_key="name",
                 pagination={"rowsPerPage": 10},
             ).classes("w-full")
-
-            tbl.add_slot("body-cell-icon", r'''
-                <q-td :props="props" style="width:56px; padding-right:0">
-                    <div :class="'w-10 h-10 rounded-lg flex items-center justify-center ' + props.row._icon_bg">
-                        <q-icon :name="props.row._icon" :class="props.row._icon_txt" style="font-size:1.2rem"/>
-                    </div>
-                </q-td>''')
 
             tbl.add_slot("body-cell-name", r'''
                 <q-td :props="props" style="max-width:320px">
@@ -519,6 +463,19 @@ def register_pages():
             tbl.add_slot("body-cell-docker_image", r'''
                 <q-td :props="props">
                     <span class="font-mono text-xs text-gray-600">{{ props.row.docker_image }}</span>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-actions", r'''
+                <q-td :props="props">
+                    <q-btn flat round dense icon="more_vert" size="sm" class="text-gray-400">
+                        <q-menu>
+                            <q-list dense>
+                                <q-item clickable v-close-popup :href="'https://data.episerve.zib.de/dataset/' + props.row.name" target="_blank">
+                                    <q-item-section>Show in ModelHub</q-item-section>
+                                </q-item>
+                            </q-list>
+                        </q-menu>
+                    </q-btn>
                 </q-td>''')
 
         with ui.column().classes("px-8 py-6 w-full gap-4"):
@@ -583,11 +540,9 @@ def register_pages():
             return
 
         all_rows = []
-        for idx, r in enumerate(raw_rows):
-            icon_n, icon_bg, icon_txt = _MODEL_PALETTE[idx % len(_MODEL_PALETTE)]
-            date_display, rel_time    = _fmt_date(r.get("run_timestamp", ""))
+        for r in raw_rows:
+            date_display, rel_time = _fmt_date(r.get("run_timestamp", ""))
             all_rows.append({**r,
-                "_icon": icon_n, "_icon_bg": icon_bg, "_icon_txt": icon_txt,
                 "_date_display": date_display, "_rel_time": rel_time,
                 "_status_cls": _status_cls(r.get("status", "")),
             })
@@ -621,7 +576,6 @@ def register_pages():
 
             tbl = ui.table(
                 columns=[
-                    {"name": "icon",          "label": "",        "field": "model_name",    "align": "left"},
                     {"name": "model_name",    "label": "Model",   "field": "model_name",    "align": "left", "sortable": True},
                     {"name": "qid",           "label": "QID",     "field": "qid",           "align": "left"},
                     {"name": "run_timestamp", "label": "Run",     "field": "run_timestamp", "align": "left", "sortable": True},
@@ -633,13 +587,6 @@ def register_pages():
                 selection="single",
                 pagination={"rowsPerPage": 10, "sortBy": "run_timestamp", "descending": True},
             ).classes("w-full")
-
-            tbl.add_slot("body-cell-icon", r'''
-                <q-td :props="props" style="width:56px; padding-right:0">
-                    <div :class="'w-10 h-10 rounded-lg flex items-center justify-center ' + props.row._icon_bg">
-                        <q-icon :name="props.row._icon" :class="props.row._icon_txt" style="font-size:1.2rem"/>
-                    </div>
-                </q-td>''')
 
             tbl.add_slot("body-cell-model_name", r'''
                 <q-td :props="props">
@@ -669,6 +616,9 @@ def register_pages():
                     <q-btn flat round dense icon="more_vert" size="sm" class="text-gray-400">
                         <q-menu>
                             <q-list dense>
+                                <q-item clickable v-close-popup :href="'https://data.episerve.zib.de/dataset/' + props.row.qid.toLowerCase()" target="_blank">
+                                    <q-item-section>Show in DataHub</q-item-section>
+                                </q-item>
                                 <q-item clickable v-close-popup :href="props.row.doip_url" target="_blank">
                                     <q-item-section>Show Metadata</q-item-section>
                                 </q-item>
@@ -777,22 +727,17 @@ def register_pages():
                         _error_label(f"Could not load {cid}: {exc}")
                     return
 
-                dc.clear()
-                _preview_card(dc, "table_chart", f"Predictions — {cid}", pred_df)
-
                 inp_df = None
                 if input_file:
                     icomp, icid, iext = input_file
                     inp_url = _component_url(base, qid, icomp, icid)
                     try:
                         inp_df = await run.io_bound(_fetch_preview, inp_url, iext)
-                        _preview_card(dc, "input", f"Input — {icid}", inp_df)
                     except Exception as exc:
                         with dc:
                             _error_label(f"Could not load {icid}: {exc}")
 
                 # Chart ─────────────────────────────────────────────────────
-                # Build a flat label→(df, col) map from all loaded files
                 col_map: dict = {}
                 for col in pred_df.columns:
                     col_map[f"{cid}: {col}"] = (pred_df, col)
@@ -804,6 +749,7 @@ def register_pages():
                 cur_x  = [opt_labels[0] if opt_labels else ""]
                 cur_ys = [[opt_labels[1]] if len(opt_labels) > 1 else ([opt_labels[0]] if opt_labels else [])]
 
+                dc.clear()
                 with dc:
                     with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white p-5"):
                         ui.label("Chart").classes("text-base font-bold text-gray-900 mb-1")
@@ -853,6 +799,10 @@ def register_pages():
                             ''')
 
                         update_chart()
+
+                _preview_card(dc, "table_chart", f"Predictions — {cid}", pred_df)
+                if inp_df is not None:
+                    _preview_card(dc, "input", f"Input — {icid}", inp_df)
 
             tbl.on("selection", on_selection)
 
@@ -1200,13 +1150,13 @@ def register_pages():
 
     # ─── Trigger v2 wizard (5 steps) ─────────────────────────────────────────
 
-    @ui.page("/ui/trigger-v2")
+    @ui.page("/ui/run_workflow")
     def _tv2_redirect():
-        ui.navigate.to("/ui/trigger-v2/1")
+        ui.navigate.to("/ui/run_workflow/1")
 
     # Step 1 — Datasets ───────────────────────────────────────────────────────
 
-    @ui.page("/ui/trigger-v2/1")
+    @ui.page("/ui/run_workflow/1")
     def trigger_v2_step1():
         state = _tv2_state()
         try:
@@ -1249,7 +1199,7 @@ def register_pages():
             if not selected_qids:
                 ui.notify("Select at least one dataset", type="warning", position="top")
                 return
-            ui.navigate.to("/ui/trigger-v2/2")
+            ui.navigate.to("/ui/run_workflow/2")
 
         @ui.refreshable
         def dataset_cards():
@@ -1258,17 +1208,19 @@ def register_pages():
                     "No datasets match your filter." if all_ds else "No datasets available."
                 ).classes("text-sm text-gray-400 py-8 text-center w-full")
                 return
-            for idx, row in enumerate(visible):
+            for row in visible:
                 qid = row["qid"]
                 sel = qid in selected_qids
-                icon_n, icon_bg, icon_txt = _ds_icon(row["name"], idx)
                 card_cls = (
                     "w-full border rounded-xl p-4 cursor-pointer flex items-center gap-4 mb-2 "
                     + ("border-blue-500 bg-blue-50" if sel else "border-gray-200 bg-white hover:border-gray-300")
                 )
                 with ui.element("div").classes(card_cls).on("click", lambda _, q=qid: toggle(q)):
-                    with ui.element("div").classes(f"w-10 h-10 rounded-lg flex items-center justify-center shrink-0 {icon_bg}"):
-                        ui.icon(icon_n).classes(f"text-xl {icon_txt}")
+                    if sel:
+                        with ui.element("div").classes("w-5 h-5 bg-blue-600 rounded flex items-center justify-center shrink-0"):
+                            ui.icon("check").classes("text-white").style("font-size: 14px")
+                    else:
+                        ui.element("div").classes("w-5 h-5 border-2 border-gray-300 rounded shrink-0")
                     with ui.column().classes("flex-1 gap-0 min-w-0"):
                         ui.label(row["name"]).classes("text-sm font-semibold text-gray-800")
                         desc = (row.get("description") or "")[:100]
@@ -1276,11 +1228,6 @@ def register_pages():
                             ui.label(desc).classes("text-xs text-gray-500 mt-0.5")
                     with ui.element("div").classes("bg-gray-100 text-gray-500 text-xs px-2 py-0.5 rounded font-mono shrink-0"):
                         ui.label(row.get("qid", ""))
-                    if sel:
-                        with ui.element("div").classes("w-5 h-5 bg-blue-600 rounded flex items-center justify-center shrink-0"):
-                            ui.icon("check").classes("text-white").style("font-size: 14px")
-                    else:
-                        ui.element("div").classes("w-5 h-5 border-2 border-gray-300 rounded shrink-0")
 
         @ui.refreshable
         def bottom_bar():
@@ -1299,7 +1246,7 @@ def register_pages():
         def run_summary():
             _tv2_summary(state, hint="" if selected_qids else "Select datasets to continue.")
 
-        _header("/ui/trigger-v2/1")
+        _header("/ui/run_workflow/1")
         with ui.column().classes("px-8 py-6 w-full gap-5"):
             with ui.column().classes("gap-1"):
                 ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
@@ -1329,11 +1276,11 @@ def register_pages():
 
     # Step 2 — Dataset Transformations ────────────────────────────────────────
 
-    @ui.page("/ui/trigger-v2/2")
+    @ui.page("/ui/run_workflow/2")
     def trigger_v2_step2():
         state = _tv2_state()
         if not state.get("datasets"):
-            ui.navigate.to("/ui/trigger-v2/1")
+            ui.navigate.to("/ui/run_workflow/1")
             return
 
         datasets = state.get("datasets", [])
@@ -1368,9 +1315,9 @@ def register_pages():
         def on_continue():
             state["sql"] = {qid: inp.value for qid, inp in sql_refs.items()}
             _napp.storage.user["tv2"] = state
-            ui.navigate.to("/ui/trigger-v2/3")
+            ui.navigate.to("/ui/run_workflow/3")
 
-        _header("/ui/trigger-v2/2")
+        _header("/ui/run_workflow/2")
         with ui.column().classes("px-8 py-6 w-full gap-5"):
             with ui.column().classes("gap-1"):
                 ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
@@ -1404,7 +1351,7 @@ def register_pages():
                 with ui.column().classes("shrink-0 gap-3"):
                     _tv2_summary(state)
                     with ui.row().classes("w-full justify-between items-center"):
-                        ui.button("Back to Datasets", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/1")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
+                        ui.button("Back to Datasets", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/run_workflow/1")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
                         ui.button(
                             "Continue to Model", icon="arrow_forward", on_click=on_continue,
                         ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
@@ -1412,11 +1359,11 @@ def register_pages():
 
     # Step 3 — Model ──────────────────────────────────────────────────────────
 
-    @ui.page("/ui/trigger-v2/3")
+    @ui.page("/ui/run_workflow/3")
     def trigger_v2_step3():
         state = _tv2_state()
         if not state.get("datasets"):
-            ui.navigate.to("/ui/trigger-v2/1")
+            ui.navigate.to("/ui/run_workflow/1")
             return
 
         try:
@@ -1451,23 +1398,20 @@ def register_pages():
             if not sel_name[0]:
                 ui.notify("Select a model", type="warning", position="top")
                 return
-            ui.navigate.to("/ui/trigger-v2/4")
+            ui.navigate.to("/ui/run_workflow/4")
 
         @ui.refreshable
         def model_cards():
             if not visible_models:
                 ui.label("No models available.").classes("text-sm text-gray-400 py-8 text-center w-full")
                 return
-            for idx, m in enumerate(visible_models):
+            for m in visible_models:
                 sel = sel_name[0] == m["name"]
-                icon_n, icon_bg, icon_txt = _MODEL_PALETTE[idx % len(_MODEL_PALETTE)]
                 card_cls = (
                     "w-full border rounded-xl p-4 cursor-pointer flex items-center gap-4 mb-2 "
                     + ("border-blue-500 bg-blue-50" if sel else "border-gray-200 bg-white hover:border-gray-300")
                 )
                 with ui.element("div").classes(card_cls).on("click", lambda _, n=m["name"]: select_model(n)):
-                    with ui.element("div").classes(f"w-10 h-10 rounded-lg flex items-center justify-center shrink-0 {icon_bg}"):
-                        ui.icon(icon_n).classes(f"text-xl {icon_txt}")
                     with ui.column().classes("flex-1 gap-0 min-w-0"):
                         ui.label(m["name"]).classes("text-sm font-semibold text-gray-800")
                         desc = (m.get("description") or "")[:100]
@@ -1485,7 +1429,7 @@ def register_pages():
         def run_summary():
             _tv2_summary(state, hint="" if sel_name[0] else "Select a model to continue.")
 
-        _header("/ui/trigger-v2/3")
+        _header("/ui/run_workflow/3")
         with ui.column().classes("px-8 py-6 w-full gap-5"):
             with ui.column().classes("gap-1"):
                 ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
@@ -1507,7 +1451,7 @@ def register_pages():
                 with ui.column().classes("shrink-0 gap-3"):
                     run_summary()
                     with ui.row().classes("w-full justify-between items-center"):
-                        ui.button("Back to Transformations", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/2")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
+                        ui.button("Back to Transformations", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/run_workflow/2")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
                         ui.button(
                             "Continue to Configuration", icon="arrow_forward", on_click=on_continue,
                         ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
@@ -1515,14 +1459,14 @@ def register_pages():
 
     # Step 4 — Configuration ──────────────────────────────────────────────────
 
-    @ui.page("/ui/trigger-v2/4")
+    @ui.page("/ui/run_workflow/4")
     def trigger_v2_step4():
         state = _tv2_state()
         if not state.get("datasets"):
-            ui.navigate.to("/ui/trigger-v2/1")
+            ui.navigate.to("/ui/run_workflow/1")
             return
         if not state.get("model"):
-            ui.navigate.to("/ui/trigger-v2/3")
+            ui.navigate.to("/ui/run_workflow/3")
             return
 
         def format_json():
@@ -1534,9 +1478,9 @@ def register_pages():
         def on_continue():
             state["config"] = config_inp.value
             _napp.storage.user["tv2"] = state
-            ui.navigate.to("/ui/trigger-v2/5")
+            ui.navigate.to("/ui/run_workflow/5")
 
-        _header("/ui/trigger-v2/4")
+        _header("/ui/run_workflow/4")
         with ui.column().classes("px-8 py-6 w-full gap-5"):
             with ui.column().classes("gap-1"):
                 ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
@@ -1558,7 +1502,7 @@ def register_pages():
                 with ui.column().classes("shrink-0 gap-3"):
                     _tv2_summary(state)
                     with ui.row().classes("w-full justify-between items-center"):
-                        ui.button("Back to Model", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/3")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
+                        ui.button("Back to Model", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/run_workflow/3")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
                         ui.button(
                             "Continue to Review", icon="arrow_forward", on_click=on_continue,
                         ).classes("bg-blue-700 text-white px-8 rounded-lg").props("no-caps")
@@ -1566,14 +1510,14 @@ def register_pages():
 
     # Step 5 — Review & Run ───────────────────────────────────────────────────
 
-    @ui.page("/ui/trigger-v2/5")
+    @ui.page("/ui/run_workflow/5")
     def trigger_v2_step5():
         state = _tv2_state()
         if not state.get("datasets"):
-            ui.navigate.to("/ui/trigger-v2/1")
+            ui.navigate.to("/ui/run_workflow/1")
             return
         if not state.get("model"):
-            ui.navigate.to("/ui/trigger-v2/3")
+            ui.navigate.to("/ui/run_workflow/3")
             return
 
         datasets = state.get("datasets", [])
@@ -1627,14 +1571,14 @@ def register_pages():
             except Exception as exc:
                 ui.notify(f"Prefect error: {exc}", type="negative", position="top")
 
-        _header("/ui/trigger-v2/5")
+        _header("/ui/run_workflow/5")
         with ui.column().classes("px-8 py-6 w-full gap-5"):
             with ui.column().classes("gap-1"):
                 ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
                 ui.label("Configure and run a forecast model in a few simple steps.").classes("text-sm text-gray-500")
             _tv2_stepper(5)
             with ui.row().classes("w-full justify-between items-center"):
-                ui.button("Back to Configuration", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/trigger-v2/4")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
+                ui.button("Back to Configuration", icon="arrow_back", on_click=lambda: ui.navigate.to("/ui/run_workflow/4")).classes("!bg-green-600 text-white px-8 rounded-lg").props("no-caps")
                 ui.button(
                     "Trigger Run", icon="play_arrow", on_click=do_submit,
                 ).classes("bg-blue-700 text-white px-8 rounded-lg").props(
