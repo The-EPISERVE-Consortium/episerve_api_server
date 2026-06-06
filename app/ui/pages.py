@@ -565,27 +565,158 @@ def register_pages():
 
     @ui.page("/ui/model-runs")
     def model_runs():
+        from datetime import datetime
         _header("/ui/model-runs")
-        with ui.column().classes("p-6 w-full"):
-            ui.label("Model Runs").classes("text-xl font-semibold mb-4")
+
+        def _fmt_date(dt_str: str) -> tuple:
+            if not dt_str:
+                return "—", ""
             try:
-                rows = ckan_client.list_model_runs()
-                filter_input = ui.input(placeholder="Filter by model…").classes("w-64 mb-2")
-                table = ui.table(
-                    columns=[
-                        {"name": "qid",           "label": "QID",       "field": "qid",           "align": "left", "sortable": True},
-                        {"name": "model_name",    "label": "Model",     "field": "model_name",    "align": "left", "sortable": True},
-                        {"name": "docker_tag",    "label": "Tag",       "field": "docker_tag",    "align": "left"},
-                        {"name": "run_timestamp", "label": "Timestamp", "field": "run_timestamp", "align": "left", "sortable": True},
-                        {"name": "doip_url",      "label": "DOIP",      "field": "doip_url",      "align": "left"},
-                    ],
-                    rows=rows,
-                    row_key="qid",
-                    pagination={"rowsPerPage": 20},
-                ).classes("w-full")
-                filter_input.bind_value(table, "filter")
-            except Exception as e:
+                s = dt_str.strip()
+                dt = None
+                for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                    try:
+                        dt = datetime.strptime(s[:19], fmt)
+                        break
+                    except ValueError:
+                        pass
+                if dt is None:
+                    dt = datetime.strptime(s[:10], "%Y-%m-%d")
+                days = (datetime.now() - dt).days
+                rel = "Today" if days == 0 else "1 day ago" if days == 1 else f"{days} days ago"
+                return dt.strftime("%b %-d, %Y"), rel
+            except Exception:
+                return dt_str, ""
+
+        def _status_cls(status: str) -> str:
+            s = (status or "").lower()
+            if s in ("completed", "success"):   return "bg-green-100 text-green-700"
+            if s in ("failed", "error"):        return "bg-red-100 text-red-700"
+            if s in ("running", "in_progress"): return "bg-blue-100 text-blue-700"
+            return "bg-gray-100 text-gray-600"
+
+        try:
+            raw_rows = ckan_client.list_model_runs()
+        except Exception as e:
+            with ui.column().classes("px-8 py-6"):
                 _error_label(f"Could not load model runs: {e}")
+            return
+
+        all_rows = []
+        for idx, r in enumerate(raw_rows):
+            icon_n, icon_bg, icon_txt = _MODEL_PALETTE[idx % len(_MODEL_PALETTE)]
+            date_display, rel_time    = _fmt_date(r.get("run_timestamp", ""))
+            all_rows.append({**r,
+                "_icon": icon_n, "_icon_bg": icon_bg, "_icon_txt": icon_txt,
+                "_date_display": date_display, "_rel_time": rel_time,
+                "_status_cls": _status_cls(r.get("status", "")),
+            })
+
+        filtered_rows: list = list(all_rows)
+        current_search = [""]
+        current_sort   = ["Recently Run"]
+
+        def apply_filters():
+            s = current_search[0].lower()
+            rs = [r for r in all_rows if not s or s in r.get("model_name", "").lower() or s in r.get("qid", "").lower()]
+            if current_sort[0] == "Recently Run":
+                rs.sort(key=lambda r: r.get("run_timestamp", ""), reverse=True)
+            else:
+                rs.sort(key=lambda r: r.get("model_name", "").lower())
+            filtered_rows.clear()
+            filtered_rows.extend(rs)
+            count_lbl.refresh()
+            runs_table.refresh()
+
+        @ui.refreshable
+        def count_lbl():
+            n = len(filtered_rows)
+            ui.label(f"Showing {n} run{'s' if n != 1 else ''}").classes("text-sm text-gray-500")
+
+        @ui.refreshable
+        def runs_table():
+            if not filtered_rows:
+                ui.label("No model runs match your search.").classes("text-sm text-gray-400 py-8 text-center w-full")
+                return
+
+            tbl = ui.table(
+                columns=[
+                    {"name": "icon",          "label": "",        "field": "model_name",    "align": "left"},
+                    {"name": "model_name",    "label": "Model",   "field": "model_name",    "align": "left", "sortable": True},
+                    {"name": "qid",           "label": "QID",     "field": "qid",           "align": "left"},
+                    {"name": "run_timestamp", "label": "Run",     "field": "run_timestamp", "align": "left", "sortable": True},
+                    {"name": "status",        "label": "Status",  "field": "status",        "align": "left"},
+                    {"name": "actions",       "label": "",        "field": "qid",           "align": "right"},
+                ],
+                rows=filtered_rows,
+                row_key="qid",
+                pagination={"rowsPerPage": 10, "sortBy": "run_timestamp", "descending": True},
+            ).classes("w-full")
+
+            tbl.add_slot("body-cell-icon", r'''
+                <q-td :props="props" style="width:56px; padding-right:0">
+                    <div :class="'w-10 h-10 rounded-lg flex items-center justify-center ' + props.row._icon_bg">
+                        <q-icon :name="props.row._icon" :class="props.row._icon_txt" style="font-size:1.2rem"/>
+                    </div>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-model_name", r'''
+                <q-td :props="props">
+                    <div class="font-semibold text-gray-800 text-sm">{{ props.row.model_name }}</div>
+                    <span class="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded font-mono">{{ props.row.docker_tag }}</span>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-qid", r'''
+                <q-td :props="props">
+                    <span class="font-mono text-xs text-gray-600">{{ props.row.qid }}</span>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-run_timestamp", r'''
+                <q-td :props="props">
+                    <div class="text-sm text-gray-700">{{ props.row._date_display }}</div>
+                    <div class="text-xs text-gray-400">{{ props.row._rel_time }}</div>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-status", r'''
+                <q-td :props="props">
+                    <span v-if="props.row.status" :class="'px-2 py-0.5 rounded-full text-xs font-medium ' + props.row._status_cls">{{ props.row.status }}</span>
+                    <span v-else class="text-xs text-gray-400">—</span>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-actions", r'''
+                <q-td :props="props">
+                    <q-btn flat round dense icon="more_vert" size="sm" class="text-gray-400">
+                        <q-menu>
+                            <q-list dense>
+                                <q-item clickable v-close-popup :href="props.row.doip_url" target="_blank">
+                                    <q-item-section>Show Metadata</q-item-section>
+                                </q-item>
+                            </q-list>
+                        </q-menu>
+                    </q-btn>
+                </q-td>''')
+
+        with ui.column().classes("px-8 py-6 w-full gap-4"):
+            ui.label("Model Runs").classes("text-3xl font-bold text-gray-900")
+            ui.label("Browse past model run results.").classes("text-sm text-gray-500 -mt-2")
+
+            with ui.row().classes("w-full items-center gap-3"):
+                with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
+                    ui.icon("search").classes("text-gray-400 shrink-0")
+                    ui.input(
+                        placeholder="Search by model or QID...",
+                        on_change=lambda e: (current_search.__setitem__(0, e.value), apply_filters()),
+                    ).props("borderless dense").classes("flex-1 text-sm")
+                ui.select(
+                    options=["Recently Run", "Model A–Z"],
+                    value="Recently Run",
+                    on_change=lambda e: (current_sort.__setitem__(0, e.value), apply_filters()),
+                ).props("outlined dense options-dense").classes("text-sm")
+
+            count_lbl()
+
+            with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-hidden"):
+                runs_table()
 
     @ui.page("/ui/trigger")
     def trigger():
