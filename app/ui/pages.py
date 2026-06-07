@@ -186,8 +186,10 @@ def register_pages():
         all_rows = []
         for r in raw_rows:
             date_display, rel_time = _fmt_date(r.get("last_modified", ""))
+            created_display, created_rel = _fmt_date(r.get("metadata_created", ""))
             all_rows.append({**r,
                 "_date_display": date_display, "_rel_time": rel_time,
+                "_created_display": created_display, "_created_rel": created_rel,
             })
 
         all_types = ["All Types", "Dataset"]
@@ -255,8 +257,9 @@ def register_pages():
                 columns=[
                     {"name": "name",    "label": "Name",     "field": "name",          "align": "left", "sortable": True},
                     {"name": "qid",     "label": "QID",      "field": "qid",           "align": "left"},
-                    {"name": "updated", "label": "Updated",  "field": "last_modified", "align": "left", "sortable": True},
-                    {"name": "type",    "label": "Type",     "field": "name",          "align": "left"},
+                    {"name": "updated",  "label": "Updated",  "field": "last_modified",    "align": "left", "sortable": True},
+                    {"name": "created",  "label": "Created",  "field": "metadata_created", "align": "left", "sortable": True},
+                    {"name": "type",     "label": "Type",     "field": "name",              "align": "left"},
                     {"name": "actions", "label": "",         "field": "qid",           "align": "right"},
                 ],
                 rows=filtered_rows,
@@ -280,6 +283,12 @@ def register_pages():
                 <q-td :props="props">
                     <div class="text-sm text-gray-700">{{ props.row._date_display }}</div>
                     <div class="text-xs text-gray-400">{{ props.row._rel_time }}</div>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-created", r'''
+                <q-td :props="props">
+                    <div class="text-sm text-gray-700">{{ props.row._created_display }}</div>
+                    <div class="text-xs text-gray-400">{{ props.row._created_rel }}</div>
                 </q-td>''')
 
             tbl.add_slot("body-cell-type", r'''

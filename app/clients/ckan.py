@@ -53,6 +53,7 @@ def list_processed_datasets() -> list[dict]:
             "source_url": pkg.get("url", ""),
             "data_path": data_path,
             "last_modified": extras.get("modified", ""),
+            "metadata_created": pkg.get("metadata_created", ""),
             "doip_url": _doip_url(qid) if qid else "",
             "components": components,
         })
