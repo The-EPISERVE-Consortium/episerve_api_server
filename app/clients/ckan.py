@@ -89,6 +89,7 @@ def list_model_runs() -> list[dict]:
         input_files  = [r["url"] for r in pkg.get("resources", []) if r.get("description") == "Input file"]
         output_files = [r["url"] for r in pkg.get("resources", []) if r.get("description") == "Output file"]
         runs.append({
+            "run_id":           qid,
             "qid":              qid,
             "model_name":       extras.get("model", ""),
             "docker_tag":       extras.get("docker_tag", ""),
