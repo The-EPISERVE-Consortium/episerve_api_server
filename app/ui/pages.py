@@ -1,6 +1,7 @@
 import json
 import duckdb
 from nicegui import ui, run, app as _napp
+from starlette.requests import Request
 
 from app.clients import ckan as ckan_client
 from app.config import settings
@@ -151,7 +152,7 @@ def register_pages():
         ui.navigate.to("/ui/datasets")
 
     @ui.page("/ui/datasets")
-    def datasets_processed_lab():
+    def datasets_processed_lab(request: Request):
         from datetime import datetime
 
         _header("/ui/datasets")
@@ -356,8 +357,13 @@ def register_pages():
             tbl.on("selection", on_selection)
 
         with ui.column().classes("px-8 py-6 w-full gap-4"):
-            ui.label("Datasets").classes("text-3xl font-bold text-gray-900")
-            ui.label("Browse, explore and download available datasets.").classes("text-sm text-gray-500 -mt-2")
+            with ui.row().classes("w-full items-start justify-between gap-6"):
+                with ui.column().classes("gap-0"):
+                    ui.label("Datasets").classes("text-3xl font-bold text-gray-900")
+                    ui.label("Browse, explore and download available datasets.").classes("text-sm text-gray-500 mt-1")
+                with ui.element("div").classes("bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 shrink-0"):
+                    ui.label("API").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1")
+                    ui.label(f"curl {request.base_url}datasets/processed").classes("font-mono text-xs text-gray-700")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
@@ -409,7 +415,7 @@ def register_pages():
             data_container_ref[0] = _dc
 
     @ui.page("/ui/models")
-    def models():
+    def models(request: Request):
         _header("/ui/models")
 
         try:
@@ -519,8 +525,13 @@ def register_pages():
                 </q-td>''')
 
         with ui.column().classes("px-8 py-6 w-full gap-4"):
-            ui.label("Models").classes("text-3xl font-bold text-gray-900")
-            ui.label("Browse available forecast models.").classes("text-sm text-gray-500 -mt-2")
+            with ui.row().classes("w-full items-start justify-between gap-6"):
+                with ui.column().classes("gap-0"):
+                    ui.label("Models").classes("text-3xl font-bold text-gray-900")
+                    ui.label("Browse available forecast models.").classes("text-sm text-gray-500 mt-1")
+                with ui.element("div").classes("bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 shrink-0"):
+                    ui.label("API").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1")
+                    ui.label(f"curl {request.base_url}models").classes("font-mono text-xs text-gray-700")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
@@ -541,7 +552,7 @@ def register_pages():
                 model_table()
 
     @ui.page("/ui/model-runs")
-    def model_runs():
+    def model_runs(request: Request):
         from datetime import datetime
         _header("/ui/model-runs")
 
@@ -849,8 +860,13 @@ def register_pages():
         preview_container = [None]
 
         with ui.column().classes("px-8 py-6 w-full gap-4"):
-            ui.label("Model Runs").classes("text-3xl font-bold text-gray-900")
-            ui.label("Browse past model run results.").classes("text-sm text-gray-500 -mt-2")
+            with ui.row().classes("w-full items-start justify-between gap-6"):
+                with ui.column().classes("gap-0"):
+                    ui.label("Model Runs").classes("text-3xl font-bold text-gray-900")
+                    ui.label("Browse past model run results.").classes("text-sm text-gray-500 mt-1")
+                with ui.element("div").classes("bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 shrink-0"):
+                    ui.label("API").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1")
+                    ui.label(f"curl {request.base_url}model-runs").classes("font-mono text-xs text-gray-700")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
