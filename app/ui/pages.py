@@ -363,7 +363,7 @@ def register_pages():
                     ui.label("Browse, explore and download available datasets.").classes("text-sm text-gray-500 mt-1")
                 with ui.element("div").classes("bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 shrink-0"):
                     ui.label("API").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1")
-                    ui.label(f"curl {request.base_url}datasets/processed").classes("font-mono text-xs text-gray-700")
+                    ui.label(f"curl {request.base_url}datasets").classes("font-mono text-xs text-gray-700")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
