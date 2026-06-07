@@ -29,8 +29,9 @@ class Model(BaseModel):
 class ModelRunRequest(BaseModel):
     model_image: str
     model_tag: str = "latest"
-    input_path: str
+    input_data_files: list[list[str]]
     config: dict[str, Any]
+    data_transformation_sql: list[str] | None = None
 
 
 class ModelRunResponse(BaseModel):

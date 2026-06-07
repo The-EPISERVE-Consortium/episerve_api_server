@@ -11,10 +11,11 @@ router = APIRouter(prefix="/model-runs", tags=["model-runs"])
 def start_model_run(request: ModelRunRequest):
     try:
         result = prefect_client.trigger_model_run(
-            input_path=request.input_path,
+            input_data_files=request.input_data_files,
             model_image=request.model_image,
             model_tag=request.model_tag,
             config_json=json.dumps(request.config),
+            data_transformation_sql=request.data_transformation_sql,
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Prefect error: {e}")
