@@ -419,7 +419,31 @@ def register_pages():
                 _error_label(f"Could not load models: {e}")
             return
 
-        all_rows = list(raw_rows)
+        def _fmt_date_model(dt_str: str) -> tuple:
+            if not dt_str:
+                return "—", ""
+            try:
+                from datetime import datetime as _dt
+                import re
+                s = dt_str.strip().rstrip("Z")
+                # truncate sub-second part to 6 digits so %f works
+                s = re.sub(r"(\.\d{6})\d+", r"\1", s)
+                for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                    try:
+                        d = _dt.strptime(s, fmt)
+                        days = (_dt.now() - d).days
+                        rel = "Today" if days == 0 else "1 day ago" if days == 1 else f"{days} days ago"
+                        return d.strftime("%b %-d, %Y"), rel
+                    except ValueError:
+                        pass
+            except Exception:
+                pass
+            return dt_str, ""
+
+        all_rows = []
+        for r in raw_rows:
+            created_display, created_rel = _fmt_date_model(r.get("docker_image_created", ""))
+            all_rows.append({**r, "_created_display": created_display, "_created_rel": created_rel})
 
         filtered_rows: list = list(all_rows)
         current_search = [""]
@@ -448,10 +472,11 @@ def register_pages():
 
             tbl = ui.table(
                 columns=[
-                    {"name": "name",        "label": "Name",          "field": "name",         "align": "left", "sortable": True},
-                    {"name": "docker_tag",  "label": "Tag",           "field": "docker_tag",   "align": "left", "sortable": True},
-                    {"name": "docker_image","label": "Image",         "field": "docker_image", "align": "left"},
-                    {"name": "actions",     "label": "",              "field": "name",         "align": "right"},
+                    {"name": "name",             "label": "Name",          "field": "name",                 "align": "left", "sortable": True},
+                    {"name": "docker_tag",       "label": "Tag",           "field": "docker_tag",           "align": "left", "sortable": True},
+                    {"name": "docker_image",     "label": "Image",         "field": "docker_image",         "align": "left"},
+                    {"name": "image_created",    "label": "Image Created", "field": "docker_image_created", "align": "left", "sortable": True},
+                    {"name": "actions",          "label": "",              "field": "name",                 "align": "right"},
                 ],
                 rows=filtered_rows,
                 row_key="name",
@@ -472,6 +497,12 @@ def register_pages():
             tbl.add_slot("body-cell-docker_image", r'''
                 <q-td :props="props">
                     <span class="font-mono text-xs text-gray-600">{{ props.row.docker_image }}</span>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-image_created", r'''
+                <q-td :props="props">
+                    <div class="text-sm text-gray-700">{{ props.row._created_display }}</div>
+                    <div class="text-xs text-gray-400">{{ props.row._created_rel }}</div>
                 </q-td>''')
 
             tbl.add_slot("body-cell-actions", r'''
