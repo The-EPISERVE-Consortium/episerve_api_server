@@ -13,8 +13,9 @@ class ProcessedDataset(BaseModel):
     name: str
     description: str
     source_url: str
-    lakefs_path: str
+    data_path: str
     last_modified: str
+    metadata_created: str
     doip_url: str
 
 
