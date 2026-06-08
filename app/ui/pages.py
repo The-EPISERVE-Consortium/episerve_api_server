@@ -797,30 +797,41 @@ def register_pages():
                                 break
                     return result
 
-                def _fetch_preview(url: str, ext: str):
+                def _fetch_preview(url: str, ext: str, limit: int = 500):
                     if ext == ".parquet":
                         conn = duckdb.connect()
                         conn.execute("INSTALL httpfs; LOAD httpfs")
-                        df = conn.execute(f"SELECT * FROM read_parquet('{url}') LIMIT 500").df()
+                        total = conn.execute(f"SELECT COUNT(*) FROM read_parquet('{url}')").fetchone()[0]
+                        df = conn.execute(f"SELECT * FROM read_parquet('{url}') LIMIT {limit}").df()
                         conn.close()
+                        df.attrs["total_rows"] = total
                         return df
                     import requests, io, pandas as pd
                     resp = requests.get(url, timeout=60)
                     resp.raise_for_status()
                     sep = "\t" if ext == ".tsv" else ","
-                    return pd.read_csv(io.StringIO(resp.text), sep=sep, nrows=500)
+                    df = pd.read_csv(io.StringIO(resp.text), sep=sep, nrows=limit)
+                    df.attrs["total_rows"] = None
+                    return df
 
                 def _component_url(base: str, qid: str, comp: dict, cid: str) -> str:
                     path = comp.get("@id", f"output/{cid}").removeprefix("components/")
                     return f"{base}/doip/retrieve/{qid}/{path}"
 
                 def _preview_card(dc, icon: str, label: str, df):
+                    total = df.attrs.get("total_rows")
+                    if total is None:
+                        row_lbl = f"{len(df):,} rows"
+                    elif total > len(df):
+                        row_lbl = f"{len(df):,} of {total:,} rows"
+                    else:
+                        row_lbl = f"{total:,} rows"
                     with dc:
                         with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-hidden"):
                             with ui.row().classes("px-5 py-3 border-b border-gray-100 items-center gap-2"):
                                 ui.icon(icon).classes("text-blue-600")
                                 ui.label(label).classes("text-sm font-semibold text-gray-800")
-                                ui.label(f"{len(df):,} rows × {len(df.columns)} columns").classes("text-xs text-gray-400 ml-2")
+                                ui.label(f"{row_lbl} × {len(df.columns)} columns").classes("text-xs text-gray-400 ml-2")
                             cols = [{"name": c, "label": c, "field": c, "align": "left", "sortable": True} for c in df.columns]
                             ui.table(
                                 columns=cols,
@@ -852,12 +863,15 @@ def register_pages():
                         ui.spinner(size="sm")
                         ui.label("Loading files…").classes("text-sm text-gray-400")
 
+                cur_limit = [500]
+                cards_container = [None]
+
                 # Load all components
                 loaded = []  # list of (cid, df)
                 for comp, cid, ext in all_comps:
                     url = _component_url(base, qid, comp, cid)
                     try:
-                        df = await run.io_bound(_fetch_preview, url, ext)
+                        df = await run.io_bound(_fetch_preview, url, ext, cur_limit[0])
                         loaded.append((cid, df))
                     except Exception as exc:
                         with dc:
@@ -950,6 +964,35 @@ def register_pages():
                         def on_x(e): cur_x[0] = e.value; update_chart()
                         def on_y(e): cur_ys[0] = e.value if isinstance(e.value, list) else [e.value]; update_chart()
 
+                        async def on_limit(e):
+                            try:
+                                v = int(e.value or 0)
+                            except (ValueError, TypeError):
+                                return
+                            if v <= 0 or v == cur_limit[0]:
+                                return
+                            cur_limit[0] = v
+                            new_loaded = []
+                            for comp2, cid2, ext2 in all_comps:
+                                url2 = _component_url(base, qid, comp2, cid2)
+                                try:
+                                    df2 = await run.io_bound(_fetch_preview, url2, ext2, v)
+                                    new_loaded.append((cid2, df2))
+                                except Exception:
+                                    pass
+                            loaded.clear()
+                            loaded.extend(new_loaded)
+                            col_map.clear()
+                            for cid2, df2 in loaded:
+                                for col in df2.columns:
+                                    col_map[f"{cid2}: {col}"] = (df2, col)
+                            cards_container[0].clear()
+                            with cards_container[0]:
+                                for cid2, df2 in loaded:
+                                    icon2 = "table_chart" if "predictions" in cid2.lower() else "input"
+                                    _preview_card(cards_container[0], icon2, cid2, df2)
+                            update_chart()
+
                         with ui.row().classes("gap-3 mb-4 items-end flex-wrap"):
                             x_sel = ui.select(opt_labels, value=cur_x[0], label="X axis", on_change=on_x).classes("min-w-48")
                             y_sel = ui.select(opt_labels, value=cur_ys[0], label="Y axis (multi)", multiple=True, on_change=on_y).classes("min-w-48")
@@ -963,12 +1006,17 @@ def register_pages():
                                     </q-item-section>
                                 </q-item>
                             ''')
+                            ui.number(label="Max rows", value=cur_limit[0], min=1, step=100,
+                                      on_change=on_limit).classes("w-28")
 
                         update_chart()
 
-                for cid, df in loaded:
-                    icon = "table_chart" if "predictions" in cid.lower() else "input"
-                    _preview_card(dc, icon, cid, df)
+                cards_div = ui.element("div").classes("w-full flex flex-col gap-4")
+                cards_container[0] = cards_div
+                with cards_div:
+                    for cid, df in loaded:
+                        icon = "table_chart" if "predictions" in cid.lower() else "input"
+                        _preview_card(cards_div, icon, cid, df)
 
             tbl.on("selection", on_selection)
 
