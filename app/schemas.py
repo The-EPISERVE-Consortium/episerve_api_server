@@ -26,6 +26,7 @@ class Model(BaseModel):
     docker_tag: str
     description: str
     doip_url: str = ""
+    git_repo: str = ""
 
 
 class ModelRunRequest(BaseModel):

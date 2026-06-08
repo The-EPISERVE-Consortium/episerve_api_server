@@ -572,6 +572,9 @@ def register_pages():
                                 <q-item v-if="props.row.doip_url" clickable v-close-popup :href="props.row.doip_url" target="_blank">
                                     <q-item-section>Show Metadata</q-item-section>
                                 </q-item>
+                                <q-item v-if="props.row.git_repo" clickable v-close-popup :href="props.row.git_repo" target="_blank">
+                                    <q-item-section>Go to GitHub repo</q-item-section>
+                                </q-item>
                             </q-list>
                         </q-menu>
                     </q-btn>
