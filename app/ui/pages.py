@@ -663,11 +663,13 @@ def register_pages():
             status = r.get("status", "") or (
                 "completed" if r.get("output_files") else ""
             )
+            log_url = next((u for u in r.get("output_files", []) if "run.log" in u), "")
             all_rows.append({**r,
                 "status": status,
                 "_date_display": date_display, "_rel_time": rel_time,
                 "_status_cls": _status_cls(status),
                 "_input_names": _resolve_inputs(r.get("input_dataset_qids", [])),
+                "_log_url": log_url,
             })
 
         filtered_rows: list = list(all_rows)
@@ -753,6 +755,9 @@ def register_pages():
                                 </q-item>
                                 <q-item clickable v-close-popup :href="props.row.doip_url" target="_blank">
                                     <q-item-section>Show Metadata</q-item-section>
+                                </q-item>
+                                <q-item v-if="props.row._log_url" clickable v-close-popup :href="props.row._log_url" target="_blank">
+                                    <q-item-section>Show log</q-item-section>
                                 </q-item>
                             </q-list>
                         </q-menu>
