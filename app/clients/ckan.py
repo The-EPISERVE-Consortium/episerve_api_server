@@ -32,7 +32,7 @@ def list_models() -> list[dict]:
         )
         models.append({
             "qid":          qid,
-            "name":         pkg.get("name", ""),
+            "name":         pkg.get("title", ""),
             "docker_image": docker_image,
             "docker_tag":   extras.get("docker_tag", ""),
             "description":  pkg.get("notes", ""),

@@ -566,7 +566,7 @@ def register_pages():
                     <q-btn flat round dense icon="more_vert" size="sm" class="text-gray-400">
                         <q-menu>
                             <q-list dense>
-                                <q-item clickable v-close-popup :href="'https://data.episerve.zib.de/dataset/' + props.row.name" target="_blank">
+                                <q-item clickable v-close-popup :href="'https://data.episerve.zib.de/dataset/' + props.row.qid.toLowerCase()" target="_blank">
                                     <q-item-section>Show in ModelHub</q-item-section>
                                 </q-item>
                                 <q-item v-if="props.row.doip_url" clickable v-close-popup :href="props.row.doip_url" target="_blank">
