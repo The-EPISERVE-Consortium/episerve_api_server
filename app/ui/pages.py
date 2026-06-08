@@ -631,7 +631,7 @@ def register_pages():
                     dt = datetime.strptime(s[:10], "%Y-%m-%d")
                 days = (datetime.now() - dt).days
                 rel = "Today" if days == 0 else "1 day ago" if days == 1 else f"{days} days ago"
-                return dt.strftime("%b %-d, %Y"), rel
+                return dt.strftime("%b %-d, %Y  %H:%M"), rel
             except Exception:
                 return dt_str, ""
 
@@ -652,9 +652,13 @@ def register_pages():
         all_rows = []
         for r in raw_rows:
             date_display, rel_time = _fmt_date(r.get("run_timestamp", ""))
+            status = r.get("status", "") or (
+                "completed" if r.get("output_files") else ""
+            )
             all_rows.append({**r,
+                "status": status,
                 "_date_display": date_display, "_rel_time": rel_time,
-                "_status_cls": _status_cls(r.get("status", "")),
+                "_status_cls": _status_cls(status),
             })
 
         filtered_rows: list = list(all_rows)
