@@ -1011,12 +1011,12 @@ def register_pages():
 
                         update_chart()
 
-                cards_div = ui.element("div").classes("w-full flex flex-col gap-4")
-                cards_container[0] = cards_div
-                with cards_div:
-                    for cid, df in loaded:
-                        icon = "table_chart" if "predictions" in cid.lower() else "input"
-                        _preview_card(cards_div, icon, cid, df)
+                    cards_div = ui.element("div").classes("w-full flex flex-col gap-4")
+                    cards_container[0] = cards_div
+                    with cards_div:
+                        for cid, df in loaded:
+                            icon = "table_chart" if "predictions" in cid.lower() else "input"
+                            _preview_card(cards_div, icon, cid, df)
 
             tbl.on("selection", on_selection)
 
