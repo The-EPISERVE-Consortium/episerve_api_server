@@ -1,8 +1,10 @@
+import hmac
 import json
 import duckdb
 from nicegui import ui, run, app as _napp
 from starlette.requests import Request
 
+from app.auth import _daily_token
 from app.clients import ckan as ckan_client
 from app.config import settings
 
@@ -32,6 +34,13 @@ def _header(current: str = ""):
 
 def _error_label(msg: str):
     ui.label(f"⚠ {msg}").classes("text-red-600 text-sm mt-2")
+
+
+def _require_login() -> bool:
+    if _napp.storage.user.get("token") != _daily_token():
+        ui.navigate.to("/login")
+        return False
+    return True
 
 
 # ─── Trigger v2 helpers ────────────────────────────────────────────────────────
@@ -147,12 +156,45 @@ def _tv2_footer():
 
 def register_pages():
 
+    @ui.page("/login")
+    def login_page():
+        if _napp.storage.user.get("token") == _daily_token():
+            ui.navigate.to("/ui")
+            return
+
+        error = ui.label("").classes("text-red-600 text-sm hidden")
+
+        def do_login():
+            valid = (
+                hmac.compare_digest(username_inp.value, settings.auth_username)
+                and hmac.compare_digest(password_inp.value, settings.auth_password)
+            )
+            if valid:
+                _napp.storage.user["token"] = _daily_token()
+                ui.navigate.to("/ui")
+            else:
+                error.set_text("Invalid username or password")
+                error.classes(remove="hidden")
+
+        with ui.column().classes("w-full h-screen items-center justify-center bg-gray-50"):
+            with ui.element("div").classes("w-full max-w-sm bg-white border border-gray-200 rounded-2xl shadow-sm p-8 gap-0"):
+                ui.label("EPISERVE").classes("text-xl font-bold text-gray-900 mb-1")
+                ui.label("Sign in to continue").classes("text-sm text-gray-500 mb-6")
+                username_inp = ui.input("Username").classes("w-full mb-3")
+                password_inp = ui.input("Password").props("type=password").classes("w-full mb-1")
+                error
+                ui.button("Sign in", on_click=do_login).classes("w-full bg-blue-700 text-white mt-4")
+
     @ui.page("/ui")
     def _root():
+        if not _require_login():
+            return
         ui.navigate.to("/ui/datasets")
 
     @ui.page("/ui/datasets")
     def datasets_processed_lab(request: Request):
+        if not _require_login():
+            return
         from datetime import datetime
 
         _header("/ui/datasets")
@@ -416,6 +458,8 @@ def register_pages():
 
     @ui.page("/ui/models")
     def models(request: Request):
+        if not _require_login():
+            return
         _header("/ui/models")
 
         try:
@@ -553,6 +597,8 @@ def register_pages():
 
     @ui.page("/ui/model-runs")
     def model_runs(request: Request):
+        if not _require_login():
+            return
         from datetime import datetime
         _header("/ui/model-runs")
 
@@ -890,6 +936,8 @@ def register_pages():
 
     @ui.page("/ui/trigger")
     def trigger():
+        if not _require_login():
+            return
         _header("/ui/trigger")
 
         class _StepCtx:
@@ -1208,12 +1256,16 @@ def register_pages():
 
     @ui.page("/ui/run_workflow")
     def _tv2_redirect():
+        if not _require_login():
+            return
         ui.navigate.to("/ui/run_workflow/1")
 
     # Step 1 — Datasets ───────────────────────────────────────────────────────
 
     @ui.page("/ui/run_workflow/1")
     def trigger_v2_step1():
+        if not _require_login():
+            return
         state = _tv2_state()
         try:
             all_ds = ckan_client.list_processed_datasets()
@@ -1334,6 +1386,8 @@ def register_pages():
 
     @ui.page("/ui/run_workflow/2")
     def trigger_v2_step2():
+        if not _require_login():
+            return
         state = _tv2_state()
         if not state.get("datasets"):
             ui.navigate.to("/ui/run_workflow/1")
@@ -1417,6 +1471,8 @@ def register_pages():
 
     @ui.page("/ui/run_workflow/3")
     def trigger_v2_step3():
+        if not _require_login():
+            return
         state = _tv2_state()
         if not state.get("datasets"):
             ui.navigate.to("/ui/run_workflow/1")
@@ -1517,6 +1573,8 @@ def register_pages():
 
     @ui.page("/ui/run_workflow/4")
     def trigger_v2_step4():
+        if not _require_login():
+            return
         state = _tv2_state()
         if not state.get("datasets"):
             ui.navigate.to("/ui/run_workflow/1")
@@ -1568,6 +1626,8 @@ def register_pages():
 
     @ui.page("/ui/run_workflow/5")
     def trigger_v2_step5():
+        if not _require_login():
+            return
         state = _tv2_state()
         if not state.get("datasets"):
             ui.navigate.to("/ui/run_workflow/1")
