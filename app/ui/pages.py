@@ -1,6 +1,7 @@
 import hmac
 import json
 import duckdb
+import pandas as pd
 from nicegui import ui, run, app as _napp
 from starlette.requests import Request
 
@@ -760,16 +761,14 @@ def register_pages():
                     components = meta.get("kernel", {}).get("fdo:hasComponent", [])
                     if isinstance(components, dict):
                         components = [components]
-                    predictions = None
-                    input_file  = None
+                    result = []
                     for comp in components:
                         cid = str(comp.get("componentId", ""))
                         for ext in (".parquet", ".tsv", ".csv"):
-                            if cid.lower() == f"predictions{ext}":
-                                predictions = (comp, cid, ext)
-                            elif cid.lower() == f"input{ext}":
-                                input_file = (comp, cid, ext)
-                    return predictions, input_file
+                            if cid.lower().endswith(ext):
+                                result.append((comp, cid, ext))
+                                break
+                    return result
 
                 def _fetch_preview(url: str, ext: str):
                     if ext == ".parquet":
@@ -811,9 +810,9 @@ def register_pages():
                         _error_label(f"Could not fetch metadata: {exc}")
                     return
 
-                predictions, input_file = _find_components(meta)
+                all_comps = _find_components(meta)
                 dc.clear()
-                if not predictions:
+                if not any("predictions" in cid.lower() for _, cid, _ in all_comps):
                     with dc:
                         ui.label("No predictions component found in metadata.").classes("text-sm text-gray-400 italic")
                     return
@@ -826,37 +825,39 @@ def register_pages():
                         ui.spinner(size="sm")
                         ui.label("Loading files…").classes("text-sm text-gray-400")
 
-                comp, cid, ext = predictions
-                pred_url = _component_url(base, qid, comp, cid)
-                try:
-                    pred_df = await run.io_bound(_fetch_preview, pred_url, ext)
-                except Exception as exc:
-                    dc.clear()
-                    with dc:
-                        _error_label(f"Could not load {cid}: {exc}")
-                    return
-
-                inp_df = None
-                if input_file:
-                    icomp, icid, iext = input_file
-                    inp_url = _component_url(base, qid, icomp, icid)
+                # Load all components
+                loaded = []  # list of (cid, df)
+                for comp, cid, ext in all_comps:
+                    url = _component_url(base, qid, comp, cid)
                     try:
-                        inp_df = await run.io_bound(_fetch_preview, inp_url, iext)
+                        df = await run.io_bound(_fetch_preview, url, ext)
+                        loaded.append((cid, df))
                     except Exception as exc:
                         with dc:
-                            _error_label(f"Could not load {icid}: {exc}")
+                            _error_label(f"Could not load {cid}: {exc}")
 
-                # Chart ─────────────────────────────────────────────────────
+                if not any("predictions" in cid.lower() for cid, _ in loaded):
+                    dc.clear()
+                    with dc:
+                        ui.label("No predictions could be loaded.").classes("text-sm text-gray-400 italic")
+                    return
+
+                # Build col_map: "filename: column" -> (df, col)
                 col_map: dict = {}
-                for col in pred_df.columns:
-                    col_map[f"{cid}: {col}"] = (pred_df, col)
-                if inp_df is not None:
-                    for col in inp_df.columns:
-                        col_map[f"{icid}: {col}"] = (inp_df, col)
+                for cid, df in loaded:
+                    for col in df.columns:
+                        col_map[f"{cid}: {col}"] = (df, col)
 
                 opt_labels = list(col_map.keys())
-                cur_x  = [opt_labels[0] if opt_labels else ""]
-                cur_ys = [[opt_labels[1]] if len(opt_labels) > 1 else ([opt_labels[0]] if opt_labels else [])]
+
+                # Default x to x_auto_converted if present, else first column
+                x_auto_key = next((k for k in opt_labels if k.endswith(": x_auto_converted")), None)
+                cur_x = [x_auto_key or (opt_labels[0] if opt_labels else "")]
+
+                # Default y to first non-x column of the predictions file
+                pred_cid = next((cid for cid, _ in loaded if "predictions" in cid.lower()), "")
+                pred_y_opts = [k for k in opt_labels if k.startswith(f"{pred_cid}: ") and not k.endswith(": x_auto_converted")]
+                cur_ys = [[pred_y_opts[0]] if pred_y_opts else ([opt_labels[0]] if opt_labels else [])]
 
                 dc.clear()
                 with dc:
@@ -866,7 +867,7 @@ def register_pages():
                         chart = ui.echart({
                             "tooltip": {"trigger": "axis"},
                             "legend": {"top": 24},
-                            "xAxis":   {"type": "category", "data": []},
+                            "xAxis":   {"type": "value"},
                             "yAxis":   {"type": "value"},
                             "series":  [],
                             "dataZoom": [{"type": "inside"}, {"type": "slider", "height": 20}],
@@ -878,16 +879,45 @@ def register_pages():
                             yl_list = cur_ys[0]
                             if not xl or xl not in col_map or not yl_list:
                                 return
-                            x_df, x_col = col_map[xl]
-                            chart.options["xAxis"]["data"] = x_df[x_col].astype(str).tolist()
-                            chart.options["series"] = [
-                                {
-                                    "name": yl, "type": "line", "smooth": True,
-                                    "data": [None if str(v) in ("nan", "None", "") else v
-                                             for v in col_map[yl][0][col_map[yl][1]].tolist()],
-                                }
-                                for yl in yl_list if yl in col_map
-                            ]
+                            x_df_ref, x_col_name = col_map[xl]
+
+                            # Detect numeric x → value axis with [x, y] pairs (allows different-length series)
+                            try:
+                                pd.to_numeric(x_df_ref[x_col_name])
+                                numeric_x = True
+                            except (ValueError, TypeError):
+                                numeric_x = False
+
+                            series = []
+                            if numeric_x:
+                                for yl in yl_list:
+                                    if yl not in col_map:
+                                        continue
+                                    y_df, y_col = col_map[yl]
+                                    # Use x from the same file if the column exists there
+                                    x_src = y_df if x_col_name in y_df.columns else x_df_ref
+                                    x_vals = pd.to_numeric(x_src[x_col_name], errors="coerce").tolist()
+                                    y_vals = y_df[y_col].tolist()
+                                    n = min(len(x_vals), len(y_vals))
+                                    data = [
+                                        [x_vals[i], None if str(y_vals[i]) in ("nan", "None", "") else y_vals[i]]
+                                        for i in range(n)
+                                    ]
+                                    series.append({"name": yl, "type": "line", "smooth": True, "data": data})
+                                chart.options["xAxis"] = {"type": "value"}
+                            else:
+                                # Category axis: positional, truncate to shortest series
+                                x_vals = x_df_ref[x_col_name].astype(str).tolist()
+                                for yl in yl_list:
+                                    if yl not in col_map:
+                                        continue
+                                    y_df, y_col = col_map[yl]
+                                    y_vals = y_df[y_col].tolist()
+                                    n = min(len(x_vals), len(y_vals))
+                                    data = [None if str(y_vals[i]) in ("nan", "None", "") else y_vals[i] for i in range(n)]
+                                    series.append({"name": yl, "type": "line", "smooth": True, "data": data})
+                                chart.options["xAxis"] = {"type": "category", "data": x_vals}
+                            chart.options["series"] = series
                             chart.update()
 
                         def on_x(e): cur_x[0] = e.value; update_chart()
@@ -909,9 +939,9 @@ def register_pages():
 
                         update_chart()
 
-                _preview_card(dc, "table_chart", f"Predictions — {cid}", pred_df)
-                if inp_df is not None:
-                    _preview_card(dc, "input", f"Input — {icid}", inp_df)
+                for cid, df in loaded:
+                    icon = "table_chart" if "predictions" in cid.lower() else "input"
+                    _preview_card(dc, icon, cid, df)
 
             tbl.on("selection", on_selection)
 
