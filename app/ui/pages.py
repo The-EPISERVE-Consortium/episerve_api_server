@@ -132,7 +132,7 @@ def _tv2_summary(state: dict, hint: str = ""):
             ui.icon("tune").classes("text-blue-600 mt-0.5 shrink-0")
             with ui.column().classes("flex-1 gap-0"):
                 ui.label("Configuration").classes("text-sm font-semibold text-gray-800")
-                cfg = state.get("config", "").strip()
+                cfg = (state.get("config") or "").strip()
                 try:
                     parsed = json.loads(cfg)
                     keys = list(parsed.keys())
