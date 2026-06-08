@@ -932,7 +932,7 @@ def register_pages():
                                         <q-checkbox :model-value="props.selected" @update:model-value="props.toggleOption(props.opt)" />
                                     </q-item-section>
                                     <q-item-section>
-                                        <q-item-label>{{ props.opt }}</q-item-label>
+                                        <q-item-label>{{ props.opt.label ?? props.opt }}</q-item-label>
                                     </q-item-section>
                                 </q-item>
                             ''')
