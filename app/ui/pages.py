@@ -61,7 +61,7 @@ def _tv2_state() -> dict:
             "datasets": [],
             "model": None,
             "sql": {},
-            "config": '{\n  "horizon_weeks": 4,\n  "n_reference_weeks": 4\n}',
+            "config": None,
             "filenames": {},
         }
     return _napp.storage.user["tv2"]
@@ -1535,6 +1535,7 @@ def register_pages():
             else:
                 sel_name[0] = name
                 state["model"] = next((m for m in all_models if m["name"] == name), None)
+            state["config"] = None
             _napp.storage.user["tv2"] = state
             model_cards.refresh()
             run_summary.refresh()
@@ -1651,8 +1652,13 @@ def register_pages():
                         with ui.row().classes("gap-1 shrink-0"):
                             ui.button(icon="close", on_click=lambda: config_inp.set_value("")).props("flat round dense").classes("text-gray-400")
                             ui.button("Format", icon="auto_fix_high", on_click=format_json).props("flat dense no-caps").classes("text-xs text-gray-500")
+                    if state.get("config") is None:
+                        params = (state["model"] or {}).get("additional_properties", [])
+                        state["config"] = json.dumps(
+                            {p["name"]: p.get("value") for p in params}, indent=2
+                        ) if params else "{}"
                     config_inp = ui.codemirror(
-                        value=state.get("config", '{\n  "horizon_weeks": 4,\n  "n_reference_weeks": 4\n}'),
+                        value=state["config"],
                         language="json",
                     ).classes("w-full font-mono")
                 with ui.column().classes("shrink-0 gap-3"):

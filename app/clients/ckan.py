@@ -1,3 +1,4 @@
+import json
 import requests
 from app.config import settings
 
@@ -30,15 +31,18 @@ def list_models() -> list[dict]:
             f"https://github.com/{docker_image[len('ghcr.io/'):]}"
             if docker_image.startswith("ghcr.io/") else ""
         )
+        raw_params = extras.get("model_parameters", "")
+        additional_properties = json.loads(raw_params) if raw_params else []
         models.append({
-            "qid":          qid,
-            "name":         pkg.get("title", ""),
-            "docker_image": docker_image,
-            "docker_tag":   extras.get("docker_tag", ""),
-            "description":  pkg.get("notes", ""),
+            "qid":                  qid,
+            "name":                 pkg.get("title", ""),
+            "docker_image":         docker_image,
+            "docker_tag":           extras.get("docker_tag", ""),
+            "description":          pkg.get("notes", ""),
             "docker_image_created": extras.get("docker_image_created", ""),
-            "doip_url":     _doip_url(qid) if qid else "",
-            "git_repo":     git_repo,
+            "doip_url":             _doip_url(qid) if qid else "",
+            "git_repo":             git_repo,
+            "additional_properties": additional_properties,
         })
     return models
 
