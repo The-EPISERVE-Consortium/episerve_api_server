@@ -101,16 +101,22 @@ def list_model_runs() -> list[dict]:
         qid = extras.get("qid", "")
         input_files  = [r["url"] for r in pkg.get("resources", []) if r.get("description") == "Input file"]
         output_files = [r["url"] for r in pkg.get("resources", []) if r.get("description") == "Output file"]
+        raw_qids = extras.get("input_dataset_qids", "")
+        try:
+            input_dataset_qids = json.loads(raw_qids) if raw_qids else []
+        except Exception:
+            input_dataset_qids = []
         runs.append({
-            "run_id":           qid,
-            "qid":              qid,
-            "model_name":       extras.get("model", ""),
-            "docker_tag":       extras.get("docker_tag", ""),
-            "status":           extras.get("status", ""),
-            "run_timestamp":    extras.get("run_timestamp", ""),
-            "computation_time": extras.get("computation_time", ""),
-            "input_files":      input_files,
-            "output_files":     output_files,
-            "doip_url":         _doip_url(qid) if qid else "",
+            "run_id":              qid,
+            "qid":                 qid,
+            "model_name":          extras.get("model", ""),
+            "docker_tag":          extras.get("docker_tag", ""),
+            "status":              extras.get("status", ""),
+            "run_timestamp":       extras.get("run_timestamp", ""),
+            "computation_time":    extras.get("computation_time", ""),
+            "input_files":         input_files,
+            "output_files":        output_files,
+            "input_dataset_qids":  input_dataset_qids,
+            "doip_url":            _doip_url(qid) if qid else "",
         })
     return runs

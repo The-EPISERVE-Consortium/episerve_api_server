@@ -649,6 +649,14 @@ def register_pages():
                 _error_label(f"Could not load model runs: {e}")
             return
 
+        try:
+            dataset_map = {ds["qid"]: ds["name"] for ds in ckan_client.list_processed_datasets()}
+        except Exception:
+            dataset_map = {}
+
+        def _resolve_inputs(qids: list) -> list[str]:
+            return [dataset_map.get(q) or q for q in qids]
+
         all_rows = []
         for r in raw_rows:
             date_display, rel_time = _fmt_date(r.get("run_timestamp", ""))
@@ -659,6 +667,7 @@ def register_pages():
                 "status": status,
                 "_date_display": date_display, "_rel_time": rel_time,
                 "_status_cls": _status_cls(status),
+                "_input_names": _resolve_inputs(r.get("input_dataset_qids", [])),
             })
 
         filtered_rows: list = list(all_rows)
@@ -690,11 +699,12 @@ def register_pages():
 
             tbl = ui.table(
                 columns=[
-                    {"name": "model_name",    "label": "Model",   "field": "model_name",    "align": "left", "sortable": True},
-                    {"name": "qid",           "label": "QID",     "field": "qid",           "align": "left"},
-                    {"name": "run_timestamp", "label": "Run",     "field": "run_timestamp", "align": "left", "sortable": True},
-                    {"name": "status",        "label": "Status",  "field": "status",        "align": "left"},
-                    {"name": "actions",       "label": "",        "field": "qid",           "align": "right"},
+                    {"name": "model_name",    "label": "Model",    "field": "model_name",    "align": "left", "sortable": True},
+                    {"name": "qid",           "label": "QID",      "field": "qid",           "align": "left"},
+                    {"name": "input_datasets","label": "Datasets", "field": "_input_names",  "align": "left"},
+                    {"name": "run_timestamp", "label": "Run",      "field": "run_timestamp", "align": "left", "sortable": True},
+                    {"name": "status",        "label": "Status",   "field": "status",        "align": "left"},
+                    {"name": "actions",       "label": "",         "field": "qid",           "align": "right"},
                 ],
                 rows=filtered_rows,
                 row_key="qid",
@@ -711,6 +721,14 @@ def register_pages():
             tbl.add_slot("body-cell-qid", r'''
                 <q-td :props="props">
                     <span class="font-mono text-xs text-gray-600">{{ props.row.qid }}</span>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-input_datasets", r'''
+                <q-td :props="props">
+                    <div v-if="props.row._input_names && props.row._input_names.length">
+                        <div v-for="name in props.row._input_names" :key="name" class="text-xs text-gray-700 leading-snug">{{ name }}</div>
+                    </div>
+                    <span v-else class="text-xs text-gray-400">—</span>
                 </q-td>''')
 
             tbl.add_slot("body-cell-run_timestamp", r'''
