@@ -501,7 +501,7 @@ def register_pages():
 
         def apply_filters():
             s = current_search[0].lower()
-            rs = [r for r in all_rows if not s or s in r["name"].lower() or s in r.get("description", "").lower()]
+            rs = [r for r in all_rows if not s or s in r["name"].lower() or s in r.get("description", "").lower() or s in r.get("qid", "").lower()]
             if current_sort[0] == "Name A–Z":
                 rs.sort(key=lambda r: r["name"].lower())
             filtered_rows.clear()
@@ -522,11 +522,12 @@ def register_pages():
 
             tbl = ui.table(
                 columns=[
-                    {"name": "name",             "label": "Name",          "field": "name",                 "align": "left", "sortable": True},
-                    {"name": "docker_tag",       "label": "Tag",           "field": "docker_tag",           "align": "left", "sortable": True},
-                    {"name": "docker_image",     "label": "Image",         "field": "docker_image",         "align": "left"},
-                    {"name": "image_created",    "label": "Image Created", "field": "docker_image_created", "align": "left", "sortable": True},
-                    {"name": "actions",          "label": "",              "field": "name",                 "align": "right"},
+                    {"name": "name",          "label": "Name",          "field": "name",                 "align": "left", "sortable": True},
+                    {"name": "qid",           "label": "QID",           "field": "qid",                  "align": "left"},
+                    {"name": "docker_tag",    "label": "Tag",           "field": "docker_tag",           "align": "left", "sortable": True},
+                    {"name": "docker_image",  "label": "Image",         "field": "docker_image",         "align": "left"},
+                    {"name": "image_created", "label": "Image Created", "field": "docker_image_created", "align": "left", "sortable": True},
+                    {"name": "actions",       "label": "",              "field": "name",                 "align": "right"},
                 ],
                 rows=filtered_rows,
                 row_key="name",
@@ -537,6 +538,11 @@ def register_pages():
                 <q-td :props="props" style="max-width:320px">
                     <div class="font-semibold text-gray-800 text-sm">{{ props.row.name }}</div>
                     <div class="text-xs text-gray-500 mt-0.5" style="white-space:normal;line-height:1.3">{{ props.row.description }}</div>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-qid", r'''
+                <q-td :props="props">
+                    <span class="font-mono text-xs text-gray-600">{{ props.row.qid || '—' }}</span>
                 </q-td>''')
 
             tbl.add_slot("body-cell-docker_tag", r'''
@@ -563,6 +569,9 @@ def register_pages():
                                 <q-item clickable v-close-popup :href="'https://data.episerve.zib.de/dataset/' + props.row.name" target="_blank">
                                     <q-item-section>Show in ModelHub</q-item-section>
                                 </q-item>
+                                <q-item v-if="props.row.doip_url" clickable v-close-popup :href="props.row.doip_url" target="_blank">
+                                    <q-item-section>Show Metadata</q-item-section>
+                                </q-item>
                             </q-list>
                         </q-menu>
                     </q-btn>
@@ -581,7 +590,7 @@ def register_pages():
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
                     ui.icon("search").classes("text-gray-400 shrink-0")
                     ui.input(
-                        placeholder="Search models...",
+                        placeholder="Search by name, description or QID...",
                         on_change=lambda e: (current_search.__setitem__(0, e.value), apply_filters()),
                     ).props("borderless dense").classes("flex-1 text-sm")
                 ui.select(

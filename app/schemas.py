@@ -25,6 +25,7 @@ class Model(BaseModel):
     docker_image: str
     docker_tag: str
     description: str
+    doip_url: str = ""
 
 
 class ModelRunRequest(BaseModel):

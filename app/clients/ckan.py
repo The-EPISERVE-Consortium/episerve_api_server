@@ -24,13 +24,15 @@ def list_models() -> list[dict]:
     models = []
     for pkg in result.get("results", []):
         extras = {e["key"]: e["value"] for e in pkg.get("extras", [])}
+        qid = extras.get("model_qid", "")
         models.append({
-            "qid":          extras.get("model_qid", ""),
+            "qid":          qid,
             "name":         pkg.get("name", ""),
             "docker_image": extras.get("docker_image", ""),
             "docker_tag":   extras.get("docker_tag", ""),
             "description":  pkg.get("notes", ""),
             "docker_image_created": extras.get("docker_image_created", ""),
+            "doip_url":     _doip_url(qid) if qid else "",
         })
     return models
 
