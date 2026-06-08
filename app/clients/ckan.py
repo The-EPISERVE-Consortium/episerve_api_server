@@ -106,6 +106,11 @@ def list_model_runs() -> list[dict]:
             input_dataset_qids = json.loads(raw_qids) if raw_qids else []
         except Exception:
             input_dataset_qids = []
+        raw_sql = extras.get("data_transformation_sql", "")
+        try:
+            data_transformation_sql = json.loads(raw_sql) if raw_sql else []
+        except Exception:
+            data_transformation_sql = []
         runs.append({
             "run_id":              qid,
             "qid":                 qid,
@@ -114,9 +119,10 @@ def list_model_runs() -> list[dict]:
             "status":              extras.get("status", ""),
             "run_timestamp":       extras.get("run_timestamp", ""),
             "computation_time":    extras.get("computation_time", ""),
-            "input_files":         input_files,
-            "output_files":        output_files,
-            "input_dataset_qids":  input_dataset_qids,
-            "doip_url":            _doip_url(qid) if qid else "",
+            "input_files":             input_files,
+            "output_files":            output_files,
+            "input_dataset_qids":      input_dataset_qids,
+            "data_transformation_sql": data_transformation_sql,
+            "doip_url":                _doip_url(qid) if qid else "",
         })
     return runs
