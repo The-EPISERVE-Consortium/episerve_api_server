@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from nicegui import ui
-from app.routers import datasets, models, model_runs
+from app.routers import auth, datasets, models, model_runs
 from app.ui.pages import register_pages
 
 app = FastAPI(
@@ -11,6 +11,7 @@ app = FastAPI(
     version="0.1.0",
 )
 
+app.include_router(auth.router)
 app.include_router(datasets.router)
 app.include_router(models.router)
 app.include_router(model_runs.router)

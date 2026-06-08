@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from app.auth import require_auth
 from app.clients import ckan as ckan_client
 from app.schemas import Model
 
-router = APIRouter(prefix="/models", tags=["models"])
+router = APIRouter(prefix="/models", tags=["models"], dependencies=[Depends(require_auth)])
 
 
 @router.get("", response_model=list[Model])
