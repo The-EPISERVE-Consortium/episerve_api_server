@@ -25,10 +25,11 @@ def list_models() -> list[dict]:
     for pkg in result.get("results", []):
         extras = {e["key"]: e["value"] for e in pkg.get("extras", [])}
         models.append({
-            "name": pkg.get("name", ""),
+            "qid":          extras.get("model_qid", ""),
+            "name":         pkg.get("name", ""),
             "docker_image": extras.get("docker_image", ""),
-            "docker_tag": extras.get("docker_tag", ""),
-            "description": pkg.get("notes", ""),
+            "docker_tag":   extras.get("docker_tag", ""),
+            "description":  pkg.get("notes", ""),
             "docker_image_created": extras.get("docker_image_created", ""),
         })
     return models

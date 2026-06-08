@@ -20,6 +20,7 @@ class ProcessedDataset(BaseModel):
 
 
 class Model(BaseModel):
+    qid: str = ""
     name: str
     docker_image: str
     docker_tag: str

@@ -128,6 +128,29 @@ def list_model_runs() -> list[dict]:
     return runs
 
 
+def list_models() -> list[dict]:
+    client = _client()
+    repo   = lakefs.Repository(settings.lakefs_models_repo, client=client)
+    branch = repo.branch(settings.lakefs_branch)
+
+    models = []
+    for obj in branch.objects(max_amount=1000):
+        if not obj.path.endswith(".fdo.json"):
+            continue
+        qid     = obj.path.split("/")[-1].removesuffix(".fdo.json")
+        content = branch.object(obj.path).reader().read()
+        fdo     = json.loads(content)
+        profile = fdo.get("profile", {})
+        models.append({
+            "qid":          qid,
+            "name":         profile.get("name",            ""),
+            "description":  profile.get("description",     ""),
+            "docker_image": profile.get("url",             ""),
+            "docker_tag":   profile.get("softwareVersion", ""),
+        })
+    return models
+
+
 def get_model_run(run_id: str) -> dict | None:
     client = _client()
     repo   = lakefs.Repository(settings.lakefs_model_runs_repo, client=client)
