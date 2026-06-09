@@ -940,6 +940,8 @@ def register_pages():
                 # Load all components
                 loaded = []  # list of (cid, df)
                 for comp, cid, ext in all_comps:
+                    if cid == "input_annotated.parquet":
+                        continue
                     url = _component_url(base, qid, comp, cid)
                     try:
                         df = await run.io_bound(_fetch_preview, url, ext, cur_limit[0])
@@ -947,6 +949,20 @@ def register_pages():
                     except Exception as exc:
                         with dc:
                             _error_label(f"Could not load {cid}: {exc}")
+
+                # Load input files from prov:used and add x_auto_converted on the fly
+                for entry in meta.get("provenance", {}).get("prov:used", []):
+                    src_url = entry.get("@id", "") if isinstance(entry, dict) else str(entry)
+                    filename = src_url.split("?")[0].rstrip("/").split("/")[-1]
+                    if not filename.lower().endswith(".parquet"):
+                        continue
+                    try:
+                        df = await run.io_bound(_fetch_preview, src_url, ".parquet", cur_limit[0])
+                        df["x_auto_converted"] = range(1, len(df) + 1)
+                        loaded.append((filename, df))
+                    except Exception as exc:
+                        with dc:
+                            _error_label(f"Could not load input {filename}: {exc}")
 
                 if not any("predictions" in cid.lower() for cid, _ in loaded):
                     dc.clear()
