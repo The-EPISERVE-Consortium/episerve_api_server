@@ -868,12 +868,17 @@ def register_pages():
                                 break
                     return result
 
-                def _fetch_preview(url: str, ext: str, limit: int = 500):
+                def _fetch_preview(url: str, ext: str, limit: int = 500, sql: str = ""):
                     if ext == ".parquet":
                         conn = duckdb.connect()
                         conn.execute("INSTALL httpfs; LOAD httpfs")
-                        total = conn.execute(f"SELECT COUNT(*) FROM read_parquet('{url}')").fetchone()[0]
-                        df = conn.execute(f"SELECT * FROM read_parquet('{url}') LIMIT {limit}").df()
+                        if sql:
+                            conn.execute(f"CREATE VIEW df AS SELECT * FROM read_parquet('{url}')")
+                            total = conn.execute(f"SELECT COUNT(*) FROM ({sql}) _q").fetchone()[0]
+                            df = conn.execute(f"SELECT * FROM ({sql}) _q LIMIT {limit}").df()
+                        else:
+                            total = conn.execute(f"SELECT COUNT(*) FROM read_parquet('{url}')").fetchone()[0]
+                            df = conn.execute(f"SELECT * FROM read_parquet('{url}') LIMIT {limit}").df()
                         conn.close()
                         df.attrs["total_rows"] = total
                         return df
@@ -962,10 +967,12 @@ def register_pages():
                         continue
                     if filename in input_cids_loaded:
                         continue
+                    sql = entry.get("schema:query", "") if isinstance(entry, dict) else ""
+                    label = f"{filename} (filtered)" if sql else filename
                     try:
-                        df = await run.io_bound(_fetch_preview, src_url, ".parquet", cur_limit[0])
+                        df = await run.io_bound(_fetch_preview, src_url, ".parquet", cur_limit[0], sql)
                         df["x_auto_converted"] = range(1, len(df) + 1)
-                        loaded.append((filename, df))
+                        loaded.append((label, df))
                         input_cids_loaded.add(filename)
                     except Exception as exc:
                         with dc:
@@ -1090,10 +1097,12 @@ def register_pages():
                                 fname2 = src_url2.split("?")[0].rstrip("/").split("/")[-1]
                                 if not fname2.lower().endswith(".parquet") or fname2 in loaded_names:
                                     continue
+                                sql2 = entry2.get("schema:query", "") if isinstance(entry2, dict) else ""
+                                label2 = f"{fname2} (filtered)" if sql2 else fname2
                                 try:
-                                    df2 = await run.io_bound(_fetch_preview, src_url2, ".parquet", v)
+                                    df2 = await run.io_bound(_fetch_preview, src_url2, ".parquet", v, sql2)
                                     df2["x_auto_converted"] = range(1, len(df2) + 1)
-                                    new_loaded.append((fname2, df2))
+                                    new_loaded.append((label2, df2))
                                     loaded_names.add(fname2)
                                 except Exception:
                                     pass
