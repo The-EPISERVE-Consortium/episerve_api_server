@@ -70,6 +70,7 @@ def list_processed_datasets() -> list[dict]:
             "metadata_created": pkg.get("metadata_created", ""),
             "doip_url": _doip_url(qid) if qid else "",
             "components": components,
+            "additional_type": extras.get("additional_type", ""),
         })
     return datasets
 
