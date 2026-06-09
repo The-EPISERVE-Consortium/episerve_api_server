@@ -1012,6 +1012,15 @@ def register_pages():
                 x_auto_key = next((k for k in opt_labels if k.endswith(": x_auto_converted")), None)
                 cur_x = [x_auto_key or (opt_labels[0] if opt_labels else "")]
 
+                def _companion_label_col(x_key: str) -> str | None:
+                    """When x is x_auto_converted, return the first non-auto column of the same file."""
+                    if not x_key or not x_key.endswith(": x_auto_converted"):
+                        return None
+                    prefix = x_key[: x_key.rfind(": x_auto_converted")]
+                    return next((k for k in opt_labels if k.startswith(f"{prefix}: ") and not k.endswith(": x_auto_converted")), None)
+
+                cur_xlabel = [_companion_label_col(cur_x[0])]
+
                 # Default y to first non-x column of the predictions file
                 pred_cid = next((cid for cid, _ in loaded if "predictions" in cid.lower()), "")
                 pred_y_opts = [k for k in opt_labels if k.startswith(f"{pred_cid}: ") and not k.endswith(": x_auto_converted")]
@@ -1047,12 +1056,58 @@ def register_pages():
                                 numeric_x = False
 
                             series = []
-                            if numeric_x:
+                            xlabel_key = cur_xlabel[0]
+                            use_labels = (
+                                numeric_x
+                                and xlabel_key
+                                and xlabel_key in col_map
+                                and xlabel_key != xl
+                            )
+
+                            if use_labels:
+                                # Build a unified position → label mapping from the label column
+                                lbl_df, lbl_col = col_map[xlabel_key]
+                                x_pos_vals = pd.to_numeric(x_df_ref[x_col_name], errors="coerce").tolist()
+                                lbl_vals = lbl_df[lbl_col].astype(str).tolist()
+                                pos_to_label = {int(p): l for p, l in zip(x_pos_vals, lbl_vals) if not pd.isna(p)}
+
+                                # Collect all x positions across all series
+                                all_positions: set[int] = set(pos_to_label.keys())
                                 for yl in yl_list:
                                     if yl not in col_map:
                                         continue
                                     y_df, y_col = col_map[yl]
-                                    # Use x from the same file if the column exists there
+                                    x_src = y_df if x_col_name in y_df.columns else x_df_ref
+                                    for p in pd.to_numeric(x_src[x_col_name], errors="coerce").tolist():
+                                        if not pd.isna(p):
+                                            all_positions.add(int(p))
+
+                                sorted_pos = sorted(all_positions)
+                                categories = [pos_to_label.get(p, str(p)) for p in sorted_pos]
+                                pos_to_idx = {p: i for i, p in enumerate(sorted_pos)}
+
+                                for yl in yl_list:
+                                    if yl not in col_map:
+                                        continue
+                                    y_df, y_col = col_map[yl]
+                                    x_src = y_df if x_col_name in y_df.columns else x_df_ref
+                                    x_positions = pd.to_numeric(x_src[x_col_name], errors="coerce").tolist()
+                                    y_vals = y_df[y_col].tolist()
+                                    sparse = [None] * len(categories)
+                                    for p, v in zip(x_positions, y_vals):
+                                        if pd.isna(p):
+                                            continue
+                                        idx = pos_to_idx.get(int(p))
+                                        if idx is not None:
+                                            sparse[idx] = None if str(v) in ("nan", "None", "") else v
+                                    series.append({"name": yl, "type": "line", "smooth": True, "data": sparse, "connectNulls": False})
+                                chart.options["xAxis"] = {"type": "category", "data": categories}
+
+                            elif numeric_x:
+                                for yl in yl_list:
+                                    if yl not in col_map:
+                                        continue
+                                    y_df, y_col = col_map[yl]
                                     x_src = y_df if x_col_name in y_df.columns else x_df_ref
                                     x_vals = pd.to_numeric(x_src[x_col_name], errors="coerce").tolist()
                                     y_vals = y_df[y_col].tolist()
@@ -1078,8 +1133,15 @@ def register_pages():
                             chart.options["series"] = series
                             chart.update()
 
-                        def on_x(e): cur_x[0] = e.value; update_chart()
+                        def on_x(e):
+                            cur_x[0] = e.value
+                            cur_xlabel[0] = _companion_label_col(e.value)
+                            if xlabel_sel:
+                                xlabel_sel.value = cur_xlabel[0]
+                            update_chart()
+                        def on_xlabel(e): cur_xlabel[0] = e.value; update_chart()
                         def on_y(e): cur_ys[0] = e.value if isinstance(e.value, list) else [e.value]; update_chart()
+                        xlabel_sel = None
 
                         async def on_limit(e):
                             try:
@@ -1132,6 +1194,12 @@ def register_pages():
 
                         with ui.row().classes("gap-3 mb-4 items-end flex-wrap"):
                             x_sel = ui.select(opt_labels, value=cur_x[0], label="X axis", on_change=on_x).classes("min-w-48")
+                            xlabel_sel = ui.select(
+                                [None] + opt_labels,
+                                value=cur_xlabel[0],
+                                label="X labels",
+                                on_change=on_xlabel,
+                            ).classes("min-w-48")
                             y_sel = ui.select(opt_labels, value=cur_ys[0], label="Y axis (multi)", multiple=True, on_change=on_y).classes("min-w-48")
                             y_sel.add_slot("option", r'''
                                 <q-item v-bind="props.itemProps">
