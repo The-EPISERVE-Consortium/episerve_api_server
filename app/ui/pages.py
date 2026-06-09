@@ -32,6 +32,34 @@ def _header(current: str = ""):
                     ("text-blue-700 border-b-2 border-blue-700 pb-0.5" if active else "text-gray-600 hover:text-blue-700")
                 )
 
+            # Token dialog
+            with ui.dialog() as token_dialog, ui.card().classes("w-full max-w-lg p-6"):
+                ui.label("Current Token").classes("text-base font-semibold text-gray-800 mb-3")
+                with ui.row().classes("items-center gap-2 w-full"):
+                    token_label = ui.label("").classes(
+                        "font-mono text-sm bg-gray-100 rounded px-3 py-2 break-all flex-1"
+                    )
+                    def _copy_token():
+                        ui.run_javascript(f"navigator.clipboard.writeText({repr(_napp.storage.user.get('token', ''))})")
+                        ui.notify("Copied to clipboard", position="top", type="positive")
+                    ui.button(icon="content_copy", on_click=_copy_token).props("flat round dense").classes("text-gray-500")
+                ui.button("Close", on_click=token_dialog.close).classes("mt-4 self-end").props("flat")
+
+            def _open_token_dialog():
+                token_label.set_text(_napp.storage.user.get("token", ""))
+                token_dialog.open()
+
+            # Avatar button + dropdown menu
+            with ui.element("div").classes("relative"):
+                with ui.button(icon="account_circle").props("flat round").classes("text-gray-600 hover:text-blue-700"):
+                    with ui.menu().classes("mt-1"):
+                        ui.menu_item("Show current token", on_click=_open_token_dialog)
+                        ui.separator()
+                        ui.menu_item("Logout", on_click=lambda: (
+                            _napp.storage.user.clear(),
+                            ui.navigate.to("/login"),
+                        ))
+
 
 def _error_label(msg: str):
     ui.label(f"⚠ {msg}").classes("text-red-600 text-sm mt-2")
