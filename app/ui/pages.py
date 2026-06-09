@@ -231,9 +231,12 @@ def register_pages():
         for r in raw_rows:
             date_display, rel_time = _fmt_date(r.get("last_modified", ""))
             created_display, created_rel = _fmt_date(r.get("metadata_created", ""))
+            qid = r.get("qid", "")
+            versions_url = f"{settings.doip_url.rstrip('/')}/doip/versions/{qid}?include_sizes=true" if qid else ""
             all_rows.append({**r,
                 "_date_display": date_display, "_rel_time": rel_time,
                 "_created_display": created_display, "_created_rel": created_rel,
+                "_versions_url": versions_url,
             })
 
         all_types = ["All Types", "Dataset"]
@@ -350,6 +353,9 @@ def register_pages():
                                 </q-item>
                                 <q-item clickable v-close-popup :href="props.row.doip_url" target="_blank">
                                     <q-item-section>Show Metadata</q-item-section>
+                                </q-item>
+                                <q-item v-if="props.row._versions_url" clickable v-close-popup :href="props.row._versions_url" target="_blank">
+                                    <q-item-section>Show all versions</q-item-section>
                                 </q-item>
                                 <q-item v-for="c in props.row.components" :key="c.name" clickable v-close-popup :href="c.url" target="_blank">
                                     <q-item-section>Download {{ c.name }}</q-item-section>
