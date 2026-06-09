@@ -733,6 +733,8 @@ def register_pages():
                 "completed" if r.get("output_files") else ""
             )
             log_url = next((u for u in r.get("output_files", []) if "run.log" in u), "")
+            if not log_url and r.get("qid"):
+                log_url = f"{settings.doip_url.rstrip('/')}/doip/retrieve/{r['qid']}/output/run.log"
             all_rows.append({**r,
                 "status": status,
                 "_date_display": date_display, "_rel_time": rel_time,
