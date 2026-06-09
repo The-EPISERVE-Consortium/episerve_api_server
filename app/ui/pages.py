@@ -65,6 +65,20 @@ def _error_label(msg: str):
     ui.label(f"⚠ {msg}").classes("text-red-600 text-sm mt-2")
 
 
+def _api_box(url: str):
+    """Render the gray API hint box with a copy button that includes the auth token."""
+    with ui.element("div").classes("bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 shrink-0"):
+        ui.label("API").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1")
+        with ui.row().classes("items-center gap-2"):
+            ui.label(f"curl {url}").classes("font-mono text-xs text-gray-700")
+            def _copy(u=url):
+                token = _napp.storage.user.get("token", "")
+                cmd = f'curl -H "Authorization: Bearer {token}" {u}'
+                ui.run_javascript(f"navigator.clipboard.writeText({repr(cmd)})")
+                ui.notify("Copied with token", position="top", type="positive")
+            ui.button(icon="content_copy", on_click=_copy).props("flat round dense").classes("text-gray-400 hover:text-gray-700")
+
+
 def _require_login() -> bool:
     if _napp.storage.user.get("token") != _daily_token():
         ui.navigate.to("/login")
@@ -438,9 +452,7 @@ def register_pages():
                 with ui.column().classes("gap-0"):
                     ui.label("Datasets").classes("text-3xl font-bold text-gray-900")
                     ui.label("Browse, explore and download available datasets.").classes("text-sm text-gray-500 mt-1")
-                with ui.element("div").classes("bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 shrink-0"):
-                    ui.label("API").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1")
-                    ui.label(f"curl {request.base_url}datasets").classes("font-mono text-xs text-gray-700")
+                _api_box(f"{request.base_url}datasets")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
@@ -620,9 +632,7 @@ def register_pages():
                 with ui.column().classes("gap-0"):
                     ui.label("Models").classes("text-3xl font-bold text-gray-900")
                     ui.label("Browse available forecast models.").classes("text-sm text-gray-500 mt-1")
-                with ui.element("div").classes("bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 shrink-0"):
-                    ui.label("API").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1")
-                    ui.label(f"curl {request.base_url}models").classes("font-mono text-xs text-gray-700")
+                _api_box(f"{request.base_url}models")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
@@ -1061,9 +1071,7 @@ def register_pages():
                 with ui.column().classes("gap-0"):
                     ui.label("Model Runs").classes("text-3xl font-bold text-gray-900")
                     ui.label("Browse past model run results.").classes("text-sm text-gray-500 mt-1")
-                with ui.element("div").classes("bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 shrink-0"):
-                    ui.label("API").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1")
-                    ui.label(f"curl {request.base_url}model-runs").classes("font-mono text-xs text-gray-700")
+                _api_box(f"{request.base_url}model-runs")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
