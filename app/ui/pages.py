@@ -209,7 +209,7 @@ def register_pages():
             body { margin: 0; }
             .login-bg {
                 min-height: 100vh; width: 100%;
-                background: url("https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1600&q=60") center/cover no-repeat;
+                background: url("https://episerve.zib.de/img/hero.png") center/cover no-repeat;
                 display: flex; align-items: center; justify-content: center;
             }
             .login-card {
