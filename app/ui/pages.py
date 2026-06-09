@@ -937,10 +937,47 @@ def register_pages():
                 cur_limit = [500]
                 cards_container = [None]
 
-                # Load all components
+                # Load input parquet from fdo:hasComponent first, then fall back to prov:used
                 loaded = []  # list of (cid, df)
+                input_cids_loaded: set[str] = set()
                 for comp, cid, ext in all_comps:
                     if cid == "input_annotated.parquet":
+                        continue
+                    if ext != ".parquet" or not comp.get("@id", "").startswith("components/input/"):
+                        continue
+                    url = _component_url(base, qid, comp, cid)
+                    try:
+                        df = await run.io_bound(_fetch_preview, url, ext, cur_limit[0])
+                        loaded.append((cid, df))
+                        input_cids_loaded.add(cid)
+                    except Exception as exc:
+                        with dc:
+                            _error_label(f"Could not load {cid}: {exc}")
+
+                # Fall back to prov:used for any input not yet loaded above
+                for entry in meta.get("provenance", {}).get("prov:used", []):
+                    src_url = entry.get("@id", "") if isinstance(entry, dict) else str(entry)
+                    filename = src_url.split("?")[0].rstrip("/").split("/")[-1]
+                    if not filename.lower().endswith(".parquet"):
+                        continue
+                    if filename in input_cids_loaded:
+                        continue
+                    try:
+                        df = await run.io_bound(_fetch_preview, src_url, ".parquet", cur_limit[0])
+                        df["x_auto_converted"] = range(1, len(df) + 1)
+                        loaded.append((filename, df))
+                        input_cids_loaded.add(filename)
+                    except Exception as exc:
+                        with dc:
+                            _error_label(f"Could not load input {filename}: {exc}")
+
+                # Load output components (predictions etc.) after inputs
+                for comp, cid, ext in all_comps:
+                    if cid == "input_annotated.parquet":
+                        continue
+                    if comp.get("@id", "").startswith("components/input/"):
+                        continue
+                    if ext not in (".parquet", ".tsv", ".csv"):
                         continue
                     url = _component_url(base, qid, comp, cid)
                     try:
@@ -949,20 +986,6 @@ def register_pages():
                     except Exception as exc:
                         with dc:
                             _error_label(f"Could not load {cid}: {exc}")
-
-                # Load input files from prov:used and add x_auto_converted on the fly
-                for entry in meta.get("provenance", {}).get("prov:used", []):
-                    src_url = entry.get("@id", "") if isinstance(entry, dict) else str(entry)
-                    filename = src_url.split("?")[0].rstrip("/").split("/")[-1]
-                    if not filename.lower().endswith(".parquet"):
-                        continue
-                    try:
-                        df = await run.io_bound(_fetch_preview, src_url, ".parquet", cur_limit[0])
-                        df["x_auto_converted"] = range(1, len(df) + 1)
-                        loaded.append((filename, df))
-                    except Exception as exc:
-                        with dc:
-                            _error_label(f"Could not load input {filename}: {exc}")
 
                 if not any("predictions" in cid.lower() for cid, _ in loaded):
                     dc.clear()
@@ -1060,11 +1083,29 @@ def register_pages():
                                 return
                             cur_limit[0] = v
                             new_loaded = []
+                            loaded_names: set[str] = set()
+                            # Input first (prov:used)
+                            for entry2 in meta.get("provenance", {}).get("prov:used", []):
+                                src_url2 = entry2.get("@id", "") if isinstance(entry2, dict) else str(entry2)
+                                fname2 = src_url2.split("?")[0].rstrip("/").split("/")[-1]
+                                if not fname2.lower().endswith(".parquet") or fname2 in loaded_names:
+                                    continue
+                                try:
+                                    df2 = await run.io_bound(_fetch_preview, src_url2, ".parquet", v)
+                                    df2["x_auto_converted"] = range(1, len(df2) + 1)
+                                    new_loaded.append((fname2, df2))
+                                    loaded_names.add(fname2)
+                                except Exception:
+                                    pass
+                            # Output (predictions etc.) from fdo:hasComponent
                             for comp2, cid2, ext2 in all_comps:
+                                if cid2 in loaded_names:
+                                    continue
                                 url2 = _component_url(base, qid, comp2, cid2)
                                 try:
                                     df2 = await run.io_bound(_fetch_preview, url2, ext2, v)
                                     new_loaded.append((cid2, df2))
+                                    loaded_names.add(cid2)
                                 except Exception:
                                     pass
                             loaded.clear()
