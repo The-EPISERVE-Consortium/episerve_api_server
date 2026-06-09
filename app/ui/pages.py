@@ -1194,13 +1194,13 @@ def register_pages():
 
                         with ui.row().classes("gap-3 mb-4 items-end flex-wrap"):
                             x_sel = ui.select(opt_labels, value=cur_x[0], label="X axis", on_change=on_x).classes("min-w-48")
+                            y_sel = ui.select(opt_labels, value=cur_ys[0], label="Y axis (multi)", multiple=True, on_change=on_y).classes("min-w-48")
                             xlabel_sel = ui.select(
                                 [None] + opt_labels,
                                 value=cur_xlabel[0],
                                 label="X labels",
                                 on_change=on_xlabel,
                             ).classes("min-w-48")
-                            y_sel = ui.select(opt_labels, value=cur_ys[0], label="Y axis (multi)", multiple=True, on_change=on_y).classes("min-w-48")
                             y_sel.add_slot("option", r'''
                                 <q-item v-bind="props.itemProps">
                                     <q-item-section side>
