@@ -382,7 +382,13 @@ def register_pages():
 
             tbl.add_slot("body-cell-type", r'''
                 <q-td :props="props">
-                    <span class="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">{{ props.row.additional_type || 'Dataset' }}</span>
+                    <span :class="{
+                        'bg-blue-100 text-blue-700':   props.row.additional_type === 'incidence',
+                        'bg-teal-100 text-teal-700':   props.row.additional_type === 'wastewater',
+                        'bg-amber-100 text-amber-700': props.row.additional_type === 'climate',
+                        'bg-rose-100 text-rose-700':   props.row.additional_type === 'surveillance',
+                        'bg-gray-100 text-gray-600':   !props.row.additional_type,
+                    }" class="px-2 py-0.5 rounded-full text-xs font-medium">{{ props.row.additional_type || 'Dataset' }}</span>
                 </q-td>''')
 
             tbl.add_slot("body-cell-actions", r'''
