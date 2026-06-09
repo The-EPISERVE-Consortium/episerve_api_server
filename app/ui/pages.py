@@ -205,7 +205,28 @@ def register_pages():
             ui.navigate.to("/ui")
             return
 
-        error = ui.label("").classes("text-red-600 text-sm hidden")
+        ui.add_head_html('''<style>
+            body { margin: 0; }
+            .login-bg {
+                min-height: 100vh; width: 100%;
+                background: url("https://images.unsplash.com/photo-1497366216548-37526070297c?auto=format&fit=crop&w=1600&q=60") center/cover no-repeat;
+                display: flex; align-items: center; justify-content: center;
+            }
+            .login-card {
+                background: rgba(20, 24, 33, 0.82);
+                backdrop-filter: blur(6px);
+                border-radius: 12px;
+                padding: 48px 40px 40px;
+                width: 100%; max-width: 400px;
+                box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+                display: flex; flex-direction: column; gap: 0;
+            }
+            .login-card .q-field__control { background: #f3f4f6 !important; border-radius: 6px; }
+            .login-card .q-field__native, .login-card .q-field__prefix { color: #111 !important; }
+            .login-card .q-field--outlined .q-field__control:before { border: none !important; }
+            .login-btn { background: #29abe2 !important; color: #fff !important; font-weight: 700;
+                         letter-spacing: .08em; height: 44px; font-size: 15px; border-radius: 6px; }
+        </style>''')
 
         def do_login():
             valid = (
@@ -217,16 +238,14 @@ def register_pages():
                 ui.navigate.to("/ui")
             else:
                 error.set_text("Invalid username or password")
-                error.classes(remove="hidden")
 
-        with ui.column().classes("w-full h-screen items-center justify-center bg-gray-50"):
-            with ui.element("div").classes("w-full max-w-sm bg-white border border-gray-200 rounded-2xl shadow-sm p-8 gap-0"):
-                ui.label("EPISERVE").classes("text-xl font-bold text-gray-900 mb-1")
-                ui.label("Sign in to continue").classes("text-sm text-gray-500 mb-6")
-                username_inp = ui.input("Username").classes("w-full mb-3")
-                password_inp = ui.input("Password").props("type=password").classes("w-full mb-1")
-                error
-                ui.button("Sign in", on_click=do_login).classes("w-full bg-blue-700 text-white mt-4")
+        with ui.element("div").classes("login-bg"):
+            with ui.element("div").classes("login-card"):
+                ui.label("EPISERVE").classes("text-2xl font-bold text-white text-center w-full mb-8").style("display:block")
+                username_inp = ui.input("Username").props('outlined dense prefix-icon="person"').classes("w-full mb-4")
+                password_inp = ui.input("Password").props('outlined dense type=password prefix-icon="lock"').classes("w-full mb-2")
+                error = ui.label("").classes("text-red-400 text-sm mb-1").style("min-height:1.25rem")
+                ui.button("LOGIN", on_click=do_login).classes("w-full login-btn mt-3")
 
     @ui.page("/ui")
     def _root():
