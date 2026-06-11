@@ -249,14 +249,10 @@ def register_pages():
 
     @ui.page("/ui")
     def _root():
-        if not _require_login():
-            return
         ui.navigate.to("/ui/datasets")
 
     @ui.page("/ui/datasets")
     def datasets_processed_lab(request: Request):
-        if not _require_login():
-            return
         from datetime import datetime
 
         _header("/ui/datasets")
@@ -530,8 +526,6 @@ def register_pages():
 
     @ui.page("/ui/models")
     def models(request: Request):
-        if not _require_login():
-            return
         _header("/ui/models")
 
         try:
@@ -679,8 +673,6 @@ def register_pages():
 
     @ui.page("/ui/model-runs")
     def model_runs(request: Request):
-        if not _require_login():
-            return
         from datetime import datetime
         _header("/ui/model-runs")
 
