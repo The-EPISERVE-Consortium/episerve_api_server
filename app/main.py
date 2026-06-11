@@ -24,74 +24,160 @@ def root():
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>EPISERVE</title>
+  <title>EPISERVE API Server</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
       background: #f5f7fa;
+      color: #333;
       display: flex;
       flex-direction: column;
-      align-items: center;
-      justify-content: center;
       min-height: 100vh;
-      padding: 2rem;
-      color: #1a1a2e;
     }
-    header { text-align: center; margin-bottom: 3rem; }
-    header h1 { font-size: 2.2rem; font-weight: 700; letter-spacing: -0.5px; }
-    header p { margin-top: 0.6rem; font-size: 1.05rem; color: #555; }
-    .cards {
+
+    /* Navbar */
+    nav {
+      background: #1b2a35;
+      padding: 0 2rem;
+      height: 54px;
+      display: flex;
+      align-items: center;
+    }
+    nav .brand {
+      color: #fff;
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-decoration: none;
+    }
+
+    /* Hero */
+    .hero {
+      background: #206b82;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 3.5rem 4rem;
+      gap: 2rem;
+      overflow: hidden;
+    }
+    .hero-text { max-width: 540px; }
+    .hero-text h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 1rem;
+    }
+    .hero-text p {
+      font-size: 1rem;
+      line-height: 1.6;
+      opacity: 0.9;
+    }
+    .hero-img {
+      flex-shrink: 0;
+      max-width: 260px;
+      opacity: 0.9;
+    }
+    .hero-img img { width: 100%; display: block; }
+
+    /* Cards section */
+    .content {
+      flex: 1;
+      padding: 3rem 4rem;
       display: flex;
       gap: 2rem;
       flex-wrap: wrap;
-      justify-content: center;
-      max-width: 800px;
-      width: 100%;
+      align-items: flex-start;
     }
     .card {
       background: #fff;
-      border: 1px solid #e0e4ec;
-      border-radius: 12px;
-      padding: 2rem 2.5rem;
-      flex: 1 1 300px;
-      max-width: 360px;
+      border: 1px solid rgba(0,0,0,0.125);
+      border-radius: 0.25rem;
+      padding: 1.75rem 2rem;
+      flex: 1 1 280px;
+      max-width: 400px;
       text-decoration: none;
-      color: inherit;
-      transition: box-shadow 0.15s, transform 0.15s;
+      color: #333;
+      display: flex;
+      flex-direction: column;
+      transition: box-shadow 0.15s;
     }
-    .card:hover { box-shadow: 0 8px 24px rgba(0,0,0,0.10); transform: translateY(-2px); }
-    .card .icon { font-size: 2.2rem; margin-bottom: 1rem; }
-    .card h2 { font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; }
-    .card p { font-size: 0.95rem; color: #555; line-height: 1.55; }
-    .card .link-hint {
+    .card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.12); }
+    .card h2 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      margin-bottom: 0.6rem;
+      color: #1b2a35;
+    }
+    .card p {
+      font-size: 0.93rem;
+      line-height: 1.6;
+      color: #555;
+      flex: 1;
+    }
+    .card .cta {
       display: inline-block;
-      margin-top: 1.2rem;
-      font-size: 0.9rem;
+      margin-top: 1.25rem;
+      padding: 0.45rem 1.1rem;
+      background: #206b82;
+      color: #fff;
+      border-radius: 0.25rem;
+      font-size: 0.88rem;
       font-weight: 600;
-      color: #1a6fb5;
+      align-self: flex-start;
+      transition: background 0.15s;
+    }
+    .card:hover .cta { background: #1b5b6f; }
+
+    /* Footer */
+    footer {
+      background: #1b2a35;
+      color: rgba(255,255,255,0.55);
+      font-size: 0.82rem;
+      text-align: center;
+      padding: 1rem 2rem;
+    }
+
+    @media (max-width: 680px) {
+      .hero { flex-direction: column; padding: 2.5rem 1.5rem; }
+      .hero-img { max-width: 180px; align-self: center; }
+      .content { padding: 2rem 1.5rem; }
     }
   </style>
 </head>
 <body>
-  <header>
-    <h1>🔬 EPISERVE</h1>
-    <p>Epidemiological data, models, and model runs — all in one platform.</p>
-  </header>
-  <div class="cards">
+  <nav>
+    <a class="brand" href="/">EPISERVE</a>
+  </nav>
+
+  <div class="hero">
+    <div class="hero-text">
+      <h1>EPISERVE API Server</h1>
+      <p>Access epidemiological datasets, simulation models, and model run results for infectious disease research and pandemic preparedness in Germany.</p>
+    </div>
+    <div class="hero-img">
+      <img src="https://episerve.zib.de/img/hero.png" alt="">
+    </div>
+  </div>
+
+  <div class="content">
     <a class="card" href="/ui/datasets">
-      <div class="icon">🖥️</div>
       <h2>Web UI</h2>
       <p>Browse datasets and models, inspect model runs, and explore results through an interactive web interface.</p>
-      <span class="link-hint">Open the UI →</span>
+      <span class="cta">Open the UI →</span>
     </a>
     <a class="card" href="/docs">
-      <div class="icon">📄</div>
       <h2>REST API</h2>
       <p>Integrate programmatically. The interactive API docs let you explore all endpoints and try requests directly in the browser.</p>
-      <span class="link-hint">Open API docs →</span>
+      <span class="cta">Open API docs →</span>
     </a>
   </div>
+
+  <footer>
+    &copy; EPISERVE Consortium
+  </footer>
 </body>
 </html>""")
 
