@@ -1,9 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
-from app.auth import require_auth
+from fastapi import APIRouter, HTTPException
 from app.clients import ckan as ckan_client
 from app.schemas import RawDataset, ProcessedDataset
 
-router = APIRouter(tags=["datasets"], dependencies=[Depends(require_auth)])
+router = APIRouter(tags=["datasets"])
 
 
 @router.get("/datasets_raw", response_model=list[RawDataset])

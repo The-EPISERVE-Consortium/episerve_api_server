@@ -5,7 +5,7 @@ from datetime import datetime, timezone, timedelta, date
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.auth import _daily_token, require_auth
+from app.auth import _daily_token
 from app.config import settings
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -43,6 +43,6 @@ def get_token(request: TokenRequest) -> TokenResponse:
     return TokenResponse(token=_daily_token(), expires_at=_next_midnight())
 
 
-@router.get("/status", response_model=TokenStatus, dependencies=[Depends(require_auth)])
+@router.get("/status", response_model=TokenStatus)
 def get_status() -> TokenStatus:
     return TokenStatus(valid=True, expires_at=_next_midnight())
