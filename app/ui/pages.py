@@ -1456,11 +1456,15 @@ def register_pages():
             add_task_interval[0].set_visibility(e.value == "periodic")
 
         with add_task_dialog, ui.card().classes("w-full max-w-xl p-6 gap-3"):
-            ui.label("Add New Task").classes("text-lg font-bold text-gray-900")
+            ui.label("Add AI Task to Blackboard").classes("text-lg font-bold text-gray-900")
             ui.label(
                 "Inserts a kind='initial' row -- a task that isn't a follow-up to "
                 "any result. The orchestrator picks it up on its next poll."
             ).classes("text-xs text-gray-500")
+            add_task_type = ui.input(
+                label="Task Type (optional)",
+                placeholder="e.g. code-analysis-report",
+            ).classes("w-full").props("outlined dense")
             add_task_prompt = ui.textarea(
                 label="Prompt",
                 placeholder='e.g. Clone <repo-url>, analyse it and write a report to /output/report.pdf.',
@@ -1486,8 +1490,9 @@ def register_pages():
                     return
                 schedule_type = add_task_schedule.value
                 interval = int(add_task_interval[0].value) if schedule_type == "periodic" else None
+                task_type = (add_task_type.value or "").strip() or None
                 try:
-                    new_id = blackboard_client.insert_initial_task(prompt_text, schedule_type, interval)
+                    new_id = blackboard_client.insert_initial_task(prompt_text, schedule_type, interval, task_type)
                 except Exception as e:
                     add_task_error[0].set_text(f"Could not add task: {e}")
                     return
@@ -1600,7 +1605,7 @@ def register_pages():
                 with ui.column().classes("gap-0"):
                     ui.label("AI Blackboard").classes("text-3xl font-bold text-gray-900")
                     ui.label("Seeded/recurring tasks and results published by one-shot agent runs, and the follow-up runs triggered from them.").classes("text-sm text-gray-500 mt-1")
-                ui.button("Add New Task", icon="add", on_click=add_task_dialog.open).props("unelevated color=primary no-caps")
+                ui.button("Add AI task to Blackboard", icon="add", on_click=add_task_dialog.open).props("unelevated color=primary no-caps")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):

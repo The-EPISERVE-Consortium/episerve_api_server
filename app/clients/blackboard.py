@@ -54,18 +54,27 @@ def get_trace_html(row_id: int) -> str | None:
         conn.close()
 
 
-def insert_initial_task(prompt: str, schedule_type: str, periodic_interval_minutes: int | None = None) -> int:
+def insert_initial_task(
+    prompt: str,
+    schedule_type: str,
+    periodic_interval_minutes: int | None = None,
+    task_type: str | None = None,
+) -> int:
     """Insert a new kind='initial' row -- a task not chained from any result.
 
     Everything else is left at its default: status starts 'new', so the
-    orchestrator picks it up on its next poll; task_type/result/trace stay
-    NULL since they're only meaningful for kind='result' rows.
+    orchestrator picks it up on its next poll; result/trace stay NULL since
+    they're only meaningful for kind='result' rows. task_type is optional
+    here -- unlike a kind='result' row, it's never matched against
+    routing.py (the row already carries its own `prompt`), it's purely a
+    free-text label for a human reading the table.
 
     Args:
         prompt: The literal prompt to trigger.
         schedule_type: 'once' or 'periodic'.
         periodic_interval_minutes: Required when schedule_type='periodic',
             ignored otherwise.
+        task_type: Optional free-text label.
 
     Returns:
         The new row's id.
@@ -84,9 +93,9 @@ def insert_initial_task(prompt: str, schedule_type: str, periodic_interval_minut
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO task_runs (kind, prompt, schedule_type, periodic_interval_minutes) "
-                "VALUES ('initial', %s, %s, %s)",
-                (prompt, schedule_type, interval),
+                "INSERT INTO task_runs (kind, prompt, schedule_type, periodic_interval_minutes, task_type) "
+                "VALUES ('initial', %s, %s, %s, %s)",
+                (prompt, schedule_type, interval, task_type or None),
             )
             conn.commit()
             return cur.lastrowid
