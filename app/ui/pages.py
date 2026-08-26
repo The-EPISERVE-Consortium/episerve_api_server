@@ -1332,28 +1332,60 @@ def register_pages():
 
         detail_dialog = ui.dialog()
         detail_title = [None]
-        detail_result = [None]
+        detail_result_raw = [None]
+        detail_result_md = [None]
         detail_trace_row = [None]
-        detail_trace = [None]
+        detail_trace_iframe = [None]
+        current_result_text = [""]
 
-        with detail_dialog, ui.card().classes("w-full max-w-3xl p-6 gap-3"):
+        def toggle_result_view(e):
+            if e.value:
+                detail_result_md[0].set_content(current_result_text[0])
+                detail_result_raw[0].set_visibility(False)
+                detail_result_md[0].set_visibility(True)
+            else:
+                detail_result_raw[0].set_visibility(True)
+                detail_result_md[0].set_visibility(False)
+
+        with detail_dialog, ui.card().classes("w-full max-w-5xl p-6 gap-3"):
             detail_title[0] = ui.label("").classes("text-lg font-bold text-gray-900")
-            ui.label("Result").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2")
-            with ui.element("div").classes("w-full max-h-96 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
-                detail_result[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
+            with ui.row().classes("w-full items-center justify-between mt-2"):
+                ui.label("Result").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide")
+                ui.switch("Render as Markdown", on_change=toggle_result_view).props("dense").classes("text-xs")
+            with ui.element("div").classes("w-full max-h-64 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
+                detail_result_raw[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
+                # sanitize=True (default) runs the rendered HTML through
+                # client-side DOMPurify before insertion -- safe even though
+                # `result` is agent-produced, not hand-authored, content.
+                detail_result_md[0] = ui.markdown("").classes("text-sm")
+                detail_result_md[0].set_visibility(False)
             detail_trace_row[0] = ui.column().classes("w-full gap-1")
             with detail_trace_row[0]:
                 ui.label("Trace").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2")
-                with ui.element("div").classes("w-full max-h-96 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
-                    detail_trace[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
+                # Rendered, not dumped as raw markup -- trace.html is a
+                # self-contained interactive viewer (pi-trace-extension), so
+                # showing its source as text would defeat the point of it.
+                # Sandboxed with scripts allowed but same-origin/top-navigation
+                # denied: the viewer's own JS (collapsible tree, tabs) still
+                # works, but it can't reach this app's cookies/storage or
+                # navigate the parent page -- this is agent-produced content,
+                # not fully trusted.
+                detail_trace_iframe[0] = ui.element("iframe").props('sandbox="allow-scripts"').classes(
+                    "w-full border border-gray-200 rounded-lg"
+                ).style("height: 70vh;")
             ui.button("Close", on_click=detail_dialog.close).classes("mt-2 self-end").props("flat")
 
         def open_detail(row: dict):
             detail_title[0].set_text(f"#{row.get('id')} · {row.get('task_type', '')}")
-            detail_result[0].set_text(row.get("result") or "(empty)")
-            if row.get("trace"):
+            current_result_text[0] = row.get("result") or "(empty)"
+            detail_result_raw[0].set_text(current_result_text[0])
+            if detail_result_md[0].visible:
+                detail_result_md[0].set_content(current_result_text[0])
+            trace = row.get("trace")
+            if trace:
                 detail_trace_row[0].set_visibility(True)
-                detail_trace[0].set_text(row.get("trace"))
+                iframe_id = detail_trace_iframe[0].id
+                ui.run_javascript(f"getHtmlElement({iframe_id}).srcdoc = {json.dumps(trace)}")
             else:
                 detail_trace_row[0].set_visibility(False)
             detail_dialog.open()
@@ -1370,6 +1402,7 @@ def register_pages():
                     {"name": "task_type",  "label": "Task Type",  "field": "task_type",       "align": "left", "sortable": True},
                     {"name": "status",     "label": "Status",     "field": "status",          "align": "left"},
                     {"name": "result",     "label": "Result",     "field": "_result_preview", "align": "left"},
+                    {"name": "trace",      "label": "Trace",      "field": "_has_trace",      "align": "left"},
                     {"name": "created",    "label": "Created",    "field": "created_at",      "align": "left", "sortable": True},
                     {"name": "claimed_by", "label": "Claimed By", "field": "claimed_by",      "align": "left"},
                 ],
@@ -1386,7 +1419,12 @@ def register_pages():
             tbl.add_slot("body-cell-result", r'''
                 <q-td :props="props">
                     <span class="text-xs text-gray-700 font-mono">{{ props.row._result_preview || '—' }}</span>
-                    <span v-if="props.row._has_trace" class="ml-2 text-xs text-blue-600">[trace]</span>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-trace", r'''
+                <q-td :props="props">
+                    <span v-if="props.row._has_trace" class="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-medium">available</span>
+                    <span v-else class="text-xs text-gray-400">—</span>
                 </q-td>''')
 
             tbl.add_slot("body-cell-created", r'''
