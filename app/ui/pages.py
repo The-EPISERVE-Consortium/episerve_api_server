@@ -1280,9 +1280,10 @@ def register_pages():
 
         def _status_cls(status: str) -> str:
             s = (status or "").lower()
-            if s == "new":     return "bg-blue-100 text-blue-700"
-            if s == "claimed": return "bg-orange-100 text-orange-700"
-            if s == "done":    return "bg-green-100 text-green-700"
+            if s == "new":                          return "bg-blue-100 text-blue-700"
+            if s == "dispatching_run":               return "bg-orange-100 text-orange-700"
+            if s == "waiting_for_next_periodic_run": return "bg-purple-100 text-purple-700"
+            if s == "done":                          return "bg-green-100 text-green-700"
             return "bg-gray-100 text-gray-600"
 
         try:
@@ -1295,12 +1296,15 @@ def register_pages():
         all_rows = []
         for r in raw_rows:
             date_display, rel_time = _fmt_date(r.get("created_at"))
-            claimed_display, claimed_rel = _fmt_date(r.get("claimed_at"))
-            result = r.get("result") or ""
+            status_change_display, status_change_rel = _fmt_date(r.get("last_status_change"))
+            # A kind='initial' row has no `result` (it's a seeded/recurring
+            # prompt, not a run's output yet) -- preview its `prompt` instead
+            # so the table isn't blank for those rows.
+            preview_source = r.get("result") or r.get("prompt") or ""
             all_rows.append({**r,
                 "_date_display": date_display, "_rel_time": rel_time,
-                "_claimed_display": claimed_display, "_claimed_rel": claimed_rel,
-                "_result_preview": (result[:120] + "…") if len(result) > 120 else result,
+                "_status_change_display": status_change_display, "_status_change_rel": status_change_rel,
+                "_result_preview": (preview_source[:120] + "…") if len(preview_source) > 120 else preview_source,
                 "_status_cls": _status_cls(r.get("status", "")),
                 "_has_trace": bool(r.get("has_trace")),
             })
@@ -1315,13 +1319,16 @@ def register_pages():
             st = current_status[0]
             rs = [
                 r for r in all_rows
-                if (not s or s in r.get("task_type", "").lower() or s in (r.get("result") or "").lower())
+                if (not s
+                    or s in (r.get("task_type") or "").lower()
+                    or s in (r.get("result") or "").lower()
+                    or s in (r.get("prompt") or "").lower())
                 and (st == "All Statuses" or r.get("status") == st)
             ]
             if current_sort[0] == "Newest First":
                 rs.sort(key=lambda r: str(r.get("created_at", "")), reverse=True)
             else:
-                rs.sort(key=lambda r: r.get("task_type", "").lower())
+                rs.sort(key=lambda r: (r.get("task_type") or "").lower())
             filtered_rows.clear()
             filtered_rows.extend(rs)
             count_lbl.refresh()
@@ -1349,8 +1356,16 @@ def register_pages():
                 detail_result_raw[0].set_visibility(True)
                 detail_result_md[0].set_visibility(False)
 
+        detail_prompt_row = [None]
+        detail_prompt_label = [None]
+
         with detail_dialog, ui.card().classes("w-full max-w-5xl p-6 gap-3"):
             detail_title[0] = ui.label("").classes("text-lg font-bold text-gray-900")
+            detail_prompt_row[0] = ui.column().classes("w-full gap-1")
+            with detail_prompt_row[0]:
+                ui.label("Prompt").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2")
+                with ui.element("div").classes("w-full max-h-32 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
+                    detail_prompt_label[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
             with ui.row().classes("w-full items-center justify-between mt-2"):
                 ui.label("Result").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide")
                 ui.switch("Render as Markdown", on_change=toggle_result_view).props("dense").classes("text-xs")
@@ -1378,7 +1393,14 @@ def register_pages():
             ui.button("Close", on_click=detail_dialog.close).classes("mt-2 self-end").props("flat")
 
         def open_detail(row: dict):
-            detail_title[0].set_text(f"#{row.get('id')} · {row.get('task_type', '')}")
+            title_type = row.get("task_type") or row.get("kind") or ""
+            detail_title[0].set_text(f"#{row.get('id')} · {title_type}")
+            prompt_text = row.get("prompt") or ""
+            if prompt_text:
+                detail_prompt_row[0].set_visibility(True)
+                detail_prompt_label[0].set_text(prompt_text)
+            else:
+                detail_prompt_row[0].set_visibility(False)
             current_result_text[0] = row.get("result") or "(empty)"
             detail_result_raw[0].set_text(current_result_text[0])
             if detail_result_md[0].visible:
@@ -1403,18 +1425,27 @@ def register_pages():
 
             tbl = ui.table(
                 columns=[
-                    {"name": "id",         "label": "ID",         "field": "id",             "align": "left"},
-                    {"name": "task_type",  "label": "Task Type",  "field": "task_type",       "align": "left", "sortable": True},
-                    {"name": "status",     "label": "Status",     "field": "status",          "align": "left"},
-                    {"name": "result",     "label": "Result",     "field": "_result_preview", "align": "left"},
-                    {"name": "trace",      "label": "Trace",      "field": "_has_trace",      "align": "left"},
-                    {"name": "created",    "label": "Created",    "field": "created_at",      "align": "left", "sortable": True},
-                    {"name": "claimed_by", "label": "Claimed By", "field": "claimed_by",      "align": "left"},
+                    {"name": "id",         "label": "ID",         "field": "id",                    "align": "left"},
+                    {"name": "kind",       "label": "Kind",       "field": "kind",                   "align": "left", "sortable": True},
+                    {"name": "task_type",  "label": "Task Type",  "field": "task_type",              "align": "left", "sortable": True},
+                    {"name": "status",     "label": "Status",     "field": "status",                 "align": "left"},
+                    {"name": "result",     "label": "Result",     "field": "_result_preview",        "align": "left"},
+                    {"name": "trace",      "label": "Trace",      "field": "_has_trace",              "align": "left"},
+                    {"name": "created",    "label": "Created",    "field": "created_at",              "align": "left", "sortable": True},
+                    {"name": "changed",    "label": "Last Status Change", "field": "last_status_change", "align": "left"},
                 ],
                 rows=filtered_rows,
                 row_key="id",
                 pagination={"rowsPerPage": 15, "sortBy": "created_at", "descending": True},
             ).classes("w-full cursor-pointer")
+
+            tbl.add_slot("body-cell-kind", r'''
+                <q-td :props="props">
+                    <span class="text-xs px-2 py-0.5 rounded-full font-medium"
+                          :class="props.row.kind === 'initial' ? 'bg-indigo-100 text-indigo-700' : 'bg-teal-100 text-teal-700'">
+                        {{ props.row.kind }}
+                    </span>
+                </q-td>''')
 
             tbl.add_slot("body-cell-status", r'''
                 <q-td :props="props">
@@ -1438,9 +1469,10 @@ def register_pages():
                     <div class="text-xs text-gray-400">{{ props.row._rel_time }}</div>
                 </q-td>''')
 
-            tbl.add_slot("body-cell-claimed_by", r'''
+            tbl.add_slot("body-cell-changed", r'''
                 <q-td :props="props">
-                    <span class="font-mono text-xs text-gray-500">{{ props.row.claimed_by || '—' }}</span>
+                    <div class="text-sm text-gray-700">{{ props.row._status_change_display }}</div>
+                    <div class="text-xs text-gray-400">{{ props.row._status_change_rel }}</div>
                 </q-td>''')
 
             def on_row_click(e):
@@ -1454,17 +1486,17 @@ def register_pages():
             with ui.row().classes("w-full items-start justify-between gap-6"):
                 with ui.column().classes("gap-0"):
                     ui.label("AI Blackboard").classes("text-3xl font-bold text-gray-900")
-                    ui.label("Results published by one-shot agent runs, and the follow-up runs triggered from them.").classes("text-sm text-gray-500 mt-1")
+                    ui.label("Seeded/recurring tasks and results published by one-shot agent runs, and the follow-up runs triggered from them.").classes("text-sm text-gray-500 mt-1")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
                     ui.icon("search").classes("text-gray-400 shrink-0")
                     ui.input(
-                        placeholder="Search by task type or result content...",
+                        placeholder="Search by task type, prompt, or result content...",
                         on_change=lambda e: (current_search.__setitem__(0, e.value), apply_filters()),
                     ).props("borderless dense").classes("flex-1 text-sm")
                 ui.select(
-                    options=["All Statuses", "new", "claimed", "done"],
+                    options=["All Statuses", "new", "dispatching_run", "waiting_for_next_periodic_run", "done"],
                     value="All Statuses",
                     on_change=lambda e: (current_status.__setitem__(0, e.value), apply_filters()),
                 ).props("outlined dense options-dense").classes("text-sm")
