@@ -28,9 +28,10 @@ if command -v kubectl &> /dev/null; then
     export LAKEFS_ACCESS_KEY=$(kubectl get secret lakefs-credentials -o jsonpath='{.data.lakefs-access-key}' | base64 -d)
     export LAKEFS_SECRET_KEY=$(kubectl get secret lakefs-credentials -o jsonpath='{.data.lakefs-secret-key}' | base64 -d)
     export CKAN_API_TOKEN=$(kubectl get secret ckan-credentials -o jsonpath='{.data.ckan-api-token}' | base64 -d)
+    export BLACKBOARD_PASSWORD=$(kubectl get secret blackboard-credentials -o jsonpath='{.data.blackboard-password}' | base64 -d)
     echo "Secrets loaded."
 else
-    echo "kubectl not found — skipping K8s secrets. Set LAKEFS_ACCESS_KEY, LAKEFS_SECRET_KEY, CKAN_API_TOKEN manually."
+    echo "kubectl not found — skipping K8s secrets. Set LAKEFS_ACCESS_KEY, LAKEFS_SECRET_KEY, CKAN_API_TOKEN, BLACKBOARD_PASSWORD manually."
 fi
 
 echo ""

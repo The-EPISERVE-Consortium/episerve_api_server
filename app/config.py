@@ -26,6 +26,13 @@ class Settings:
     # DOIP server
     doip_url: str = os.environ.get("DOIP_URL") or "https://doip.episerve.zib.de"
 
+    # Blackboard (agent_blackboard.task_runs -- same MariaDB instance as
+    # dataset-downloader's episerve-raw-data, separate DB + scoped user)
+    mariadb_host: str = os.environ.get("MARIADB_HOST", "")
+    blackboard_db: str = os.environ.get("BLACKBOARD_DB", "agent_blackboard")
+    blackboard_user: str = os.environ.get("BLACKBOARD_USER", "")
+    blackboard_password: str = os.environ.get("BLACKBOARD_PASSWORD", "")
+
     # Server
     port: int = int(os.environ.get("PORT", "8000"))
 

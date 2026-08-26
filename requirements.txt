@@ -8,4 +8,5 @@ nicegui>=3.0
 pandas
 pyarrow
 duckdb
+pymysql
 pytest

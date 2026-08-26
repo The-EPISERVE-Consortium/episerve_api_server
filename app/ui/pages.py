@@ -7,6 +7,7 @@ from starlette.requests import Request
 
 from app.auth import _daily_token
 from app.clients import ckan as ckan_client
+from app.clients import blackboard as blackboard_client
 from app.config import settings
 
 
@@ -14,6 +15,7 @@ NAV_ITEMS = [
     ("Datasets",        "/ui/datasets"),
     ("Models",          "/ui/models"),
     ("Model Runs",      "/ui/model-runs"),
+    ("AI Blackboard",   "/ui/blackboard"),
     ("Run Workflow",        "/ui/run_workflow/1"),
     ("Run Workflow Simple", "/ui/trigger"),
 ]
@@ -1245,6 +1247,194 @@ def register_pages():
                 runs_table()
 
             preview_container[0] = ui.column().classes("w-full")
+
+    @ui.page("/ui/blackboard")
+    def blackboard(request: Request):
+        from datetime import datetime
+
+        if not _require_login():
+            return
+        _header("/ui/blackboard")
+
+        def _fmt_date(dt) -> tuple:
+            if not dt:
+                return "—", ""
+            try:
+                s = str(dt).strip()
+                d = None
+                for fmt in ("%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+                    try:
+                        d = datetime.strptime(s[:19], fmt)
+                        break
+                    except ValueError:
+                        pass
+                if d is None:
+                    d = datetime.strptime(s[:10], "%Y-%m-%d")
+                days = (datetime.now() - d).days
+                rel = "Today" if days == 0 else "1 day ago" if days == 1 else f"{days} days ago"
+                return d.strftime("%b %-d, %Y  %H:%M"), rel
+            except Exception:
+                return str(dt), ""
+
+        def _status_cls(status: str) -> str:
+            s = (status or "").lower()
+            if s == "new":     return "bg-blue-100 text-blue-700"
+            if s == "claimed": return "bg-orange-100 text-orange-700"
+            if s == "done":    return "bg-green-100 text-green-700"
+            return "bg-gray-100 text-gray-600"
+
+        try:
+            raw_rows = blackboard_client.list_task_runs()
+        except Exception as e:
+            with ui.column().classes("px-8 py-6"):
+                _error_label(f"Could not load blackboard: {e}")
+            return
+
+        all_rows = []
+        for r in raw_rows:
+            date_display, rel_time = _fmt_date(r.get("created_at"))
+            claimed_display, claimed_rel = _fmt_date(r.get("claimed_at"))
+            result = r.get("result") or ""
+            all_rows.append({**r,
+                "_date_display": date_display, "_rel_time": rel_time,
+                "_claimed_display": claimed_display, "_claimed_rel": claimed_rel,
+                "_result_preview": (result[:120] + "…") if len(result) > 120 else result,
+                "_status_cls": _status_cls(r.get("status", "")),
+                "_has_trace": bool(r.get("trace")),
+            })
+
+        filtered_rows: list = list(all_rows)
+        current_search = [""]
+        current_status = ["All Statuses"]
+        current_sort   = ["Newest First"]
+
+        def apply_filters():
+            s = current_search[0].lower()
+            st = current_status[0]
+            rs = [
+                r for r in all_rows
+                if (not s or s in r.get("task_type", "").lower() or s in (r.get("result") or "").lower())
+                and (st == "All Statuses" or r.get("status") == st)
+            ]
+            if current_sort[0] == "Newest First":
+                rs.sort(key=lambda r: str(r.get("created_at", "")), reverse=True)
+            else:
+                rs.sort(key=lambda r: r.get("task_type", "").lower())
+            filtered_rows.clear()
+            filtered_rows.extend(rs)
+            count_lbl.refresh()
+            bb_table.refresh()
+
+        @ui.refreshable
+        def count_lbl():
+            n = len(filtered_rows)
+            ui.label(f"Showing {n} row{'s' if n != 1 else ''}").classes("text-sm text-gray-500")
+
+        detail_dialog = ui.dialog()
+        detail_title = [None]
+        detail_result = [None]
+        detail_trace_row = [None]
+        detail_trace = [None]
+
+        with detail_dialog, ui.card().classes("w-full max-w-3xl p-6 gap-3"):
+            detail_title[0] = ui.label("").classes("text-lg font-bold text-gray-900")
+            ui.label("Result").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2")
+            with ui.element("div").classes("w-full max-h-96 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
+                detail_result[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
+            detail_trace_row[0] = ui.column().classes("w-full gap-1")
+            with detail_trace_row[0]:
+                ui.label("Trace").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2")
+                with ui.element("div").classes("w-full max-h-96 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
+                    detail_trace[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
+            ui.button("Close", on_click=detail_dialog.close).classes("mt-2 self-end").props("flat")
+
+        def open_detail(row: dict):
+            detail_title[0].set_text(f"#{row.get('id')} · {row.get('task_type', '')}")
+            detail_result[0].set_text(row.get("result") or "(empty)")
+            if row.get("trace"):
+                detail_trace_row[0].set_visibility(True)
+                detail_trace[0].set_text(row.get("trace"))
+            else:
+                detail_trace_row[0].set_visibility(False)
+            detail_dialog.open()
+
+        @ui.refreshable
+        def bb_table():
+            if not filtered_rows:
+                ui.label("No blackboard rows match your search.").classes("text-sm text-gray-400 py-8 text-center w-full")
+                return
+
+            tbl = ui.table(
+                columns=[
+                    {"name": "id",         "label": "ID",         "field": "id",             "align": "left"},
+                    {"name": "task_type",  "label": "Task Type",  "field": "task_type",       "align": "left", "sortable": True},
+                    {"name": "status",     "label": "Status",     "field": "status",          "align": "left"},
+                    {"name": "result",     "label": "Result",     "field": "_result_preview", "align": "left"},
+                    {"name": "created",    "label": "Created",    "field": "created_at",      "align": "left", "sortable": True},
+                    {"name": "claimed_by", "label": "Claimed By", "field": "claimed_by",      "align": "left"},
+                ],
+                rows=filtered_rows,
+                row_key="id",
+                pagination={"rowsPerPage": 15, "sortBy": "created_at", "descending": True},
+            ).classes("w-full cursor-pointer")
+
+            tbl.add_slot("body-cell-status", r'''
+                <q-td :props="props">
+                    <span :class="'px-2 py-0.5 rounded-full text-xs font-medium ' + props.row._status_cls">{{ props.row.status }}</span>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-result", r'''
+                <q-td :props="props">
+                    <span class="text-xs text-gray-700 font-mono">{{ props.row._result_preview || '—' }}</span>
+                    <span v-if="props.row._has_trace" class="ml-2 text-xs text-blue-600">[trace]</span>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-created", r'''
+                <q-td :props="props">
+                    <div class="text-sm text-gray-700">{{ props.row._date_display }}</div>
+                    <div class="text-xs text-gray-400">{{ props.row._rel_time }}</div>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-claimed_by", r'''
+                <q-td :props="props">
+                    <span class="font-mono text-xs text-gray-500">{{ props.row.claimed_by || '—' }}</span>
+                </q-td>''')
+
+            def on_row_click(e):
+                row = e.args[1] if isinstance(e.args, list) else e.args.get("row")
+                if row:
+                    open_detail(row)
+
+            tbl.on("rowClick", on_row_click)
+
+        with ui.column().classes("px-8 py-6 w-full gap-4"):
+            with ui.row().classes("w-full items-start justify-between gap-6"):
+                with ui.column().classes("gap-0"):
+                    ui.label("AI Blackboard").classes("text-3xl font-bold text-gray-900")
+                    ui.label("Results published by one-shot agent runs, and the follow-up runs triggered from them.").classes("text-sm text-gray-500 mt-1")
+
+            with ui.row().classes("w-full items-center gap-3"):
+                with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
+                    ui.icon("search").classes("text-gray-400 shrink-0")
+                    ui.input(
+                        placeholder="Search by task type or result content...",
+                        on_change=lambda e: (current_search.__setitem__(0, e.value), apply_filters()),
+                    ).props("borderless dense").classes("flex-1 text-sm")
+                ui.select(
+                    options=["All Statuses", "new", "claimed", "done"],
+                    value="All Statuses",
+                    on_change=lambda e: (current_status.__setitem__(0, e.value), apply_filters()),
+                ).props("outlined dense options-dense").classes("text-sm")
+                ui.select(
+                    options=["Newest First", "Task Type A–Z"],
+                    value="Newest First",
+                    on_change=lambda e: (current_sort.__setitem__(0, e.value), apply_filters()),
+                ).props("outlined dense options-dense").classes("text-sm")
+
+            count_lbl()
+
+            with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-hidden"):
+                bb_table()
 
     @ui.page("/ui/trigger")
     def trigger():
