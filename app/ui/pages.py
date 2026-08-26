@@ -1448,6 +1448,56 @@ def register_pages():
 
             detail_dialog.open()
 
+        add_task_dialog = ui.dialog()
+        add_task_error = [None]
+
+        def toggle_interval_visibility(e):
+            add_task_interval[0].set_visibility(e.value == "periodic")
+
+        with add_task_dialog, ui.card().classes("w-full max-w-xl p-6 gap-3"):
+            ui.label("Add New Task").classes("text-lg font-bold text-gray-900")
+            ui.label(
+                "Inserts a kind='initial' row -- a task that isn't a follow-up to "
+                "any result. The orchestrator picks it up on its next poll."
+            ).classes("text-xs text-gray-500")
+            add_task_prompt = ui.textarea(
+                label="Prompt",
+                placeholder='e.g. Clone <repo-url>, analyse it and write a report to /output/report.pdf.',
+            ).classes("w-full").props("outlined dense")
+            add_task_schedule = ui.select(
+                options=["once", "periodic"],
+                value="once",
+                label="Schedule",
+                on_change=toggle_interval_visibility,
+            ).classes("w-full").props("outlined dense options-dense")
+            add_task_interval = [ui.number(
+                label="Interval (minutes)",
+                min=1,
+                value=1440,
+            ).classes("w-full").props("outlined dense")]
+            add_task_interval[0].set_visibility(False)
+            add_task_error[0] = ui.label("").classes("text-xs text-red-600")
+
+            def submit_add_task():
+                prompt_text = (add_task_prompt.value or "").strip()
+                if not prompt_text:
+                    add_task_error[0].set_text("Prompt is required.")
+                    return
+                schedule_type = add_task_schedule.value
+                interval = int(add_task_interval[0].value) if schedule_type == "periodic" else None
+                try:
+                    new_id = blackboard_client.insert_initial_task(prompt_text, schedule_type, interval)
+                except Exception as e:
+                    add_task_error[0].set_text(f"Could not add task: {e}")
+                    return
+                ui.notify(f"Added task #{new_id}", type="positive")
+                add_task_dialog.close()
+                ui.navigate.to("/ui/blackboard")
+
+            with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                ui.button("Cancel", on_click=add_task_dialog.close).props("flat")
+                ui.button("Add Task", on_click=submit_add_task).props("unelevated color=primary")
+
         @ui.refreshable
         def bb_table():
             if not filtered_rows:
@@ -1543,6 +1593,7 @@ def register_pages():
                 with ui.column().classes("gap-0"):
                     ui.label("AI Blackboard").classes("text-3xl font-bold text-gray-900")
                     ui.label("Seeded/recurring tasks and results published by one-shot agent runs, and the follow-up runs triggered from them.").classes("text-sm text-gray-500 mt-1")
+                ui.button("Add New Task", icon="add", on_click=add_task_dialog.open).props("unelevated color=primary no-caps")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):

@@ -52,3 +52,43 @@ def get_trace_html(row_id: int) -> str | None:
             return row["trace"] if row else None
     finally:
         conn.close()
+
+
+def insert_initial_task(prompt: str, schedule_type: str, periodic_interval_minutes: int | None = None) -> int:
+    """Insert a new kind='initial' row -- a task not chained from any result.
+
+    Everything else is left at its default: status starts 'new', so the
+    orchestrator picks it up on its next poll; task_type/result/trace stay
+    NULL since they're only meaningful for kind='result' rows.
+
+    Args:
+        prompt: The literal prompt to trigger.
+        schedule_type: 'once' or 'periodic'.
+        periodic_interval_minutes: Required when schedule_type='periodic',
+            ignored otherwise.
+
+    Returns:
+        The new row's id.
+
+    Raises:
+        ValueError: If schedule_type isn't 'once'/'periodic', or if
+            'periodic' is requested without a positive interval.
+    """
+    if schedule_type not in ("once", "periodic"):
+        raise ValueError(f"schedule_type must be 'once' or 'periodic', got {schedule_type!r}")
+    if schedule_type == "periodic" and not (periodic_interval_minutes and periodic_interval_minutes > 0):
+        raise ValueError("periodic_interval_minutes must be a positive number for a periodic task")
+    interval = periodic_interval_minutes if schedule_type == "periodic" else None
+
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO task_runs (kind, prompt, schedule_type, periodic_interval_minutes) "
+                "VALUES ('initial', %s, %s, %s)",
+                (prompt, schedule_type, interval),
+            )
+            conn.commit()
+            return cur.lastrowid
+    finally:
+        conn.close()
