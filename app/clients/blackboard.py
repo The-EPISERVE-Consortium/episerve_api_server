@@ -32,8 +32,9 @@ def list_task_runs() -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, task_type, kind, prompt, status, result, "
-                "(trace IS NOT NULL) AS has_trace, created_at, last_status_change "
+                "SELECT id, task_type, kind, prompt, schedule_type, periodic_interval_minutes, "
+                "status, result, (trace IS NOT NULL) AS has_trace, created_at, "
+                "periodic_last_triggered_at, last_status_change "
                 "FROM task_runs ORDER BY created_at DESC"
             )
             return list(cur.fetchall())

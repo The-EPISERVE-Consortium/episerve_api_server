@@ -1293,18 +1293,30 @@ def register_pages():
                 _error_label(f"Could not load blackboard: {e}")
             return
 
+        def _preview(text: str, limit: int = 80) -> str:
+            text = text or ""
+            return (text[:limit] + "…") if len(text) > limit else text
+
         all_rows = []
         for r in raw_rows:
             date_display, rel_time = _fmt_date(r.get("created_at"))
             status_change_display, status_change_rel = _fmt_date(r.get("last_status_change"))
-            # A kind='initial' row has no `result` (it's a seeded/recurring
-            # prompt, not a run's output yet) -- preview its `prompt` instead
-            # so the table isn't blank for those rows.
-            preview_source = r.get("result") or r.get("prompt") or ""
+            periodic_last_display, periodic_last_rel = _fmt_date(r.get("periodic_last_triggered_at"))
+            schedule_type = r.get("schedule_type")
+            interval = r.get("periodic_interval_minutes")
+            if schedule_type == "periodic":
+                schedule_display = f"periodic · every {interval}min" if interval else "periodic"
+            elif schedule_type == "once":
+                schedule_display = "once"
+            else:
+                schedule_display = "—"
             all_rows.append({**r,
                 "_date_display": date_display, "_rel_time": rel_time,
                 "_status_change_display": status_change_display, "_status_change_rel": status_change_rel,
-                "_result_preview": (preview_source[:120] + "…") if len(preview_source) > 120 else preview_source,
+                "_periodic_last_display": periodic_last_display, "_periodic_last_rel": periodic_last_rel,
+                "_schedule_display": schedule_display,
+                "_prompt_preview": _preview(r.get("prompt"), 100),
+                "_result_preview": _preview(r.get("result"), 100),
                 "_status_cls": _status_cls(r.get("status", "")),
                 "_has_trace": bool(r.get("has_trace")),
             })
@@ -1444,14 +1456,17 @@ def register_pages():
 
             tbl = ui.table(
                 columns=[
-                    {"name": "id",         "label": "ID",         "field": "id",                    "align": "left"},
-                    {"name": "kind",       "label": "Kind",       "field": "kind",                   "align": "left", "sortable": True},
-                    {"name": "task_type",  "label": "Task Type",  "field": "task_type",              "align": "left", "sortable": True},
-                    {"name": "status",     "label": "Status",     "field": "status",                 "align": "left"},
-                    {"name": "result",     "label": "Result",     "field": "_result_preview",        "align": "left"},
-                    {"name": "trace",      "label": "Trace",      "field": "_has_trace",              "align": "left"},
-                    {"name": "created",    "label": "Created",    "field": "created_at",              "align": "left", "sortable": True},
-                    {"name": "changed",    "label": "Last Status Change", "field": "last_status_change", "align": "left"},
+                    {"name": "id",          "label": "ID",                  "field": "id",                         "align": "left"},
+                    {"name": "kind",        "label": "Kind",                "field": "kind",                       "align": "left", "sortable": True},
+                    {"name": "task_type",   "label": "Task Type",           "field": "task_type",                  "align": "left", "sortable": True},
+                    {"name": "schedule",    "label": "Schedule",            "field": "_schedule_display",          "align": "left"},
+                    {"name": "status",      "label": "Status",              "field": "status",                     "align": "left"},
+                    {"name": "prompt",      "label": "Prompt",              "field": "_prompt_preview",            "align": "left"},
+                    {"name": "result",      "label": "Result",              "field": "_result_preview",            "align": "left"},
+                    {"name": "trace",       "label": "Trace",               "field": "_has_trace",                 "align": "left"},
+                    {"name": "created",     "label": "Created",             "field": "created_at",                 "align": "left", "sortable": True},
+                    {"name": "changed",     "label": "Last Status Change",  "field": "last_status_change",         "align": "left"},
+                    {"name": "periodic_last", "label": "Periodic Last Run", "field": "periodic_last_triggered_at", "align": "left"},
                 ],
                 rows=filtered_rows,
                 row_key="id",
@@ -1469,6 +1484,12 @@ def register_pages():
             tbl.add_slot("body-cell-status", r'''
                 <q-td :props="props">
                     <span :class="'px-2 py-0.5 rounded-full text-xs font-medium ' + props.row._status_cls">{{ props.row.status }}</span>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-prompt", r'''
+                <q-td :props="props">
+                    <span class="text-xs text-gray-700 font-mono cursor-pointer hover:underline"
+                          @click="$parent.$emit('resultClick', props.row)">{{ props.row._prompt_preview || '—' }}</span>
                 </q-td>''')
 
             tbl.add_slot("body-cell-result", r'''
@@ -1495,6 +1516,13 @@ def register_pages():
                 <q-td :props="props">
                     <div class="text-sm text-gray-700">{{ props.row._status_change_display }}</div>
                     <div class="text-xs text-gray-400">{{ props.row._status_change_rel }}</div>
+                </q-td>''')
+
+            tbl.add_slot("body-cell-periodic_last", r'''
+                <q-td :props="props">
+                    <div v-if="props.row.periodic_last_triggered_at" class="text-sm text-gray-700">{{ props.row._periodic_last_display }}</div>
+                    <div v-if="props.row.periodic_last_triggered_at" class="text-xs text-gray-400">{{ props.row._periodic_last_rel }}</div>
+                    <span v-else class="text-xs text-gray-400">—</span>
                 </q-td>''')
 
             def on_result_click(e):
@@ -1536,7 +1564,7 @@ def register_pages():
 
             count_lbl()
 
-            with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-hidden"):
+            with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-x-auto"):
                 bb_table()
 
     @_napp.get("/ui/blackboard/trace/{row_id}")
