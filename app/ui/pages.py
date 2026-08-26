@@ -2,6 +2,8 @@ import hmac
 import json
 import duckdb
 import pandas as pd
+from fastapi import HTTPException
+from fastapi.responses import HTMLResponse
 from nicegui import ui, run, app as _napp
 from starlette.requests import Request
 
@@ -1300,7 +1302,7 @@ def register_pages():
                 "_claimed_display": claimed_display, "_claimed_rel": claimed_rel,
                 "_result_preview": (result[:120] + "…") if len(result) > 120 else result,
                 "_status_cls": _status_cls(r.get("status", "")),
-                "_has_trace": bool(r.get("trace")),
+                "_has_trace": bool(r.get("has_trace")),
             })
 
         filtered_rows: list = list(all_rows)
@@ -1381,13 +1383,16 @@ def register_pages():
             detail_result_raw[0].set_text(current_result_text[0])
             if detail_result_md[0].visible:
                 detail_result_md[0].set_content(current_result_text[0])
-            trace = row.get("trace")
-            if trace:
+            if row.get("_has_trace"):
                 detail_trace_row[0].set_visibility(True)
-                iframe_id = detail_trace_iframe[0].id
-                ui.run_javascript(f"getHtmlElement({iframe_id}).srcdoc = {json.dumps(trace)}")
+                # A normal iframe `src` navigation -- the browser fetches this
+                # over plain HTTP, independent of NiceGUI's websocket RPC
+                # channel, so a multi-megabyte trace.html doesn't hit the
+                # websocket's per-message size limit (see get_trace_html).
+                detail_trace_iframe[0].props(f'src="/ui/blackboard/trace/{row.get("id")}"')
             else:
                 detail_trace_row[0].set_visibility(False)
+                detail_trace_iframe[0].props('src="about:blank"')
             detail_dialog.open()
 
         @ui.refreshable
@@ -1473,6 +1478,20 @@ def register_pages():
 
             with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-hidden"):
                 bb_table()
+
+    @_napp.get("/ui/blackboard/trace/{row_id}")
+    def blackboard_trace(row_id: int):
+        # Plain HTTP GET, not a @ui.page -- this is what the trace iframe's
+        # `src` points at (see open_detail above). Session-cookie auth still
+        # applies: NiceGUI's storage middleware is installed on this same
+        # app regardless of route type, so app.storage.user is available
+        # here exactly as it is inside a @ui.page.
+        if _napp.storage.user.get("token") != _daily_token():
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        trace_html = blackboard_client.get_trace_html(row_id)
+        if trace_html is None:
+            raise HTTPException(status_code=404, detail="No trace for this row")
+        return HTMLResponse(content=trace_html)
 
     @ui.page("/ui/trigger")
     def trigger():
