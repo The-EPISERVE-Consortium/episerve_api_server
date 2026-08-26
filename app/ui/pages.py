@@ -1368,23 +1368,23 @@ def register_pages():
                 detail_result_raw[0].set_visibility(True)
                 detail_result_md[0].set_visibility(False)
 
-        detail_prompt_row = [None]
+        detail_prompt_section = [None]
         detail_prompt_label = [None]
         detail_result_section = [None]
 
         with detail_dialog, ui.card().classes("w-full max-w-5xl p-6 gap-3"):
             detail_title[0] = ui.label("").classes("text-lg font-bold text-gray-900")
 
-            # Clicking the Result cell opens just this section; clicking the
-            # Trace cell opens just the one below -- see open_detail's `focus`
-            # arg and the table's resultClick/traceClick handlers.
+            # Each section opens independently -- see open_detail's `focus`
+            # arg and the table's promptClick/resultClick/traceClick handlers.
+            detail_prompt_section[0] = ui.column().classes("w-full gap-1")
+            with detail_prompt_section[0]:
+                ui.label("Prompt").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2")
+                with ui.element("div").classes("w-full max-h-64 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
+                    detail_prompt_label[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
+
             detail_result_section[0] = ui.column().classes("w-full gap-1")
             with detail_result_section[0]:
-                detail_prompt_row[0] = ui.column().classes("w-full gap-1")
-                with detail_prompt_row[0]:
-                    ui.label("Prompt").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2")
-                    with ui.element("div").classes("w-full max-h-32 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
-                        detail_prompt_label[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
                 with ui.row().classes("w-full items-center justify-between mt-2"):
                     ui.label("Result").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide")
                     ui.switch("Render as Markdown", on_change=toggle_result_view).props("dense").classes("text-xs")
@@ -1417,9 +1417,9 @@ def register_pages():
 
             Args:
                 row: The clicked row.
-                focus: 'result' shows the prompt+result section (hides trace);
-                    'trace' shows the trace section (hides prompt+result), and
-                    does nothing if the row has no trace to show.
+                focus: 'prompt', 'result', or 'trace' -- shows only that
+                    section, hides the other two. Does nothing for
+                    focus='trace' if the row has no trace.
             """
             if focus == "trace" and not row.get("_has_trace"):
                 return
@@ -1427,13 +1427,14 @@ def register_pages():
             title_type = row.get("task_type") or row.get("kind") or ""
             detail_title[0].set_text(f"#{row.get('id')} · {title_type}")
 
+            detail_prompt_section[0].set_visibility(focus == "prompt")
             detail_result_section[0].set_visibility(focus == "result")
             detail_trace_row[0].set_visibility(focus == "trace")
 
-            if focus == "result":
-                prompt_text = row.get("prompt") or ""
-                detail_prompt_row[0].set_visibility(bool(prompt_text))
-                detail_prompt_label[0].set_text(prompt_text)
+            if focus == "prompt":
+                detail_prompt_label[0].set_text(row.get("prompt") or "(empty)")
+                detail_trace_iframe[0].props('src="about:blank"')
+            elif focus == "result":
                 current_result_text[0] = row.get("result") or "(empty)"
                 detail_result_raw[0].set_text(current_result_text[0])
                 if detail_result_md[0].visible:
@@ -1539,7 +1540,7 @@ def register_pages():
             tbl.add_slot("body-cell-prompt", r'''
                 <q-td :props="props">
                     <span class="text-xs text-gray-700 font-mono cursor-pointer hover:underline"
-                          @click="$parent.$emit('resultClick', props.row)">{{ props.row._prompt_preview || '—' }}</span>
+                          @click="$parent.$emit('promptClick', props.row)">{{ props.row._prompt_preview || '—' }}</span>
                 </q-td>''')
 
             tbl.add_slot("body-cell-result", r'''
@@ -1575,6 +1576,11 @@ def register_pages():
                     <span v-else class="text-xs text-gray-400">—</span>
                 </q-td>''')
 
+            def on_prompt_click(e):
+                row = e.args[0] if isinstance(e.args, list) else e.args
+                if row:
+                    open_detail(row, focus="prompt")
+
             def on_result_click(e):
                 row = e.args[0] if isinstance(e.args, list) else e.args
                 if row:
@@ -1585,6 +1591,7 @@ def register_pages():
                 if row:
                     open_detail(row, focus="trace")
 
+            tbl.on("promptClick", on_prompt_click)
             tbl.on("resultClick", on_result_click)
             tbl.on("traceClick", on_trace_click)
 
