@@ -11,6 +11,8 @@ def _connect() -> pymysql.connections.Connection:
         password=settings.blackboard_password,
         database=settings.blackboard_db,
         cursorclass=pymysql.cursors.DictCursor,
+        charset="utf8mb4",  # server default connection charset is utf8mb3;
+                            # result/trace routinely contain 4-byte characters
     )
 
 
