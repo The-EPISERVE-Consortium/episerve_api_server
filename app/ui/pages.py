@@ -1358,24 +1358,32 @@ def register_pages():
 
         detail_prompt_row = [None]
         detail_prompt_label = [None]
+        detail_result_section = [None]
 
         with detail_dialog, ui.card().classes("w-full max-w-5xl p-6 gap-3"):
             detail_title[0] = ui.label("").classes("text-lg font-bold text-gray-900")
-            detail_prompt_row[0] = ui.column().classes("w-full gap-1")
-            with detail_prompt_row[0]:
-                ui.label("Prompt").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2")
-                with ui.element("div").classes("w-full max-h-32 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
-                    detail_prompt_label[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
-            with ui.row().classes("w-full items-center justify-between mt-2"):
-                ui.label("Result").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide")
-                ui.switch("Render as Markdown", on_change=toggle_result_view).props("dense").classes("text-xs")
-            with ui.element("div").classes("w-full max-h-64 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
-                detail_result_raw[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
-                # sanitize=True (default) runs the rendered HTML through
-                # client-side DOMPurify before insertion -- safe even though
-                # `result` is agent-produced, not hand-authored, content.
-                detail_result_md[0] = ui.markdown("").classes("text-sm")
-                detail_result_md[0].set_visibility(False)
+
+            # Clicking the Result cell opens just this section; clicking the
+            # Trace cell opens just the one below -- see open_detail's `focus`
+            # arg and the table's resultClick/traceClick handlers.
+            detail_result_section[0] = ui.column().classes("w-full gap-1")
+            with detail_result_section[0]:
+                detail_prompt_row[0] = ui.column().classes("w-full gap-1")
+                with detail_prompt_row[0]:
+                    ui.label("Prompt").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2")
+                    with ui.element("div").classes("w-full max-h-32 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
+                        detail_prompt_label[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
+                with ui.row().classes("w-full items-center justify-between mt-2"):
+                    ui.label("Result").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide")
+                    ui.switch("Render as Markdown", on_change=toggle_result_view).props("dense").classes("text-xs")
+                with ui.element("div").classes("w-full max-h-64 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
+                    detail_result_raw[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
+                    # sanitize=True (default) runs the rendered HTML through
+                    # client-side DOMPurify before insertion -- safe even though
+                    # `result` is agent-produced, not hand-authored, content.
+                    detail_result_md[0] = ui.markdown("").classes("text-sm")
+                    detail_result_md[0].set_visibility(False)
+
             detail_trace_row[0] = ui.column().classes("w-full gap-1")
             with detail_trace_row[0]:
                 ui.label("Trace").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2")
@@ -1392,29 +1400,40 @@ def register_pages():
                 ).style("height: 70vh;")
             ui.button("Close", on_click=detail_dialog.close).classes("mt-2 self-end").props("flat")
 
-        def open_detail(row: dict):
+        def open_detail(row: dict, focus: str = "result"):
+            """Open the detail dialog showing only the section that was clicked.
+
+            Args:
+                row: The clicked row.
+                focus: 'result' shows the prompt+result section (hides trace);
+                    'trace' shows the trace section (hides prompt+result), and
+                    does nothing if the row has no trace to show.
+            """
+            if focus == "trace" and not row.get("_has_trace"):
+                return
+
             title_type = row.get("task_type") or row.get("kind") or ""
             detail_title[0].set_text(f"#{row.get('id')} · {title_type}")
-            prompt_text = row.get("prompt") or ""
-            if prompt_text:
-                detail_prompt_row[0].set_visibility(True)
+
+            detail_result_section[0].set_visibility(focus == "result")
+            detail_trace_row[0].set_visibility(focus == "trace")
+
+            if focus == "result":
+                prompt_text = row.get("prompt") or ""
+                detail_prompt_row[0].set_visibility(bool(prompt_text))
                 detail_prompt_label[0].set_text(prompt_text)
+                current_result_text[0] = row.get("result") or "(empty)"
+                detail_result_raw[0].set_text(current_result_text[0])
+                if detail_result_md[0].visible:
+                    detail_result_md[0].set_content(current_result_text[0])
+                detail_trace_iframe[0].props('src="about:blank"')
             else:
-                detail_prompt_row[0].set_visibility(False)
-            current_result_text[0] = row.get("result") or "(empty)"
-            detail_result_raw[0].set_text(current_result_text[0])
-            if detail_result_md[0].visible:
-                detail_result_md[0].set_content(current_result_text[0])
-            if row.get("_has_trace"):
-                detail_trace_row[0].set_visibility(True)
                 # A normal iframe `src` navigation -- the browser fetches this
                 # over plain HTTP, independent of NiceGUI's websocket RPC
                 # channel, so a multi-megabyte trace.html doesn't hit the
                 # websocket's per-message size limit (see get_trace_html).
                 detail_trace_iframe[0].props(f'src="/ui/blackboard/trace/{row.get("id")}"')
-            else:
-                detail_trace_row[0].set_visibility(False)
-                detail_trace_iframe[0].props('src="about:blank"')
+
             detail_dialog.open()
 
         @ui.refreshable
@@ -1437,7 +1456,7 @@ def register_pages():
                 rows=filtered_rows,
                 row_key="id",
                 pagination={"rowsPerPage": 15, "sortBy": "created_at", "descending": True},
-            ).classes("w-full cursor-pointer")
+            ).classes("w-full")
 
             tbl.add_slot("body-cell-kind", r'''
                 <q-td :props="props">
@@ -1454,12 +1473,15 @@ def register_pages():
 
             tbl.add_slot("body-cell-result", r'''
                 <q-td :props="props">
-                    <span class="text-xs text-gray-700 font-mono">{{ props.row._result_preview || '—' }}</span>
+                    <span class="text-xs text-gray-700 font-mono cursor-pointer hover:underline"
+                          @click="$parent.$emit('resultClick', props.row)">{{ props.row._result_preview || '—' }}</span>
                 </q-td>''')
 
             tbl.add_slot("body-cell-trace", r'''
                 <q-td :props="props">
-                    <span v-if="props.row._has_trace" class="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-medium">available</span>
+                    <span v-if="props.row._has_trace"
+                          class="bg-blue-100 text-blue-700 text-xs px-2 py-0.5 rounded-full font-medium cursor-pointer hover:bg-blue-200"
+                          @click="$parent.$emit('traceClick', props.row)">available</span>
                     <span v-else class="text-xs text-gray-400">—</span>
                 </q-td>''')
 
@@ -1475,12 +1497,18 @@ def register_pages():
                     <div class="text-xs text-gray-400">{{ props.row._status_change_rel }}</div>
                 </q-td>''')
 
-            def on_row_click(e):
-                row = e.args[1] if isinstance(e.args, list) else e.args.get("row")
+            def on_result_click(e):
+                row = e.args[0] if isinstance(e.args, list) else e.args
                 if row:
-                    open_detail(row)
+                    open_detail(row, focus="result")
 
-            tbl.on("rowClick", on_row_click)
+            def on_trace_click(e):
+                row = e.args[0] if isinstance(e.args, list) else e.args
+                if row:
+                    open_detail(row, focus="trace")
+
+            tbl.on("resultClick", on_result_click)
+            tbl.on("traceClick", on_trace_click)
 
         with ui.column().classes("px-8 py-6 w-full gap-4"):
             with ui.row().classes("w-full items-start justify-between gap-6"):
