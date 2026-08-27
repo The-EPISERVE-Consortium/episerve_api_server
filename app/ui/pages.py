@@ -1510,6 +1510,7 @@ def register_pages():
 
             tbl = ui.table(
                 columns=[
+                    {"name": "actions",     "label": "",                    "field": "id",                         "align": "right"},
                     {"name": "id",          "label": "ID",                  "field": "id",                         "align": "left"},
                     {"name": "post_type",   "label": "Post Type",           "field": "post_type",                  "align": "left", "sortable": True},
                     {"name": "state",       "label": "State",               "field": "state",                      "align": "left"},
@@ -1521,7 +1522,6 @@ def register_pages():
                     {"name": "created",     "label": "Created",             "field": "created_at",                 "align": "left", "sortable": True},
                     {"name": "changed",     "label": "Last State Change",   "field": "last_state_change",          "align": "left"},
                     {"name": "periodic_last", "label": "Periodic Last Run", "field": "periodic_last_triggered_at", "align": "left"},
-                    {"name": "actions",     "label": "",                    "field": "id",                         "align": "right"},
                 ],
                 rows=filtered_rows,
                 row_key="id",
