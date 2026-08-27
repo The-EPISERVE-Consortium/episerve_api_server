@@ -1293,10 +1293,6 @@ def register_pages():
                 _error_label(f"Could not load blackboard: {e}")
             return
 
-        def _preview(text: str, limit: int = 80) -> str:
-            text = text or ""
-            return (text[:limit] + "…") if len(text) > limit else text
-
         all_rows = []
         for r in raw_rows:
             date_display, rel_time = _fmt_date(r.get("created_at"))
@@ -1314,8 +1310,6 @@ def register_pages():
                 "_state_change_display": state_change_display, "_state_change_rel": state_change_rel,
                 "_periodic_last_display": periodic_last_display, "_periodic_last_rel": periodic_last_rel,
                 "_schedule_display": schedule_display,
-                "_prompt_preview": _preview(r.get("prompt"), 100),
-                "_finding_preview": _preview(r.get("finding"), 100),
                 "_state_cls": _state_cls(r.get("state", "")),
                 "_has_trace": bool(r.get("has_trace")),
             })
@@ -1516,8 +1510,6 @@ def register_pages():
                     {"name": "state",       "label": "State",               "field": "state",                      "align": "left"},
                     {"name": "task_type",   "label": "Task Type",           "field": "task_type",                  "align": "left", "sortable": True},
                     {"name": "schedule",    "label": "Schedule",            "field": "_schedule_display",          "align": "left"},
-                    {"name": "prompt",      "label": "Prompt",              "field": "_prompt_preview",            "align": "left"},
-                    {"name": "finding",     "label": "Finding",             "field": "_finding_preview",           "align": "left"},
                     {"name": "trace",       "label": "Trace",               "field": "_has_trace",                 "align": "left"},
                     {"name": "created",     "label": "Created",             "field": "created_at",                 "align": "left", "sortable": True},
                     {"name": "changed",     "label": "Last State Change",   "field": "last_state_change",          "align": "left"},
@@ -1539,18 +1531,6 @@ def register_pages():
             tbl.add_slot("body-cell-state", r'''
                 <q-td :props="props">
                     <span :class="'px-2 py-0.5 rounded-full text-xs font-medium ' + props.row._state_cls">{{ props.row.state }}</span>
-                </q-td>''')
-
-            tbl.add_slot("body-cell-prompt", r'''
-                <q-td :props="props">
-                    <span class="text-xs text-gray-700 font-mono cursor-pointer hover:underline"
-                          @click="$parent.$emit('promptClick', props.row)">{{ props.row._prompt_preview || '—' }}</span>
-                </q-td>''')
-
-            tbl.add_slot("body-cell-finding", r'''
-                <q-td :props="props">
-                    <span class="text-xs text-gray-700 font-mono cursor-pointer hover:underline"
-                          @click="$parent.$emit('findingClick', props.row)">{{ props.row._finding_preview || '—' }}</span>
                 </q-td>''')
 
             tbl.add_slot("body-cell-trace", r'''
