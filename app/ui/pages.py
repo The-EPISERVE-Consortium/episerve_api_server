@@ -1572,7 +1572,7 @@ def register_pages():
                                     <q-item-section>Show finding</q-item-section>
                                 </q-item>
                                 <q-item clickable v-close-popup @click="$parent.$emit('setWaitingClick', props.row)">
-                                    <q-item-section>Set to Waiting</q-item-section>
+                                    <q-item-section>Set to waiting (new)</q-item-section>
                                 </q-item>
                                 <q-item clickable v-close-popup @click="$parent.$emit('setDismissedClick', props.row)">
                                     <q-item-section>Dismiss</q-item-section>
