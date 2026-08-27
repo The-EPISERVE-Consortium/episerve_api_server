@@ -1585,6 +1585,9 @@ def register_pages():
                     <q-btn flat round dense icon="more_vert" size="sm" class="text-gray-400">
                         <q-menu>
                             <q-list dense>
+                                <q-item clickable v-close-popup @click="$parent.$emit('promptClick', props.row)">
+                                    <q-item-section>Show prompt</q-item-section>
+                                </q-item>
                                 <q-item clickable v-close-popup @click="$parent.$emit('setWaitingClick', props.row)">
                                     <q-item-section>Set to Waiting</q-item-section>
                                 </q-item>
