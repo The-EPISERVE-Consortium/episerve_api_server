@@ -1512,9 +1512,9 @@ def register_pages():
                 columns=[
                     {"name": "id",          "label": "ID",                  "field": "id",                         "align": "left"},
                     {"name": "post_type",   "label": "Post Type",           "field": "post_type",                  "align": "left", "sortable": True},
+                    {"name": "state",       "label": "State",               "field": "state",                      "align": "left"},
                     {"name": "task_type",   "label": "Task Type",           "field": "task_type",                  "align": "left", "sortable": True},
                     {"name": "schedule",    "label": "Schedule",            "field": "_schedule_display",          "align": "left"},
-                    {"name": "state",       "label": "State",               "field": "state",                      "align": "left"},
                     {"name": "prompt",      "label": "Prompt",              "field": "_prompt_preview",            "align": "left"},
                     {"name": "finding",     "label": "Finding",             "field": "_finding_preview",           "align": "left"},
                     {"name": "trace",       "label": "Trace",               "field": "_has_trace",                 "align": "left"},
