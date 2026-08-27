@@ -101,3 +101,35 @@ def insert_initial_task(
             return cur.lastrowid
     finally:
         conn.close()
+
+
+_MANUALLY_SETTABLE_STATUSES = {"new", "ignored"}
+
+
+def set_status(row_id: int, status: str) -> None:
+    """Manually set a row's status from the UI.
+
+    Only 'new' (re-queue -- the orchestrator picks it up on its next poll)
+    and 'ignored' (permanently excluded from the orchestrator's eligibility
+    query, e.g. to retire a periodic row or dismiss a result nothing routes)
+    are allowed here -- 'dispatching_run'/'waiting_for_next_periodic_run'/
+    'done' are the orchestrator's own claim-lifecycle states and are never
+    set by a human.
+
+    Args:
+        row_id: `task_runs.id` to update.
+        status: 'new' or 'ignored'.
+
+    Raises:
+        ValueError: If `status` isn't one of the manually-settable values.
+    """
+    if status not in _MANUALLY_SETTABLE_STATUSES:
+        raise ValueError(f"status must be one of {_MANUALLY_SETTABLE_STATUSES}, got {status!r}")
+
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE task_runs SET status=%s WHERE id=%s", (status, row_id))
+            conn.commit()
+    finally:
+        conn.close()

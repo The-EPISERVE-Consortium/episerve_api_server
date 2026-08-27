@@ -1523,6 +1523,7 @@ def register_pages():
                     {"name": "created",     "label": "Created",             "field": "created_at",                 "align": "left", "sortable": True},
                     {"name": "changed",     "label": "Last Status Change",  "field": "last_status_change",         "align": "left"},
                     {"name": "periodic_last", "label": "Periodic Last Run", "field": "periodic_last_triggered_at", "align": "left"},
+                    {"name": "actions",     "label": "",                    "field": "id",                         "align": "right"},
                 ],
                 rows=filtered_rows,
                 row_key="id",
@@ -1581,6 +1582,22 @@ def register_pages():
                     <span v-else class="text-xs text-gray-400">—</span>
                 </q-td>''')
 
+            tbl.add_slot("body-cell-actions", r'''
+                <q-td :props="props">
+                    <q-btn flat round dense icon="more_vert" size="sm" class="text-gray-400">
+                        <q-menu>
+                            <q-list dense>
+                                <q-item clickable v-close-popup @click="$parent.$emit('setNewClick', props.row)">
+                                    <q-item-section>Set to New</q-item-section>
+                                </q-item>
+                                <q-item clickable v-close-popup @click="$parent.$emit('setIgnoreClick', props.row)">
+                                    <q-item-section>Set to Ignore</q-item-section>
+                                </q-item>
+                            </q-list>
+                        </q-menu>
+                    </q-btn>
+                </q-td>''')
+
             def on_prompt_click(e):
                 row = e.args[0] if isinstance(e.args, list) else e.args
                 if row:
@@ -1596,9 +1613,30 @@ def register_pages():
                 if row:
                     open_detail(row, focus="trace")
 
+            def _set_status(row: dict, status: str):
+                try:
+                    blackboard_client.set_status(row["id"], status)
+                except Exception as e:
+                    ui.notify(f"Could not update task_runs.id={row['id']}: {e}", type="negative")
+                    return
+                ui.notify(f"task_runs.id={row['id']} set to '{status}'", type="positive")
+                ui.navigate.to("/ui/blackboard")
+
+            def on_set_new_click(e):
+                row = e.args[0] if isinstance(e.args, list) else e.args
+                if row:
+                    _set_status(row, "new")
+
+            def on_set_ignore_click(e):
+                row = e.args[0] if isinstance(e.args, list) else e.args
+                if row:
+                    _set_status(row, "ignored")
+
             tbl.on("promptClick", on_prompt_click)
             tbl.on("resultClick", on_result_click)
             tbl.on("traceClick", on_trace_click)
+            tbl.on("setNewClick", on_set_new_click)
+            tbl.on("setIgnoreClick", on_set_ignore_click)
 
         with ui.column().classes("px-8 py-6 w-full gap-4"):
             with ui.row().classes("w-full items-start justify-between gap-6"):
@@ -1615,7 +1653,7 @@ def register_pages():
                         on_change=lambda e: (current_search.__setitem__(0, e.value), apply_filters()),
                     ).props("borderless dense").classes("flex-1 text-sm")
                 ui.select(
-                    options=["All Statuses", "new", "dispatching_run", "waiting_for_next_periodic_run", "done"],
+                    options=["All Statuses", "new", "dispatching_run", "waiting_for_next_periodic_run", "done", "ignored"],
                     value="All Statuses",
                     on_change=lambda e: (current_status.__setitem__(0, e.value), apply_filters()),
                 ).props("outlined dense options-dense").classes("text-sm")
