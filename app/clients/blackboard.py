@@ -12,7 +12,7 @@ def _connect() -> pymysql.connections.Connection:
         database=settings.blackboard_db,
         cursorclass=pymysql.cursors.DictCursor,
         charset="utf8mb4",  # server default connection charset is utf8mb3;
-                            # result/trace routinely contain 4-byte characters
+                            # finding/trace routinely contain 4-byte characters
     )
 
 
@@ -32,9 +32,9 @@ def list_task_runs() -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, task_type, kind, prompt, schedule_type, periodic_interval_minutes, "
-                "status, result, (trace IS NOT NULL) AS has_trace, created_at, "
-                "periodic_last_triggered_at, last_status_change "
+                "SELECT id, task_type, post_type, prompt, periodic_interval_minutes, "
+                "state, finding, (trace IS NOT NULL) AS has_trace, created_at, "
+                "periodic_last_triggered_at, last_state_change "
                 "FROM task_runs ORDER BY created_at DESC"
             )
             return list(cur.fetchall())
@@ -56,46 +56,40 @@ def get_trace_html(row_id: int) -> str | None:
 
 def insert_initial_task(
     prompt: str,
-    schedule_type: str,
     periodic_interval_minutes: int | None = None,
     task_type: str | None = None,
 ) -> int:
-    """Insert a new kind='initial' row -- a task not chained from any result.
+    """Insert a new post_type='run_me' row -- a task not chained from any finding.
 
-    Everything else is left at its default: status starts 'new', so the
-    orchestrator picks it up on its next poll; result/trace stay NULL since
-    they're only meaningful for kind='result' rows. task_type is optional
-    here -- unlike a kind='result' row, it's never matched against
-    routing.py (the row already carries its own `prompt`), it's purely a
-    free-text label for a human reading the table.
+    Everything else is left at its default: state starts 'waiting', so the
+    orchestrator picks it up on its next poll; finding/trace stay NULL since
+    they're only meaningful for post_type='someone_take_over' rows. task_type
+    is optional here -- unlike a post_type='someone_take_over' row, it's
+    never matched against routing.py (the row already carries its own
+    `prompt`), it's purely a free-text label for a human reading the table.
 
     Args:
         prompt: The literal prompt to trigger.
-        schedule_type: 'once' or 'periodic'.
-        periodic_interval_minutes: Required when schedule_type='periodic',
-            ignored otherwise.
+        periodic_interval_minutes: If set, the row recurs every this many
+            minutes; if None, it fires once.
         task_type: Optional free-text label.
 
     Returns:
         The new row's id.
 
     Raises:
-        ValueError: If schedule_type isn't 'once'/'periodic', or if
-            'periodic' is requested without a positive interval.
+        ValueError: If periodic_interval_minutes is given but not positive.
     """
-    if schedule_type not in ("once", "periodic"):
-        raise ValueError(f"schedule_type must be 'once' or 'periodic', got {schedule_type!r}")
-    if schedule_type == "periodic" and not (periodic_interval_minutes and periodic_interval_minutes > 0):
-        raise ValueError("periodic_interval_minutes must be a positive number for a periodic task")
-    interval = periodic_interval_minutes if schedule_type == "periodic" else None
+    if periodic_interval_minutes is not None and periodic_interval_minutes <= 0:
+        raise ValueError("periodic_interval_minutes must be a positive number when given")
 
     conn = _connect()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO task_runs (kind, prompt, schedule_type, periodic_interval_minutes, task_type) "
-                "VALUES ('initial', %s, %s, %s, %s)",
-                (prompt, schedule_type, interval, task_type or None),
+                "INSERT INTO task_runs (post_type, prompt, periodic_interval_minutes, task_type) "
+                "VALUES ('run_me', %s, %s, %s)",
+                (prompt, periodic_interval_minutes, task_type or None),
             )
             conn.commit()
             return cur.lastrowid
@@ -103,33 +97,33 @@ def insert_initial_task(
         conn.close()
 
 
-_MANUALLY_SETTABLE_STATUSES = {"new", "ignored"}
+_MANUALLY_SETTABLE_STATES = {"waiting", "dismissed"}
 
 
-def set_status(row_id: int, status: str) -> None:
-    """Manually set a row's status from the UI.
+def set_state(row_id: int, state: str) -> None:
+    """Manually set a row's state from the UI.
 
-    Only 'new' (re-queue -- the orchestrator picks it up on its next poll)
-    and 'ignored' (permanently excluded from the orchestrator's eligibility
-    query, e.g. to retire a periodic row or dismiss a result nothing routes)
-    are allowed here -- 'dispatching_run'/'waiting_for_next_periodic_run'/
-    'done' are the orchestrator's own claim-lifecycle states and are never
-    set by a human.
+    Only 'waiting' (re-queue -- the orchestrator picks it up on its next
+    poll) and 'dismissed' (permanently excluded from the orchestrator's
+    eligibility query, e.g. to retire a periodic row or dismiss a finding
+    nothing routes) are allowed here -- 'dispatching_run'/
+    'waiting_for_next_periodic_run'/'resolved' are the orchestrator's own
+    claim-lifecycle states and are never set by a human.
 
     Args:
         row_id: `task_runs.id` to update.
-        status: 'new' or 'ignored'.
+        state: 'waiting' or 'dismissed'.
 
     Raises:
-        ValueError: If `status` isn't one of the manually-settable values.
+        ValueError: If `state` isn't one of the manually-settable values.
     """
-    if status not in _MANUALLY_SETTABLE_STATUSES:
-        raise ValueError(f"status must be one of {_MANUALLY_SETTABLE_STATUSES}, got {status!r}")
+    if state not in _MANUALLY_SETTABLE_STATES:
+        raise ValueError(f"state must be one of {_MANUALLY_SETTABLE_STATES}, got {state!r}")
 
     conn = _connect()
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE task_runs SET status=%s WHERE id=%s", (status, row_id))
+            cur.execute("UPDATE task_runs SET state=%s WHERE id=%s", (state, row_id))
             conn.commit()
     finally:
         conn.close()

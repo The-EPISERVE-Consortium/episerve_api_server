@@ -1278,12 +1278,12 @@ def register_pages():
             except Exception:
                 return str(dt), ""
 
-        def _status_cls(status: str) -> str:
-            s = (status or "").lower()
-            if s == "new":                          return "bg-blue-100 text-blue-700"
+        def _state_cls(state: str) -> str:
+            s = (state or "").lower()
+            if s == "waiting":                       return "bg-blue-100 text-blue-700"
             if s == "dispatching_run":               return "bg-orange-100 text-orange-700"
             if s == "waiting_for_next_periodic_run": return "bg-purple-100 text-purple-700"
-            if s == "done":                          return "bg-green-100 text-green-700"
+            if s == "resolved":                      return "bg-green-100 text-green-700"
             return "bg-gray-100 text-gray-600"
 
         try:
@@ -1300,42 +1300,41 @@ def register_pages():
         all_rows = []
         for r in raw_rows:
             date_display, rel_time = _fmt_date(r.get("created_at"))
-            status_change_display, status_change_rel = _fmt_date(r.get("last_status_change"))
+            state_change_display, state_change_rel = _fmt_date(r.get("last_state_change"))
             periodic_last_display, periodic_last_rel = _fmt_date(r.get("periodic_last_triggered_at"))
-            schedule_type = r.get("schedule_type")
             interval = r.get("periodic_interval_minutes")
-            if schedule_type == "periodic":
-                schedule_display = f"periodic · every {interval}min" if interval else "periodic"
-            elif schedule_type == "once":
+            if interval:
+                schedule_display = f"periodic · every {interval}min"
+            elif r.get("post_type") == "run_me":
                 schedule_display = "once"
             else:
                 schedule_display = "—"
             all_rows.append({**r,
                 "_date_display": date_display, "_rel_time": rel_time,
-                "_status_change_display": status_change_display, "_status_change_rel": status_change_rel,
+                "_state_change_display": state_change_display, "_state_change_rel": state_change_rel,
                 "_periodic_last_display": periodic_last_display, "_periodic_last_rel": periodic_last_rel,
                 "_schedule_display": schedule_display,
                 "_prompt_preview": _preview(r.get("prompt"), 100),
-                "_result_preview": _preview(r.get("result"), 100),
-                "_status_cls": _status_cls(r.get("status", "")),
+                "_finding_preview": _preview(r.get("finding"), 100),
+                "_state_cls": _state_cls(r.get("state", "")),
                 "_has_trace": bool(r.get("has_trace")),
             })
 
         filtered_rows: list = list(all_rows)
         current_search = [""]
-        current_status = ["All Statuses"]
+        current_state = ["All States"]
         current_sort   = ["Newest First"]
 
         def apply_filters():
             s = current_search[0].lower()
-            st = current_status[0]
+            st = current_state[0]
             rs = [
                 r for r in all_rows
                 if (not s
                     or s in (r.get("task_type") or "").lower()
-                    or s in (r.get("result") or "").lower()
+                    or s in (r.get("finding") or "").lower()
                     or s in (r.get("prompt") or "").lower())
-                and (st == "All Statuses" or r.get("status") == st)
+                and (st == "All States" or r.get("state") == st)
             ]
             if current_sort[0] == "Newest First":
                 rs.sort(key=lambda r: str(r.get("created_at", "")), reverse=True)
@@ -1353,48 +1352,48 @@ def register_pages():
 
         detail_dialog = ui.dialog()
         detail_title = [None]
-        detail_result_raw = [None]
-        detail_result_md = [None]
+        detail_finding_raw = [None]
+        detail_finding_md = [None]
         detail_trace_row = [None]
         detail_trace_iframe = [None]
-        current_result_text = [""]
+        current_finding_text = [""]
 
-        def toggle_result_view(e):
+        def toggle_finding_view(e):
             if e.value:
-                detail_result_md[0].set_content(current_result_text[0])
-                detail_result_raw[0].set_visibility(False)
-                detail_result_md[0].set_visibility(True)
+                detail_finding_md[0].set_content(current_finding_text[0])
+                detail_finding_raw[0].set_visibility(False)
+                detail_finding_md[0].set_visibility(True)
             else:
-                detail_result_raw[0].set_visibility(True)
-                detail_result_md[0].set_visibility(False)
+                detail_finding_raw[0].set_visibility(True)
+                detail_finding_md[0].set_visibility(False)
 
         detail_prompt_section = [None]
         detail_prompt_label = [None]
-        detail_result_section = [None]
+        detail_finding_section = [None]
 
         with detail_dialog, ui.card().classes("w-full max-w-5xl p-6 gap-3"):
             detail_title[0] = ui.label("").classes("text-lg font-bold text-gray-900")
 
             # Each section opens independently -- see open_detail's `focus`
-            # arg and the table's promptClick/resultClick/traceClick handlers.
+            # arg and the table's promptClick/findingClick/traceClick handlers.
             detail_prompt_section[0] = ui.column().classes("w-full gap-1")
             with detail_prompt_section[0]:
                 ui.label("Prompt").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2")
                 with ui.element("div").classes("w-full max-h-64 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
                     detail_prompt_label[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
 
-            detail_result_section[0] = ui.column().classes("w-full gap-1")
-            with detail_result_section[0]:
+            detail_finding_section[0] = ui.column().classes("w-full gap-1")
+            with detail_finding_section[0]:
                 with ui.row().classes("w-full items-center justify-between mt-2"):
-                    ui.label("Result").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide")
-                    ui.switch("Render as Markdown", on_change=toggle_result_view).props("dense").classes("text-xs")
+                    ui.label("Finding").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide")
+                    ui.switch("Render as Markdown", on_change=toggle_finding_view).props("dense").classes("text-xs")
                 with ui.element("div").classes("w-full max-h-64 overflow-auto bg-gray-50 border border-gray-200 rounded-lg p-3"):
-                    detail_result_raw[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
+                    detail_finding_raw[0] = ui.label("").classes("whitespace-pre-wrap font-mono text-xs text-gray-800")
                     # sanitize=True (default) runs the rendered HTML through
                     # client-side DOMPurify before insertion -- safe even though
-                    # `result` is agent-produced, not hand-authored, content.
-                    detail_result_md[0] = ui.markdown("").classes("text-sm")
-                    detail_result_md[0].set_visibility(False)
+                    # `finding` is agent-produced, not hand-authored, content.
+                    detail_finding_md[0] = ui.markdown("").classes("text-sm")
+                    detail_finding_md[0].set_visibility(False)
 
             detail_trace_row[0] = ui.column().classes("w-full gap-1")
             with detail_trace_row[0]:
@@ -1412,33 +1411,33 @@ def register_pages():
                 ).style("height: 70vh;")
             ui.button("Close", on_click=detail_dialog.close).classes("mt-2 self-end").props("flat")
 
-        def open_detail(row: dict, focus: str = "result"):
+        def open_detail(row: dict, focus: str = "finding"):
             """Open the detail dialog showing only the section that was clicked.
 
             Args:
                 row: The clicked row.
-                focus: 'prompt', 'result', or 'trace' -- shows only that
+                focus: 'prompt', 'finding', or 'trace' -- shows only that
                     section, hides the other two. Does nothing for
                     focus='trace' if the row has no trace.
             """
             if focus == "trace" and not row.get("_has_trace"):
                 return
 
-            title_type = row.get("task_type") or row.get("kind") or ""
+            title_type = row.get("task_type") or row.get("post_type") or ""
             detail_title[0].set_text(f"#{row.get('id')} · {title_type}")
 
             detail_prompt_section[0].set_visibility(focus == "prompt")
-            detail_result_section[0].set_visibility(focus == "result")
+            detail_finding_section[0].set_visibility(focus == "finding")
             detail_trace_row[0].set_visibility(focus == "trace")
 
             if focus == "prompt":
                 detail_prompt_label[0].set_text(row.get("prompt") or "(empty)")
                 detail_trace_iframe[0].props('src="about:blank"')
-            elif focus == "result":
-                current_result_text[0] = row.get("result") or "(empty)"
-                detail_result_raw[0].set_text(current_result_text[0])
-                if detail_result_md[0].visible:
-                    detail_result_md[0].set_content(current_result_text[0])
+            elif focus == "finding":
+                current_finding_text[0] = row.get("finding") or "(empty)"
+                detail_finding_raw[0].set_text(current_finding_text[0])
+                if detail_finding_md[0].visible:
+                    detail_finding_md[0].set_content(current_finding_text[0])
                 detail_trace_iframe[0].props('src="about:blank"')
             else:
                 # A normal iframe `src` navigation -- the browser fetches this
@@ -1458,8 +1457,8 @@ def register_pages():
         with add_task_dialog, ui.card().classes("w-full max-w-xl p-6 gap-3"):
             ui.label("Add AI Task to Blackboard").classes("text-lg font-bold text-gray-900")
             ui.label(
-                "Inserts a kind='initial' row -- a task that isn't a follow-up to "
-                "any result. The orchestrator picks it up on its next poll."
+                "Inserts a post_type='run_me' row -- a task that isn't a follow-up to "
+                "any finding. The orchestrator picks it up on its next poll."
             ).classes("text-xs text-gray-500")
             add_task_type = ui.input(
                 label="Task Type (optional)",
@@ -1488,11 +1487,10 @@ def register_pages():
                 if not prompt_text:
                     add_task_error[0].set_text("Prompt is required.")
                     return
-                schedule_type = add_task_schedule.value
-                interval = int(add_task_interval[0].value) if schedule_type == "periodic" else None
+                interval = int(add_task_interval[0].value) if add_task_schedule.value == "periodic" else None
                 task_type = (add_task_type.value or "").strip() or None
                 try:
-                    new_id = blackboard_client.insert_initial_task(prompt_text, schedule_type, interval, task_type)
+                    new_id = blackboard_client.insert_initial_task(prompt_text, interval, task_type)
                 except Exception as e:
                     add_task_error[0].set_text(f"Could not add task: {e}")
                     return
@@ -1513,15 +1511,15 @@ def register_pages():
             tbl = ui.table(
                 columns=[
                     {"name": "id",          "label": "ID",                  "field": "id",                         "align": "left"},
-                    {"name": "kind",        "label": "Kind",                "field": "kind",                       "align": "left", "sortable": True},
+                    {"name": "post_type",   "label": "Post Type",           "field": "post_type",                  "align": "left", "sortable": True},
                     {"name": "task_type",   "label": "Task Type",           "field": "task_type",                  "align": "left", "sortable": True},
                     {"name": "schedule",    "label": "Schedule",            "field": "_schedule_display",          "align": "left"},
-                    {"name": "status",      "label": "Status",              "field": "status",                     "align": "left"},
+                    {"name": "state",       "label": "State",               "field": "state",                      "align": "left"},
                     {"name": "prompt",      "label": "Prompt",              "field": "_prompt_preview",            "align": "left"},
-                    {"name": "result",      "label": "Result",              "field": "_result_preview",            "align": "left"},
+                    {"name": "finding",     "label": "Finding",             "field": "_finding_preview",           "align": "left"},
                     {"name": "trace",       "label": "Trace",               "field": "_has_trace",                 "align": "left"},
                     {"name": "created",     "label": "Created",             "field": "created_at",                 "align": "left", "sortable": True},
-                    {"name": "changed",     "label": "Last Status Change",  "field": "last_status_change",         "align": "left"},
+                    {"name": "changed",     "label": "Last State Change",   "field": "last_state_change",          "align": "left"},
                     {"name": "periodic_last", "label": "Periodic Last Run", "field": "periodic_last_triggered_at", "align": "left"},
                     {"name": "actions",     "label": "",                    "field": "id",                         "align": "right"},
                 ],
@@ -1530,17 +1528,17 @@ def register_pages():
                 pagination={"rowsPerPage": 15, "sortBy": "created_at", "descending": True},
             ).classes("w-full")
 
-            tbl.add_slot("body-cell-kind", r'''
+            tbl.add_slot("body-cell-post_type", r'''
                 <q-td :props="props">
                     <span class="text-xs px-2 py-0.5 rounded-full font-medium"
-                          :class="props.row.kind === 'initial' ? 'bg-indigo-100 text-indigo-700' : 'bg-teal-100 text-teal-700'">
-                        {{ props.row.kind }}
+                          :class="props.row.post_type === 'run_me' ? 'bg-indigo-100 text-indigo-700' : 'bg-teal-100 text-teal-700'">
+                        {{ props.row.post_type }}
                     </span>
                 </q-td>''')
 
-            tbl.add_slot("body-cell-status", r'''
+            tbl.add_slot("body-cell-state", r'''
                 <q-td :props="props">
-                    <span :class="'px-2 py-0.5 rounded-full text-xs font-medium ' + props.row._status_cls">{{ props.row.status }}</span>
+                    <span :class="'px-2 py-0.5 rounded-full text-xs font-medium ' + props.row._state_cls">{{ props.row.state }}</span>
                 </q-td>''')
 
             tbl.add_slot("body-cell-prompt", r'''
@@ -1549,10 +1547,10 @@ def register_pages():
                           @click="$parent.$emit('promptClick', props.row)">{{ props.row._prompt_preview || '—' }}</span>
                 </q-td>''')
 
-            tbl.add_slot("body-cell-result", r'''
+            tbl.add_slot("body-cell-finding", r'''
                 <q-td :props="props">
                     <span class="text-xs text-gray-700 font-mono cursor-pointer hover:underline"
-                          @click="$parent.$emit('resultClick', props.row)">{{ props.row._result_preview || '—' }}</span>
+                          @click="$parent.$emit('findingClick', props.row)">{{ props.row._finding_preview || '—' }}</span>
                 </q-td>''')
 
             tbl.add_slot("body-cell-trace", r'''
@@ -1571,8 +1569,8 @@ def register_pages():
 
             tbl.add_slot("body-cell-changed", r'''
                 <q-td :props="props">
-                    <div class="text-sm text-gray-700">{{ props.row._status_change_display }}</div>
-                    <div class="text-xs text-gray-400">{{ props.row._status_change_rel }}</div>
+                    <div class="text-sm text-gray-700">{{ props.row._state_change_display }}</div>
+                    <div class="text-xs text-gray-400">{{ props.row._state_change_rel }}</div>
                 </q-td>''')
 
             tbl.add_slot("body-cell-periodic_last", r'''
@@ -1587,11 +1585,11 @@ def register_pages():
                     <q-btn flat round dense icon="more_vert" size="sm" class="text-gray-400">
                         <q-menu>
                             <q-list dense>
-                                <q-item clickable v-close-popup @click="$parent.$emit('setNewClick', props.row)">
-                                    <q-item-section>Set to New</q-item-section>
+                                <q-item clickable v-close-popup @click="$parent.$emit('setWaitingClick', props.row)">
+                                    <q-item-section>Set to Waiting</q-item-section>
                                 </q-item>
-                                <q-item clickable v-close-popup @click="$parent.$emit('setIgnoreClick', props.row)">
-                                    <q-item-section>Set to Ignore</q-item-section>
+                                <q-item clickable v-close-popup @click="$parent.$emit('setDismissedClick', props.row)">
+                                    <q-item-section>Dismiss</q-item-section>
                                 </q-item>
                             </q-list>
                         </q-menu>
@@ -1603,40 +1601,40 @@ def register_pages():
                 if row:
                     open_detail(row, focus="prompt")
 
-            def on_result_click(e):
+            def on_finding_click(e):
                 row = e.args[0] if isinstance(e.args, list) else e.args
                 if row:
-                    open_detail(row, focus="result")
+                    open_detail(row, focus="finding")
 
             def on_trace_click(e):
                 row = e.args[0] if isinstance(e.args, list) else e.args
                 if row:
                     open_detail(row, focus="trace")
 
-            def _set_status(row: dict, status: str):
+            def _set_state(row: dict, state: str):
                 try:
-                    blackboard_client.set_status(row["id"], status)
+                    blackboard_client.set_state(row["id"], state)
                 except Exception as e:
                     ui.notify(f"Could not update task_runs.id={row['id']}: {e}", type="negative")
                     return
-                ui.notify(f"task_runs.id={row['id']} set to '{status}'", type="positive")
+                ui.notify(f"task_runs.id={row['id']} set to '{state}'", type="positive")
                 ui.navigate.to("/ui/blackboard")
 
-            def on_set_new_click(e):
+            def on_set_waiting_click(e):
                 row = e.args[0] if isinstance(e.args, list) else e.args
                 if row:
-                    _set_status(row, "new")
+                    _set_state(row, "waiting")
 
-            def on_set_ignore_click(e):
+            def on_set_dismissed_click(e):
                 row = e.args[0] if isinstance(e.args, list) else e.args
                 if row:
-                    _set_status(row, "ignored")
+                    _set_state(row, "dismissed")
 
             tbl.on("promptClick", on_prompt_click)
-            tbl.on("resultClick", on_result_click)
+            tbl.on("findingClick", on_finding_click)
             tbl.on("traceClick", on_trace_click)
-            tbl.on("setNewClick", on_set_new_click)
-            tbl.on("setIgnoreClick", on_set_ignore_click)
+            tbl.on("setWaitingClick", on_set_waiting_click)
+            tbl.on("setDismissedClick", on_set_dismissed_click)
 
         with ui.column().classes("px-8 py-6 w-full gap-4"):
             with ui.row().classes("w-full items-start justify-between gap-6"):
@@ -1649,13 +1647,13 @@ def register_pages():
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
                     ui.icon("search").classes("text-gray-400 shrink-0")
                     ui.input(
-                        placeholder="Search by task type, prompt, or result content...",
+                        placeholder="Search by task type, prompt, or finding content...",
                         on_change=lambda e: (current_search.__setitem__(0, e.value), apply_filters()),
                     ).props("borderless dense").classes("flex-1 text-sm")
                 ui.select(
-                    options=["All Statuses", "new", "dispatching_run", "waiting_for_next_periodic_run", "done", "ignored"],
-                    value="All Statuses",
-                    on_change=lambda e: (current_status.__setitem__(0, e.value), apply_filters()),
+                    options=["All States", "waiting", "dispatching_run", "waiting_for_next_periodic_run", "resolved", "dismissed"],
+                    value="All States",
+                    on_change=lambda e: (current_state.__setitem__(0, e.value), apply_filters()),
                 ).props("outlined dense options-dense").classes("text-sm")
                 ui.select(
                     options=["Newest First", "Task Type A–Z"],
