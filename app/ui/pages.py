@@ -1588,6 +1588,9 @@ def register_pages():
                                 <q-item clickable v-close-popup @click="$parent.$emit('promptClick', props.row)">
                                     <q-item-section>Show prompt</q-item-section>
                                 </q-item>
+                                <q-item clickable v-close-popup @click="$parent.$emit('findingClick', props.row)">
+                                    <q-item-section>Show finding</q-item-section>
+                                </q-item>
                                 <q-item clickable v-close-popup @click="$parent.$emit('setWaitingClick', props.row)">
                                     <q-item-section>Set to Waiting</q-item-section>
                                 </q-item>
