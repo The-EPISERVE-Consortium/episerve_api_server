@@ -127,3 +127,84 @@ def set_state(row_id: int, state: str) -> None:
             conn.commit()
     finally:
         conn.close()
+
+
+# ---------------------------------------------------------------------------
+# routing_rules -- the task_type -> follow-up-prompt map the orchestrator
+# (workflow-prefect__generate-ai-task-from-blackboard) reads to chain a
+# published finding into a new run. Created by that repo's
+# migrations/0001_routing_rules.sql; the `blackboard` DB user has
+# SELECT/INSERT/UPDATE here (no DELETE -- a rule is retired via enabled=0).
+# ---------------------------------------------------------------------------
+
+
+def list_routing_rules() -> list[dict]:
+    """Return every routing rule, ordered by task_type.
+
+    `enabled` is normalised to a bool; `created_at`/`updated_at` to a
+    `YYYY-MM-DD HH:MM` string for direct display.
+    """
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, task_type, prompt_template, enabled, created_at, updated_at "
+                "FROM routing_rules ORDER BY task_type"
+            )
+            rows = list(cur.fetchall())
+    finally:
+        conn.close()
+
+    for r in rows:
+        r["enabled"] = bool(r["enabled"])
+        for key in ("created_at", "updated_at"):
+            if r.get(key) is not None:
+                r[key] = str(r[key])[:16]
+    return rows
+
+
+def upsert_routing_rule(task_type: str, prompt_template: str, enabled: bool = True) -> None:
+    """Create a routing rule, or update the template/enabled of the existing
+    rule with the same `task_type` (the column is UNIQUE).
+
+    Args:
+        task_type: The `task_runs.task_type` value this rule matches.
+        prompt_template: Follow-up prompt with `$id`/`$task_type`/`$prompt`/
+            `$finding` placeholders.
+        enabled: Whether the orchestrator should use it.
+
+    Raises:
+        ValueError: If `task_type` or `prompt_template` is blank.
+    """
+    if not task_type or not task_type.strip():
+        raise ValueError("task_type is required")
+    if not prompt_template or not prompt_template.strip():
+        raise ValueError("prompt_template is required")
+
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO routing_rules (task_type, prompt_template, enabled) "
+                "VALUES (%s, %s, %s) "
+                "ON DUPLICATE KEY UPDATE "
+                "prompt_template=VALUES(prompt_template), enabled=VALUES(enabled)",
+                (task_type.strip(), prompt_template, 1 if enabled else 0),
+            )
+            conn.commit()
+    finally:
+        conn.close()
+
+
+def set_routing_rule_enabled(rule_id: int, enabled: bool) -> None:
+    """Enable or disable one routing rule by id (there is no DELETE grant)."""
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE routing_rules SET enabled=%s WHERE id=%s",
+                (1 if enabled else 0, rule_id),
+            )
+            conn.commit()
+    finally:
+        conn.close()

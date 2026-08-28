@@ -1652,6 +1652,158 @@ def register_pages():
             with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-x-auto"):
                 bb_table()
 
+            # ---- Routing Rules: task_type -> follow-up prompt template ----
+            # Read by workflow-prefect__generate-ai-task-from-blackboard's
+            # orchestrator to chain a published finding into a new run. The
+            # `blackboard` DB user has no DELETE here, so a rule is retired
+            # by toggling `enabled`, never removed.
+            try:
+                rr_rows = blackboard_client.list_routing_rules()
+                rr_load_error = None
+            except Exception as e:
+                rr_rows = []
+                rr_load_error = str(e)
+
+            rr_dialog = ui.dialog()
+            rr_error = [None]
+
+            with rr_dialog, ui.card().classes("w-full max-w-2xl p-6 gap-3"):
+                rr_dialog_title = ui.label("").classes("text-lg font-bold text-gray-900")
+                ui.label(
+                    "Maps the task_type of a published finding to the prompt the orchestrator "
+                    "triggers next. Placeholders: $finding, $prompt, $id, $task_type "
+                    "($$ for a literal $). No other logic -- the whole finding is substituted as-is."
+                ).classes("text-xs text-gray-500")
+                rr_task_type = ui.input(
+                    label="Task Type",
+                    placeholder="e.g. code-analysis-report",
+                ).classes("w-full").props("outlined dense")
+                rr_template = ui.textarea(
+                    label="Prompt template",
+                    placeholder="A report (task_runs.id=$id) found:\n\n$finding\n\nClone the repo, verify each finding, fix real bugs, open a PR.",
+                ).classes("w-full").props("outlined dense autogrow")
+                rr_enabled = ui.switch("Enabled", value=True)
+                rr_error[0] = ui.label("").classes("text-xs text-red-600")
+
+                def submit_rr():
+                    tt = (rr_task_type.value or "").strip()
+                    tmpl = (rr_template.value or "").strip()
+                    if not tt or not tmpl:
+                        rr_error[0].set_text("Task Type and Prompt template are both required.")
+                        return
+                    try:
+                        blackboard_client.upsert_routing_rule(tt, tmpl, bool(rr_enabled.value))
+                    except Exception as e:
+                        rr_error[0].set_text(f"Could not save: {e}")
+                        return
+                    ui.notify(f"Saved routing rule '{tt}'", type="positive")
+                    rr_dialog.close()
+                    ui.navigate.to("/ui/blackboard")
+
+                with ui.row().classes("w-full justify-end gap-2 mt-2"):
+                    ui.button("Cancel", on_click=rr_dialog.close).props("flat")
+                    ui.button("Save", on_click=submit_rr).props("unelevated color=primary")
+
+            def open_rr_dialog(rule: dict | None):
+                rr_error[0].set_text("")
+                if rule:
+                    rr_dialog_title.set_text(f"Edit routing rule · {rule['task_type']}")
+                    rr_task_type.set_value(rule["task_type"])
+                    rr_task_type.props(add="readonly")
+                    rr_template.set_value(rule["prompt_template"])
+                    rr_enabled.set_value(bool(rule["enabled"]))
+                else:
+                    rr_dialog_title.set_text("Add routing rule")
+                    rr_task_type.set_value("")
+                    rr_task_type.props(remove="readonly")
+                    rr_template.set_value("")
+                    rr_enabled.set_value(True)
+                rr_dialog.open()
+
+            ui.separator().classes("mt-4")
+            with ui.row().classes("w-full items-start justify-between gap-6"):
+                with ui.column().classes("gap-0"):
+                    ui.label("Routing Rules").classes("text-2xl font-bold text-gray-900")
+                    ui.label(
+                        "task_type → the follow-up prompt the orchestrator triggers when a "
+                        "someone_take_over row with that task_type is published."
+                    ).classes("text-sm text-gray-500 mt-1")
+                ui.button("Add routing rule", icon="add", on_click=lambda: open_rr_dialog(None)).props("unelevated color=primary no-caps")
+
+            if rr_load_error:
+                if "routing_rules" in rr_load_error and ("doesn't exist" in rr_load_error or "does not exist" in rr_load_error or "1146" in rr_load_error):
+                    _error_label("The routing_rules table doesn't exist yet — run "
+                                 "migrations/0001_routing_rules.sql on the blackboard database "
+                                 "as the MariaDB root user.")
+                else:
+                    _error_label(f"Could not load routing rules: {rr_load_error}")
+            elif not rr_rows:
+                ui.label("No routing rules yet. Add one to chain a finding into a follow-up run.").classes("text-sm text-gray-400 py-6 text-center w-full")
+            else:
+                with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-x-auto"):
+                    rr_tbl = ui.table(
+                        columns=[
+                            {"name": "actions",         "label": "",                "field": "id",              "align": "right"},
+                            {"name": "task_type",       "label": "Task Type",       "field": "task_type",       "align": "left"},
+                            {"name": "enabled",         "label": "Enabled",         "field": "enabled",         "align": "left"},
+                            {"name": "prompt_template", "label": "Prompt Template", "field": "prompt_template", "align": "left"},
+                            {"name": "updated_at",      "label": "Updated",         "field": "updated_at",      "align": "left"},
+                        ],
+                        rows=list(rr_rows),
+                        row_key="id",
+                        pagination={"rowsPerPage": 10},
+                    ).classes("w-full")
+
+                    rr_tbl.add_slot("body-cell-enabled", r'''
+                        <q-td :props="props">
+                            <span class="text-xs px-2 py-0.5 rounded-full font-medium"
+                                  :class="props.row.enabled ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'">
+                                {{ props.row.enabled ? 'enabled' : 'disabled' }}
+                            </span>
+                        </q-td>''')
+
+                    rr_tbl.add_slot("body-cell-prompt_template", r'''
+                        <q-td :props="props">
+                            <div class="max-w-xl whitespace-pre-wrap font-mono text-xs text-gray-600"
+                                 style="display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;">{{ props.row.prompt_template }}</div>
+                        </q-td>''')
+
+                    rr_tbl.add_slot("body-cell-actions", r'''
+                        <q-td :props="props">
+                            <q-btn flat round dense icon="more_vert" size="sm" class="text-gray-400">
+                                <q-menu>
+                                    <q-list dense>
+                                        <q-item clickable v-close-popup @click="$parent.$emit('rrEdit', props.row)">
+                                            <q-item-section>Edit</q-item-section>
+                                        </q-item>
+                                        <q-item clickable v-close-popup @click="$parent.$emit('rrToggle', props.row)">
+                                            <q-item-section>{{ props.row.enabled ? 'Disable' : 'Enable' }}</q-item-section>
+                                        </q-item>
+                                    </q-list>
+                                </q-menu>
+                            </q-btn>
+                        </q-td>''')
+
+                    def on_rr_edit(e):
+                        row = e.args[0] if isinstance(e.args, list) else e.args
+                        if row:
+                            open_rr_dialog(row)
+
+                    def on_rr_toggle(e):
+                        row = e.args[0] if isinstance(e.args, list) else e.args
+                        if not row:
+                            return
+                        try:
+                            blackboard_client.set_routing_rule_enabled(row["id"], not row["enabled"])
+                        except Exception as ex:
+                            ui.notify(f"Could not update rule: {ex}", type="negative")
+                            return
+                        ui.notify("Routing rule updated", type="positive")
+                        ui.navigate.to("/ui/blackboard")
+
+                    rr_tbl.on("rrEdit", on_rr_edit)
+                    rr_tbl.on("rrToggle", on_rr_toggle)
+
     @_napp.get("/ui/blackboard/trace/{row_id}")
     def blackboard_trace(row_id: int):
         # Plain HTTP GET, not a @ui.page -- this is what the trace iframe's
