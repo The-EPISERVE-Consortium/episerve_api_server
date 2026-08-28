@@ -32,7 +32,7 @@ def list_task_runs() -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, task_type, post_type, prompt, periodic_interval_minutes, "
+                "SELECT id, topic, post_type, prompt, periodic_interval_minutes, "
                 "state, finding, (trace IS NOT NULL) AS has_trace, created_at, "
                 "periodic_last_triggered_at, last_state_change "
                 "FROM task_runs ORDER BY created_at DESC"
@@ -57,13 +57,13 @@ def get_trace_html(row_id: int) -> str | None:
 def insert_initial_task(
     prompt: str,
     periodic_interval_minutes: int | None = None,
-    task_type: str | None = None,
+    topic: str | None = None,
 ) -> int:
     """Insert a new post_type='run_me' row -- a task not chained from any finding.
 
     Everything else is left at its default: state starts 'waiting', so the
     orchestrator picks it up on its next poll; finding/trace stay NULL since
-    they're only meaningful for post_type='someone_take_over' rows. task_type
+    they're only meaningful for post_type='someone_take_over' rows. topic
     is optional here -- unlike a post_type='someone_take_over' row, it's
     never matched against routing.py (the row already carries its own
     `prompt`), it's purely a free-text label for a human reading the table.
@@ -72,7 +72,7 @@ def insert_initial_task(
         prompt: The literal prompt to trigger.
         periodic_interval_minutes: If set, the row recurs every this many
             minutes; if None, it fires once.
-        task_type: Optional free-text label.
+        topic: Optional free-text label.
 
     Returns:
         The new row's id.
@@ -87,9 +87,9 @@ def insert_initial_task(
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO task_runs (post_type, prompt, periodic_interval_minutes, task_type) "
+                "INSERT INTO task_runs (post_type, prompt, periodic_interval_minutes, topic) "
                 "VALUES ('run_me', %s, %s, %s)",
-                (prompt, periodic_interval_minutes, task_type or None),
+                (prompt, periodic_interval_minutes, topic or None),
             )
             conn.commit()
             return cur.lastrowid
@@ -130,7 +130,7 @@ def set_state(row_id: int, state: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# routing_rules -- the task_type -> follow-up-prompt map the orchestrator
+# routing_rules -- the topic -> follow-up-prompt map the orchestrator
 # (workflow-prefect__generate-ai-task-from-blackboard) reads to chain a
 # published finding into a new run. Created by that repo's
 # migrations/0001_routing_rules.sql; the `blackboard` DB user has
@@ -139,7 +139,7 @@ def set_state(row_id: int, state: str) -> None:
 
 
 def list_routing_rules() -> list[dict]:
-    """Return every routing rule, ordered by task_type.
+    """Return every routing rule, ordered by topic.
 
     `enabled` is normalised to a bool; `created_at`/`updated_at` to a
     `YYYY-MM-DD HH:MM` string for direct display.
@@ -148,8 +148,8 @@ def list_routing_rules() -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, task_type, prompt_template, enabled, created_at, updated_at "
-                "FROM routing_rules ORDER BY task_type"
+                "SELECT id, topic, prompt_template, enabled, created_at, updated_at "
+                "FROM routing_rules ORDER BY topic"
             )
             rows = list(cur.fetchall())
     finally:
@@ -163,21 +163,21 @@ def list_routing_rules() -> list[dict]:
     return rows
 
 
-def upsert_routing_rule(task_type: str, prompt_template: str, enabled: bool = True) -> None:
+def upsert_routing_rule(topic: str, prompt_template: str, enabled: bool = True) -> None:
     """Create a routing rule, or update the template/enabled of the existing
-    rule with the same `task_type` (the column is UNIQUE).
+    rule with the same `topic` (the column is UNIQUE).
 
     Args:
-        task_type: The `task_runs.task_type` value this rule matches.
-        prompt_template: Follow-up prompt with `$id`/`$task_type`/`$prompt`/
+        topic: The `task_runs.topic` value this rule matches.
+        prompt_template: Follow-up prompt with `$id`/`$topic`/`$prompt`/
             `$finding` placeholders.
         enabled: Whether the orchestrator should use it.
 
     Raises:
-        ValueError: If `task_type` or `prompt_template` is blank.
+        ValueError: If `topic` or `prompt_template` is blank.
     """
-    if not task_type or not task_type.strip():
-        raise ValueError("task_type is required")
+    if not topic or not topic.strip():
+        raise ValueError("topic is required")
     if not prompt_template or not prompt_template.strip():
         raise ValueError("prompt_template is required")
 
@@ -185,11 +185,11 @@ def upsert_routing_rule(task_type: str, prompt_template: str, enabled: bool = Tr
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO routing_rules (task_type, prompt_template, enabled) "
+                "INSERT INTO routing_rules (topic, prompt_template, enabled) "
                 "VALUES (%s, %s, %s) "
                 "ON DUPLICATE KEY UPDATE "
                 "prompt_template=VALUES(prompt_template), enabled=VALUES(enabled)",
-                (task_type.strip(), prompt_template, 1 if enabled else 0),
+                (topic.strip(), prompt_template, 1 if enabled else 0),
             )
             conn.commit()
     finally:

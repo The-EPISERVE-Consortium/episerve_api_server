@@ -1325,7 +1325,7 @@ def register_pages():
             rs = [
                 r for r in all_rows
                 if (not s
-                    or s in (r.get("task_type") or "").lower()
+                    or s in (r.get("topic") or "").lower()
                     or s in (r.get("finding") or "").lower()
                     or s in (r.get("prompt") or "").lower())
                 and (st == "All States" or r.get("state") == st)
@@ -1333,7 +1333,7 @@ def register_pages():
             if current_sort[0] == "Newest First":
                 rs.sort(key=lambda r: str(r.get("created_at", "")), reverse=True)
             else:
-                rs.sort(key=lambda r: (r.get("task_type") or "").lower())
+                rs.sort(key=lambda r: (r.get("topic") or "").lower())
             filtered_rows.clear()
             filtered_rows.extend(rs)
             count_lbl.refresh()
@@ -1417,7 +1417,7 @@ def register_pages():
             if focus == "trace" and not row.get("_has_trace"):
                 return
 
-            title_type = row.get("task_type") or row.get("post_type") or ""
+            title_type = row.get("topic") or row.get("post_type") or ""
             detail_title[0].set_text(f"#{row.get('id')} · {title_type}")
 
             detail_prompt_section[0].set_visibility(focus == "prompt")
@@ -1454,8 +1454,8 @@ def register_pages():
                 "Inserts a post_type='run_me' row -- a task that isn't a follow-up to "
                 "any finding. The orchestrator picks it up on its next poll."
             ).classes("text-xs text-gray-500")
-            add_task_type = ui.input(
-                label="Task Type (optional)",
+            add_topic = ui.input(
+                label="Topic (optional)",
                 placeholder="e.g. code-analysis-report",
             ).classes("w-full").props("outlined dense")
             add_task_prompt = ui.textarea(
@@ -1482,9 +1482,9 @@ def register_pages():
                     add_task_error[0].set_text("Prompt is required.")
                     return
                 interval = int(add_task_interval[0].value) if add_task_schedule.value == "periodic" else None
-                task_type = (add_task_type.value or "").strip() or None
+                topic = (add_topic.value or "").strip() or None
                 try:
-                    new_id = blackboard_client.insert_initial_task(prompt_text, interval, task_type)
+                    new_id = blackboard_client.insert_initial_task(prompt_text, interval, topic)
                 except Exception as e:
                     add_task_error[0].set_text(f"Could not add task: {e}")
                     return
@@ -1508,7 +1508,7 @@ def register_pages():
                     {"name": "id",          "label": "ID",                  "field": "id",                         "align": "left"},
                     {"name": "post_type",   "label": "Post Type",           "field": "post_type",                  "align": "left", "sortable": True},
                     {"name": "state",       "label": "State",               "field": "state",                      "align": "left"},
-                    {"name": "task_type",   "label": "Task Type",           "field": "task_type",                  "align": "left", "sortable": True},
+                    {"name": "topic",   "label": "Topic",               "field": "topic",                  "align": "left", "sortable": True},
                     {"name": "schedule",    "label": "Schedule",            "field": "_schedule_display",          "align": "left"},
                     {"name": "trace",       "label": "Trace",               "field": "_has_trace",                 "align": "left"},
                     {"name": "created",     "label": "Created",             "field": "created_at",                 "align": "left", "sortable": True},
@@ -1633,7 +1633,7 @@ def register_pages():
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
                     ui.icon("search").classes("text-gray-400 shrink-0")
                     ui.input(
-                        placeholder="Search by task type, prompt, or finding content...",
+                        placeholder="Search by topic, prompt, or finding content...",
                         on_change=lambda e: (current_search.__setitem__(0, e.value), apply_filters()),
                     ).props("borderless dense").classes("flex-1 text-sm")
                 ui.select(
@@ -1642,7 +1642,7 @@ def register_pages():
                     on_change=lambda e: (current_state.__setitem__(0, e.value), apply_filters()),
                 ).props("outlined dense options-dense").classes("text-sm")
                 ui.select(
-                    options=["Newest First", "Task Type A–Z"],
+                    options=["Newest First", "Topic A–Z"],
                     value="Newest First",
                     on_change=lambda e: (current_sort.__setitem__(0, e.value), apply_filters()),
                 ).props("outlined dense options-dense").classes("text-sm")
@@ -1652,7 +1652,7 @@ def register_pages():
             with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-x-auto"):
                 bb_table()
 
-            # ---- Routing Rules: task_type -> follow-up prompt template ----
+            # ---- Routing Rules: topic -> follow-up prompt template ----
             # Read by workflow-prefect__generate-ai-task-from-blackboard's
             # orchestrator to chain a published finding into a new run. The
             # `blackboard` DB user has no DELETE here, so a rule is retired
@@ -1670,12 +1670,12 @@ def register_pages():
             with rr_dialog, ui.card().classes("w-full max-w-2xl p-6 gap-3"):
                 rr_dialog_title = ui.label("").classes("text-lg font-bold text-gray-900")
                 ui.label(
-                    "Maps the task_type of a published finding to the prompt the orchestrator "
-                    "triggers next. Placeholders: $finding, $prompt, $id, $task_type "
+                    "Maps the topic of a published finding to the prompt the orchestrator "
+                    "triggers next. Placeholders: $finding, $prompt, $id, $topic "
                     "($$ for a literal $). No other logic -- the whole finding is substituted as-is."
                 ).classes("text-xs text-gray-500")
-                rr_task_type = ui.input(
-                    label="Task Type",
+                rr_topic = ui.input(
+                    label="Topic",
                     placeholder="e.g. code-analysis-report",
                 ).classes("w-full").props("outlined dense")
                 rr_template = ui.textarea(
@@ -1686,10 +1686,10 @@ def register_pages():
                 rr_error[0] = ui.label("").classes("text-xs text-red-600")
 
                 def submit_rr():
-                    tt = (rr_task_type.value or "").strip()
+                    tt = (rr_topic.value or "").strip()
                     tmpl = (rr_template.value or "").strip()
                     if not tt or not tmpl:
-                        rr_error[0].set_text("Task Type and Prompt template are both required.")
+                        rr_error[0].set_text("Topic and Prompt template are both required.")
                         return
                     try:
                         blackboard_client.upsert_routing_rule(tt, tmpl, bool(rr_enabled.value))
@@ -1707,15 +1707,15 @@ def register_pages():
             def open_rr_dialog(rule: dict | None):
                 rr_error[0].set_text("")
                 if rule:
-                    rr_dialog_title.set_text(f"Edit routing rule · {rule['task_type']}")
-                    rr_task_type.set_value(rule["task_type"])
-                    rr_task_type.props(add="readonly")
+                    rr_dialog_title.set_text(f"Edit routing rule · {rule['topic']}")
+                    rr_topic.set_value(rule["topic"])
+                    rr_topic.props(add="readonly")
                     rr_template.set_value(rule["prompt_template"])
                     rr_enabled.set_value(bool(rule["enabled"]))
                 else:
                     rr_dialog_title.set_text("Add routing rule")
-                    rr_task_type.set_value("")
-                    rr_task_type.props(remove="readonly")
+                    rr_topic.set_value("")
+                    rr_topic.props(remove="readonly")
                     rr_template.set_value("")
                     rr_enabled.set_value(True)
                 rr_dialog.open()
@@ -1725,8 +1725,8 @@ def register_pages():
                 with ui.column().classes("gap-0"):
                     ui.label("Routing Rules").classes("text-2xl font-bold text-gray-900")
                     ui.label(
-                        "task_type → the follow-up prompt the orchestrator triggers when a "
-                        "someone_take_over row with that task_type is published."
+                        "topic → the follow-up prompt the orchestrator triggers when a "
+                        "someone_take_over row with that topic is published."
                     ).classes("text-sm text-gray-500 mt-1")
                 ui.button("Add routing rule", icon="add", on_click=lambda: open_rr_dialog(None)).props("unelevated color=primary no-caps")
 
@@ -1744,7 +1744,7 @@ def register_pages():
                     rr_tbl = ui.table(
                         columns=[
                             {"name": "actions",         "label": "",                "field": "id",              "align": "right"},
-                            {"name": "task_type",       "label": "Task Type",       "field": "task_type",       "align": "left"},
+                            {"name": "topic",       "label": "Topic",           "field": "topic",       "align": "left"},
                             {"name": "enabled",         "label": "Enabled",         "field": "enabled",         "align": "left"},
                             {"name": "prompt_template", "label": "Prompt Template", "field": "prompt_template", "align": "left"},
                             {"name": "updated_at",      "label": "Updated",         "field": "updated_at",      "align": "left"},
