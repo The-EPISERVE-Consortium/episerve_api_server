@@ -78,7 +78,6 @@ All configuration via environment variables. In K8s these come from sealed secre
 
 ## Known issues
 
-- **`POST /model-runs`**: previously broken because the router passed `input_path=` to `prefect_client.trigger_model_run()` while the signature expects `input_data_files: list` (a leftover from when the model runner moved from a single `input_path` string to a list of `[uri, filename]` pairs). Fixed in `app/routers/model_runs.py` — double-check if the behavior seems wrong.
 - **Authentication**: no auth is implemented yet. The server relies on the cluster network boundary.
 - **Tests**: only a `/health` smoke test exists.
 - **CKAN plugins**: `CKAN__PLUGINS` hot-patches to `wsgi.py` persist across container restarts within the same pod — a `kubectl rollout restart` is needed to clear them.
