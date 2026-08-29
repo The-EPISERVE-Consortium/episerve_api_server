@@ -1272,8 +1272,15 @@ def register_pages():
                         pass
                 if d is None:
                     d = datetime.strptime(s[:10], "%Y-%m-%d")
-                days = (datetime.now() - d).days
-                rel = "Today" if days == 0 else "1 day ago" if days == 1 else f"{days} days ago"
+                # Calendar-day difference, not elapsed 24h periods -- otherwise
+                # anything <24h old (e.g. yesterday evening) shows as "Today".
+                days = (datetime.now().date() - d.date()).days
+                if days <= 0:
+                    rel = "Today"
+                elif days == 1:
+                    rel = "Yesterday"
+                else:
+                    rel = f"{days} days ago"
                 return d.strftime("%b %-d, %Y  %H:%M"), rel
             except Exception:
                 return str(dt), ""
