@@ -22,12 +22,11 @@ class Settings:
     prefect_model_runner_deployment: str = (
         os.environ.get("PREFECT_MODEL_RUNNER_DEPLOYMENT") or "model-pipeline/model-runner"
     )
-    # UI base for linking to a flow run (e.g. <base>/runs/flow-run/<id>).
-    # Defaults to PREFECT_API_URL minus its trailing "/api"; override with
-    # PREFECT_UI_URL if the UI lives somewhere else.
+    # Public UI base for linking to a flow run: <base>/runs/flow-run/<id>.
+    # NOT derived from PREFECT_API_URL -- in-cluster that's an internal
+    # service address, and this deployment serves its UI under "/v2".
     prefect_ui_url: str = (
-        os.environ.get("PREFECT_UI_URL")
-        or os.environ.get("PREFECT_API_URL", "").removesuffix("/api").removesuffix("/api/")
+        os.environ.get("PREFECT_UI_URL") or "https://prefect.episerve.zib.de/v2"
     ).rstrip("/")
 
     # DOIP server
