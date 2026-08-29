@@ -1289,8 +1289,10 @@ def register_pages():
             s = (state or "").lower()
             if s == "waiting":                       return "bg-blue-100 text-blue-700"
             if s == "dispatching_run":               return "bg-orange-100 text-orange-700"
+            if s == "running":                       return "bg-amber-100 text-amber-700"
             if s == "waiting_for_next_periodic_run": return "bg-purple-100 text-purple-700"
             if s == "resolved":                      return "bg-green-100 text-green-700"
+            if s == "failed":                        return "bg-red-100 text-red-700"
             return "bg-gray-100 text-gray-600"
 
         try:
@@ -1663,7 +1665,8 @@ def register_pages():
                         on_change=lambda e: (current_search.__setitem__(0, e.value), apply_filters()),
                     ).props("borderless dense").classes("flex-1 text-sm")
                 ui.select(
-                    options=["All States", "waiting", "dispatching_run", "waiting_for_next_periodic_run", "resolved", "dismissed"],
+                    options=["All States", "waiting", "dispatching_run", "running",
+                             "waiting_for_next_periodic_run", "resolved", "failed", "dismissed"],
                     value="All States",
                     on_change=lambda e: (current_state.__setitem__(0, e.value), apply_filters()),
                 ).props("outlined dense options-dense").classes("text-sm")
