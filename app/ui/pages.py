@@ -1732,9 +1732,9 @@ def register_pages():
 
             if rr_load_error:
                 if "routing_rules" in rr_load_error and ("doesn't exist" in rr_load_error or "does not exist" in rr_load_error or "1146" in rr_load_error):
-                    _error_label("The routing_rules table doesn't exist yet — run "
-                                 "migrations/0001_routing_rules.sql on the blackboard database "
-                                 "as the MariaDB root user.")
+                    _error_label("The routing_rules table doesn't exist yet — create it "
+                                 "on the blackboard database as the MariaDB root user "
+                                 "(id, topic UNIQUE, prompt_template, enabled, created_at, updated_at).")
                 else:
                     _error_label(f"Could not load routing rules: {rr_load_error}")
             elif not rr_rows:

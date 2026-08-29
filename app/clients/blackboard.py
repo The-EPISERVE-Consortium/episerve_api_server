@@ -132,8 +132,8 @@ def set_state(row_id: int, state: str) -> None:
 # ---------------------------------------------------------------------------
 # routing_rules -- the topic -> follow-up-prompt map the orchestrator
 # (workflow-prefect__generate-ai-task-from-blackboard) reads to chain a
-# published finding into a new run. Created by that repo's
-# migrations/0001_routing_rules.sql; the `blackboard` DB user has
+# published finding into a new run. Hand-provisioned on the agent_blackboard
+# database (no schema-as-code); the `blackboard` DB user has
 # SELECT/INSERT/UPDATE here (no DELETE -- a rule is retired via enabled=0).
 # ---------------------------------------------------------------------------
 
