@@ -1305,6 +1305,11 @@ def register_pages():
                 schedule_display = "once"
             else:
                 schedule_display = "—"
+            fid = r.get("triggered_flow_run_id")
+            prefect_url = (
+                f"{settings.prefect_ui_url}/runs/flow-run/{fid}"
+                if fid and settings.prefect_ui_url else ""
+            )
             all_rows.append({**r,
                 "_date_display": date_display, "_rel_time": rel_time,
                 "_state_change_display": state_change_display, "_state_change_rel": state_change_rel,
@@ -1312,6 +1317,7 @@ def register_pages():
                 "_schedule_display": schedule_display,
                 "_state_cls": _state_cls(r.get("state", "")),
                 "_has_trace": bool(r.get("has_trace")),
+                "_prefect_url": prefect_url,
             })
 
         filtered_rows: list = list(all_rows)
@@ -1364,9 +1370,6 @@ def register_pages():
         detail_prompt_section = [None]
         detail_prompt_label = [None]
         detail_finding_section = [None]
-        detail_prefect_section = [None]
-        detail_prefect_link = [None]
-        detail_prefect_empty = [None]
 
         with detail_dialog, ui.card().classes("w-full max-w-5xl p-6 gap-3"):
             detail_title[0] = ui.label("").classes("text-lg font-bold text-gray-900")
@@ -1406,19 +1409,6 @@ def register_pages():
                 detail_trace_iframe[0] = ui.element("iframe").props('sandbox="allow-scripts"').classes(
                     "w-full border border-gray-200 rounded-lg"
                 ).style("height: 70vh;")
-
-            detail_prefect_section[0] = ui.column().classes("w-full gap-1")
-            with detail_prefect_section[0]:
-                ui.label("Prefect run").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mt-2")
-                # href/text set per-row in open_detail. target=_blank so it
-                # opens the Prefect UI in a new tab.
-                detail_prefect_link[0] = ui.link("", "#").props("target=_blank").classes(
-                    "text-sm text-blue-700 underline break-all"
-                )
-                detail_prefect_empty[0] = ui.label(
-                    "No Prefect run recorded for this row."
-                ).classes("text-sm text-gray-400")
-
             ui.button("Close", on_click=detail_dialog.close).classes("mt-2 self-end").props("flat")
 
         def open_detail(row: dict, focus: str = "finding"):
@@ -1426,8 +1416,8 @@ def register_pages():
 
             Args:
                 row: The clicked row.
-                focus: 'prompt', 'finding', 'trace', or 'prefect' -- shows only
-                    that section, hides the others. Does nothing for
+                focus: 'prompt', 'finding', or 'trace' -- shows only that
+                    section, hides the other two. Does nothing for
                     focus='trace' if the row has no trace.
             """
             if focus == "trace" and not row.get("_has_trace"):
@@ -1439,7 +1429,6 @@ def register_pages():
             detail_prompt_section[0].set_visibility(focus == "prompt")
             detail_finding_section[0].set_visibility(focus == "finding")
             detail_trace_row[0].set_visibility(focus == "trace")
-            detail_prefect_section[0].set_visibility(focus == "prefect")
 
             if focus == "prompt":
                 detail_prompt_label[0].set_text(row.get("prompt") or "(empty)")
@@ -1450,24 +1439,12 @@ def register_pages():
                 if detail_finding_md[0].visible:
                     detail_finding_md[0].set_content(current_finding_text[0])
                 detail_trace_iframe[0].props('src="about:blank"')
-            elif focus == "trace":
+            else:
                 # A normal iframe `src` navigation -- the browser fetches this
                 # over plain HTTP, independent of NiceGUI's websocket RPC
                 # channel, so a multi-megabyte trace.html doesn't hit the
                 # websocket's per-message size limit (see get_trace_html).
                 detail_trace_iframe[0].props(f'src="/ui/blackboard/trace/{row.get("id")}"')
-            else:  # 'prefect'
-                detail_trace_iframe[0].props('src="about:blank"')
-                fid = row.get("triggered_flow_run_id")
-                if fid and settings.prefect_ui_url:
-                    url = f"{settings.prefect_ui_url}/runs/flow-run/{fid}"
-                    detail_prefect_link[0].props(f'href="{url}"')
-                    detail_prefect_link[0].set_text(f"Open flow run {fid} in Prefect ↗")
-                    detail_prefect_link[0].set_visibility(True)
-                    detail_prefect_empty[0].set_visibility(False)
-                else:
-                    detail_prefect_link[0].set_visibility(False)
-                    detail_prefect_empty[0].set_visibility(True)
 
             detail_dialog.open()
 
@@ -1600,7 +1577,10 @@ def register_pages():
                                 <q-item clickable v-close-popup @click="$parent.$emit('findingClick', props.row)">
                                     <q-item-section>Show finding</q-item-section>
                                 </q-item>
-                                <q-item clickable v-close-popup @click="$parent.$emit('prefectClick', props.row)">
+                                <q-item clickable v-close-popup
+                                        :href="props.row._prefect_url || undefined"
+                                        :target="props.row._prefect_url ? '_blank' : undefined"
+                                        @click="!props.row._prefect_url && $parent.$emit('prefectClick', props.row)">
                                     <q-item-section>Open Prefect run</q-item-section>
                                 </q-item>
                                 <q-item clickable v-close-popup @click="$parent.$emit('setWaitingClick', props.row)">
@@ -1630,9 +1610,10 @@ def register_pages():
                     open_detail(row, focus="trace")
 
             def on_prefect_click(e):
-                row = e.args[0] if isinstance(e.args, list) else e.args
-                if row:
-                    open_detail(row, focus="prefect")
+                # Only fires for rows with no triggered run -- rows that have
+                # one open the Prefect UI directly via the menu item's own
+                # href (see the body-cell-actions slot).
+                ui.notify("No Prefect run recorded for this row yet.", type="info")
 
             def _set_state(row: dict, state: str):
                 try:
