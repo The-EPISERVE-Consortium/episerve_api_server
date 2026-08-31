@@ -1699,7 +1699,7 @@ def register_pages():
                 bb_table()
 
             # ---- Routing Rules: topic -> follow-up prompt template ----
-            # Read by workflow-prefect__generate-ai-task-from-blackboard's
+            # Read by workflow-prefect__ai-blackboard-orchestrator's
             # orchestrator to chain a published finding into a new run. The
             # `blackboard` DB user has no DELETE here, so a rule is retired
             # by toggling `enabled`, never removed.
