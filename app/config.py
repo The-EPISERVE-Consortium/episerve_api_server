@@ -22,6 +22,10 @@ class Settings:
     prefect_model_runner_deployment: str = (
         os.environ.get("PREFECT_MODEL_RUNNER_DEPLOYMENT") or "model-pipeline/model-runner"
     )
+    prefect_orchestrator_deployment: str = (
+        os.environ.get("PREFECT_ORCHESTRATOR_DEPLOYMENT")
+        or "blackboard-orchestrator/blackboard-orchestrator"
+    )
     # Public UI base for linking to a flow run: <base>/runs/flow-run/<id>.
     # NOT derived from PREFECT_API_URL -- in-cluster that's an internal
     # service address, and this deployment serves its UI under "/v2".

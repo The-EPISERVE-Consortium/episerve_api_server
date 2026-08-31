@@ -45,3 +45,21 @@ def trigger_model_run(
         "prefect_flow_run_id": data["id"],
         "status": data.get("state", {}).get("type", "SCHEDULED"),
     }
+
+
+def trigger_orchestrator_run() -> dict:
+    """Manually trigger an out-of-cycle run of the blackboard orchestrator.
+
+    Same deployment the hourly cron schedule triggers -- takes no
+    parameters, so this just runs pass 1 (reconcile) + pass 2 (dispatch)
+    immediately instead of waiting for the next poll.
+    """
+    deployment_id = _deployment_id(settings.prefect_orchestrator_deployment)
+    url = f"{settings.prefect_api_url}/deployments/{deployment_id}/create_flow_run"
+    response = httpx.post(url, headers=_headers(), content=json.dumps({}))
+    response.raise_for_status()
+    data = response.json()
+    return {
+        "prefect_flow_run_id": data["id"],
+        "status": data.get("state", {}).get("type", "SCHEDULED"),
+    }

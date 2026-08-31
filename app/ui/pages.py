@@ -1655,7 +1655,24 @@ def register_pages():
                 with ui.column().classes("gap-0"):
                     ui.label("AI Blackboard").classes("text-3xl font-bold text-gray-900")
                     ui.label("Seeded/recurring tasks and results published by one-shot agent runs, and the follow-up runs triggered from them.").classes("text-sm text-gray-500 mt-1")
-                ui.button("Add AI task to Blackboard", icon="add", on_click=add_task_dialog.open).props("unelevated color=primary no-caps")
+                with ui.row().classes("items-center gap-2"):
+                    def run_orchestrator_now():
+                        from app.clients import prefect as prefect_client
+                        try:
+                            result = prefect_client.trigger_orchestrator_run()
+                        except Exception as e:
+                            ui.notify(f"Could not trigger orchestrator run: {e}", type="negative")
+                            return
+                        ui.notify(f"Orchestrator run triggered (flow run {result['prefect_flow_run_id']})", type="positive")
+
+                    ui.button(
+                        "Run Orchestrator",
+                        icon="bolt",
+                        on_click=run_orchestrator_now,
+                    ).props(
+                        f"unelevated color=primary no-caps {'disabled' if not settings.prefect_api_url else ''}"
+                    ).tooltip("Trigger an out-of-cycle blackboard-orchestrator run instead of waiting for the hourly poll.")
+                    ui.button("Add AI task to Blackboard", icon="add", on_click=add_task_dialog.open).props("unelevated color=primary no-caps")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
