@@ -13,7 +13,6 @@ All GET endpoints read from CKAN. `POST /model-runs` triggers a Prefect flow run
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Health check → `{"status": "ok"}` |
-| `GET` | `/datasets_raw` | List raw datasets from CKAN (`type-raw-data` group) |
 | `GET` | `/datasets` | List processed FDO datasets from CKAN (`type-raw-data` group) |
 | `GET` | `/models` | List forecast models from CKAN (`type-model` group) |
 | `POST` | `/model-runs` | Trigger a model run via Prefect (returns `202`) |
@@ -73,7 +72,7 @@ All configuration via environment variables. In K8s these come from sealed secre
 
 | Endpoint | Backend |
 |---|---|
-| `GET /datasets_raw`, `GET /datasets`, `GET /models`, `GET /model-runs*` | CKAN (`ckan.ckan.svc.cluster.local` in K8s) |
+| `GET /datasets`, `GET /models`, `GET /model-runs*` | CKAN (`ckan.ckan.svc.cluster.local` in K8s) |
 | `POST /model-runs` | Prefect (`prefect-server.default.svc.cluster.local:4200` in K8s) |
 
 ## Known issues

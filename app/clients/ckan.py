@@ -75,28 +75,6 @@ def list_processed_datasets() -> list[dict]:
     return datasets
 
 
-def list_raw_datasets() -> list[dict]:
-    """Return raw datasets from CKAN (type-raw-data group), shaped for the raw table."""
-    result = _get("package_search", {"fq": "groups:type-raw-data", "rows": 1000})
-    datasets = []
-    for pkg in result.get("results", []):
-        extras = {e["key"]: e["value"] for e in pkg.get("extras", [])}
-        parquet = next(
-            (r for r in pkg.get("resources", []) if r.get("format", "").upper() == "PARQUET"),
-            None,
-        )
-        datasets.append({
-            "path": pkg.get("title", ""),
-            "size_bytes": (
-                int(parquet["size"])
-                if parquet and str(parquet.get("size") or "").isdigit()
-                else None
-            ),
-            "last_modified": extras.get("modified", ""),
-        })
-    return datasets
-
-
 def list_model_runs() -> list[dict]:
     """Return model runs from CKAN (type-model-run group)."""
     result = _get("package_search", {"fq": "groups:type-model-run", "rows": 1000})

@@ -2,12 +2,6 @@ from pydantic import BaseModel
 from typing import Any
 
 
-class RawDataset(BaseModel):
-    path: str
-    last_modified: str = ""
-    size_bytes: int | None = None
-
-
 class ProcessedDataset(BaseModel):
     qid: str
     name: str
