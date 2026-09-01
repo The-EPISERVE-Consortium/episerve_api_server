@@ -4,8 +4,8 @@ from typing import Any
 
 class RawDataset(BaseModel):
     path: str
-    last_modified: str
-    size_bytes: int
+    last_modified: str = ""
+    size_bytes: int | None = None
 
 
 class ProcessedDataset(BaseModel):

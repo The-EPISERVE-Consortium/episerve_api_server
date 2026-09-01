@@ -87,7 +87,11 @@ def list_raw_datasets() -> list[dict]:
         )
         datasets.append({
             "path": pkg.get("title", ""),
-            "size_bytes": parquet.get("size") if parquet else None,
+            "size_bytes": (
+                int(parquet["size"])
+                if parquet and str(parquet.get("size") or "").isdigit()
+                else None
+            ),
             "last_modified": extras.get("modified", ""),
         })
     return datasets
