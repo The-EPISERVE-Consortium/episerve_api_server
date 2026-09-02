@@ -21,6 +21,8 @@ class Model(BaseModel):
     description: str
     doip_url: str = ""
     git_repo: str = ""
+    docker_image_created: str = ""
+    additional_properties: list[dict[str, Any]] = []
 
 
 class ModelRunRequest(BaseModel):
