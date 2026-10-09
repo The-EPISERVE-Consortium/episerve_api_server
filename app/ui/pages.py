@@ -878,11 +878,10 @@ def register_pages():
                         conn.close()
                         df.attrs["total_rows"] = total
                         return df
-                    import requests, io, pandas as pd
-                    resp = requests.get(url, timeout=60)
-                    resp.raise_for_status()
+                    import io, pandas as pd
+                    from app.clients.doip import fetch_text_head
                     sep = "\t" if ext == ".tsv" else ","
-                    df = pd.read_csv(io.StringIO(resp.text), sep=sep, nrows=limit)
+                    df = pd.read_csv(io.StringIO(fetch_text_head(url)), sep=sep, nrows=limit)
                     df.attrs["total_rows"] = None
                     return df
 

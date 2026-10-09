@@ -32,6 +32,8 @@ The NiceGUI interface is served at `/` (redirects to `/ui`).
 | Model Runs | `/ui/model-runs` | All runs with status and provenance |
 | Trigger | `/ui/trigger` | Select a dataset + model and submit a run |
 
+Dataset previews read from the DOIP gateway without downloading whole files: Parquet files are read with HTTP range requests (DuckDB), and CSV/TSV previews fetch only the first 4 MiB (`?size=` on the retrieve URL, see `app/clients/doip.py`).
+
 ## Running locally
 
 ```bash
