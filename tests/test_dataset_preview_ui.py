@@ -2,9 +2,11 @@
 
 import asyncio
 import re
+from contextlib import nullcontext
 
 import httpx
 import pyarrow as pa
+import pytest
 from nicegui import Client, background_tasks, events, ui
 
 from app.dataset_preview import LoadedDataset
@@ -12,11 +14,13 @@ from app.main import app
 from app.ui import pages
 
 
-def test_anonymous_preview_resolves_selection_and_applies_controls(monkeypatch):
+@pytest.mark.parametrize("scheduler_style", ["wrapped", "context", "direct"])
+def test_anonymous_preview_resolves_selection_and_applies_controls(monkeypatch, scheduler_style):
     """Exercise loading, filtering, pagination, and forged selection handling.
 
     Args:
         monkeypatch: Pytest patch fixture used to replace catalog and downloads.
+        scheduler_style: NiceGUI callback scheduling API to exercise.
     """
     trusted_url = "https://doip.example/doip/retrieve/Q1/data.parquet"
     catalog = [{
@@ -78,24 +82,62 @@ def test_anonymous_preview_resolves_selection_and_applies_controls(monkeypatch):
                 listeners = [listener for listener in element._event_listeners.values() if listener.type == event]
                 pending = []
 
-                def schedule(awaitable, *, name="test callback"):
+                async def run_callback(awaitable, context):
+                    """Run a scheduled callback in its supplied UI context.
+
+                    Args:
+                        awaitable: Callback returned by a page event handler.
+                        context: Parent slot supplied by newer NiceGUI versions.
+
+                    Returns:
+                        The callback's result.
+                    """
+                    with context if context is not None else nullcontext():
+                        return await awaitable
+
+                def schedule(awaitable=None, *, coroutine=None, context=None, **kwargs):
                     """Capture async callbacks for deterministic in-process execution.
 
                     Args:
                         awaitable: Callback scheduled by NiceGUI's event wrapper.
-                        name: Diagnostic task name.
+                        coroutine: Legacy keyword form of the callback.
+                        context: Optional parent slot for the callback.
+                        **kwargs: Task options unused by this local scheduler.
+
+                    Returns:
+                        The scheduled callback task.
                     """
-                    pending.append(awaitable)
+                    callback = awaitable if awaitable is not None else coroutine
+                    task = asyncio.create_task(run_callback(callback, context))
+                    pending.append(task)
+                    return task
+
+                def defer(awaitable=None, **kwargs):
+                    """Exercise current, explicit-context, and direct scheduling paths.
+
+                    Args:
+                        awaitable: Callback scheduled by NiceGUI.
+                        **kwargs: Callback scheduling options.
+
+                    Returns:
+                        The scheduled callback task.
+                    """
+                    if scheduler_style == "context":
+                        kwargs.setdefault("context", element.parent_slot)
+                    if scheduler_style == "direct":
+                        return background_tasks.create(awaitable, **kwargs)
+                    return schedule(awaitable, **kwargs)
 
                 with monkeypatch.context() as patches, client:
-                    patches.setattr(background_tasks, "create_or_defer", schedule)
+                    patches.setattr(background_tasks, "create", schedule)
+                    patches.setattr(background_tasks, "create_or_defer", defer)
                     for listener in listeners:
                         payload = {"added": True, **(args or {})} if event == "selection" else args or {}
                         result = listener.handler(events.GenericEventArguments(sender=element, client=client, args=payload))
                         if asyncio.iscoroutine(result):
                             await result
-                    for awaitable in pending:
-                        await awaitable
+                    for task in pending:
+                        await task
 
             catalog_table = elements(ui.table)[0]
             assert all(element.props.get("label") != "SQL query" for element in elements(ui.input))
