@@ -32,7 +32,19 @@ The NiceGUI interface is served at `/` (redirects to `/ui`).
 | Model Runs | `/ui/model-runs` | All runs with status and provenance |
 | Trigger | `/ui/trigger` | Select a dataset + model and submit a run |
 
-Dataset previews read from the DOIP gateway without downloading whole files: Parquet files are read with HTTP range requests (DuckDB), and CSV/TSV previews fetch only the first 4 MiB (`?size=` on the retrieve URL, see `app/clients/doip.py`).
+The `/ui/datasets` preview uses column selection, filtering, sorting, and server-side
+pagination instead of executable SQL. The server resolves the selected dataset from
+its own catalog records and downloads its Parquet component only from the configured
+DOIP service's retrieve path. Redirects are rejected. Downloads and decoded samples
+are each limited to 64 MiB; queries cover the first 50,000 rows, with a visible notice
+when the source has more rows. Query connections have external access and automatic
+extension installation/loading disabled. Components hosted elsewhere or exceeding
+these limits remain available through their download links but cannot be previewed.
+
+Model-run previews retain their existing behavior: Parquet files use DuckDB HTTP
+range requests, and CSV/TSV previews request the first 4 MiB (`?size=` on the retrieve
+URL, see `app/clients/doip.py`). Their separate metadata-driven query and URL risks
+(F3 in `SECURITY-SCREENING.md`) are outside this F1 change.
 
 ## Running locally
 

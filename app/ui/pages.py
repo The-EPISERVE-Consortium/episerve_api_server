@@ -11,6 +11,10 @@ from app.auth import _daily_token
 from app.clients import ckan as ckan_client
 from app.clients import blackboard as blackboard_client
 from app.config import settings
+from app.dataset_preview import (
+    FILTER_OPERATORS, PAGE_SIZES, PreviewOptions,
+    load_dataset, query_dataset, resolve_component,
+)
 
 
 NAV_ITEMS = [
@@ -257,11 +261,24 @@ def register_pages():
 
     @ui.page("/ui/datasets")
     def datasets_processed_lab(request: Request):
+        """Render catalog browsing and structured dataset preview controls.
+
+        Args:
+            request: Incoming request used to construct the API link.
+        """
         from datetime import datetime
 
         _header("/ui/datasets")
 
         def _fmt_date(dt_str: str) -> tuple:
+            """Format a catalog timestamp for display.
+
+            Args:
+                dt_str: Catalog timestamp.
+
+            Returns:
+                Display date and relative age.
+            """
             if not dt_str:
                 return "—", ""
             try:
@@ -306,10 +323,15 @@ def register_pages():
         current_type   = ["All Types"]
         current_sort   = ["Recently Updated"]
 
-        current_url  = [None]
+        current_dataset = [None]
         current_name = [""]
+        preview_busy = [False]
+        current_page = [1]
+        matching_rows = [0]
+        applied_options = [PreviewOptions()]
 
         def apply_filters():
+            """Refresh catalog rows after search, type, or sorting changes."""
             s  = current_search[0].lower()
             t  = current_type[0]
             rs = [
@@ -328,35 +350,104 @@ def register_pages():
 
         @ui.refreshable
         def count_lbl():
+            """Display the number of catalog datasets matching the controls."""
             n = len(filtered_rows)
             ui.label(f"Showing {n} dataset{'s' if n != 1 else ''}").classes("text-sm text-gray-500")
 
-        sql_row       = [None]
-        sql_input_ref = [None]
+        preview_controls_row = [None]
+        preview_controls = {}
         data_container_ref = [None]
 
-        def _duckdb_query(url: str, sql: str):
-            conn = duckdb.connect()
-            conn.execute("INSTALL httpfs; LOAD httpfs")
-            conn.execute(f"CREATE VIEW df AS SELECT * FROM read_parquet('{url}')")
-            result = conn.execute(sql).df()
-            conn.close()
-            return result
-
         def render_preview(df, container):
+            """Display a result page and update navigation controls.
+
+            Args:
+                df: Queried result page.
+                container: NiceGUI container for the result table.
+            """
             container.clear()
             with container:
-                ui.label(f"{current_name[0]} — {len(df):,} rows × {len(df.columns)} columns").classes("text-sm text-gray-500 mb-2")
-                cols = [{"name": c, "label": c, "field": c, "align": "left", "sortable": True} for c in df.columns]
+                dataset = current_dataset[0]
+                ui.label(f"{current_name[0]} — {matching_rows[0]:,} matching rows").classes("text-sm text-gray-500 mb-2")
+                if dataset.table.num_rows < dataset.source_rows:
+                    ui.label(
+                        f"Filters and sorting cover the first {dataset.table.num_rows:,} of "
+                        f"{dataset.source_rows:,} source rows. Download the component for the full dataset."
+                    ).classes("text-sm text-gray-500")
+                cols = [{"name": f"c{i}", "label": c, "field": f"c{i}", "align": "left"} for i, c in enumerate(df.columns)]
+                # Use server-generated keys to support arbitrary schema names and duplicate values.
+                display = df.astype(str)
+                display.columns = [f"c{i}" for i in range(len(df.columns))]
+                rows = display.to_dict("records")
+                for i, row in enumerate(rows):
+                    row["_preview_row"] = i
                 ui.table(
                     columns=cols,
-                    rows=df.head(500).astype(str).to_dict("records"),
-                    row_key=df.columns[0],
-                    pagination={"rowsPerPage": 10},
+                    rows=rows,
+                    row_key="_preview_row",
                 ).classes("w-full")
+                if df.empty:
+                    ui.label("No rows match these filters.").classes("text-sm text-gray-500")
+            size = applied_options[0].page_size
+            pages = max(1, (matching_rows[0] + size - 1) // size)
+            preview_controls["page_label"].set_text(f"Page {current_page[0]} of {pages}")
+            preview_controls["previous"].set_enabled(current_page[0] > 1)
+            preview_controls["next"].set_enabled(current_page[0] < pages)
+
+        async def update_preview(page: int = 1, use_applied: bool = False):
+            """Query the loaded sample using validated UI choices.
+
+            Args:
+                page: Requested result page.
+                use_applied: Reuse the last applied filters for pagination.
+            """
+            if current_dataset[0] is None or preview_busy[0]:
+                return
+            preview_busy[0] = True
+            try:
+                if use_applied:
+                    from dataclasses import replace
+                    options = replace(applied_options[0], page=page)
+                else:
+                    options = PreviewOptions(
+                        columns=tuple(preview_controls["columns"].value or []),
+                        filter_column=preview_controls["filter"].value,
+                        operator=preview_controls["operator"].value,
+                        value=preview_controls["value"].value or "",
+                        sort_column=preview_controls["sort"].value,
+                        direction=preview_controls["direction"].value,
+                        page=page,
+                        page_size=preview_controls["size"].value,
+                    )
+                response = await run.io_bound(query_dataset, current_dataset[0], options)
+                if response is None:
+                    return
+                result, total = response
+                current_page[0], matching_rows[0] = page, total
+                applied_options[0] = options
+                render_preview(result, data_container_ref[0])
+            except Exception:
+                ui.notify("Could not apply the preview controls. Check the selected columns and filter value.", type="negative")
+            finally:
+                preview_busy[0] = False
+
+        async def apply_preview():
+            """Apply the current controls starting from the first page."""
+            await update_preview()
+
+        async def previous_page():
+            """Display the previous page using the last applied controls."""
+            if current_page[0] > 1:
+                await update_preview(current_page[0] - 1, use_applied=True)
+
+        async def next_page():
+            """Display the next page using the last applied controls."""
+            if current_page[0] * applied_options[0].page_size < matching_rows[0]:
+                await update_preview(current_page[0] + 1, use_applied=True)
 
         @ui.refreshable
         def ds_table():
+            """Render selectable catalog rows and their server-resolved previews."""
             if not filtered_rows:
                 ui.label("No datasets match your search.").classes("text-sm text-gray-400 py-8 text-center w-full")
                 return
@@ -433,42 +524,56 @@ def register_pages():
                 </q-td>''')
 
             async def on_selection(e):
-                selected = e.args.get("rows", [])
-                sr = sql_row[0]
+                """Load a component resolved from a selected catalog identifier.
+
+                Args:
+                    e: Browser selection event; only its dataset identifier is used.
+                """
+                if preview_busy[0]:
+                    ui.notify("Wait for the current preview to finish before selecting another dataset.")
+                    return
+                selected = e.args.get("rows", []) if e.args.get("added", True) else []
+                sr = preview_controls_row[0]
                 dc = data_container_ref[0]
                 if sr:
                     sr.set_visibility(False)
                 if dc:
                     dc.clear()
-                current_url[0] = None
+                current_dataset[0] = None
                 if not selected:
                     return
-                row = selected[0]
-                components = row.get("components", [])
-                if not components:
+                preview_busy[0] = True
+                try:
+                    if len(selected) != 1 or not isinstance(selected[0], dict):
+                        raise ValueError("Select one known dataset.")
+                    component = resolve_component(all_rows, selected[0].get("qid"))
+                    current_name[0] = component["name"]
                     if dc:
                         with dc:
-                            ui.label("No downloadable components for this dataset.").classes("text-sm text-gray-500")
-                    return
-                component = components[0]
-                current_name[0] = component["name"]
-                current_url[0]  = component["url"]
-                if dc:
-                    with dc:
-                        ui.spinner(size="lg")
-                try:
-                    df = await run.io_bound(_duckdb_query, component["url"], "SELECT * FROM df LIMIT 500")
-                    if sql_input_ref[0]:
-                        sql_input_ref[0].value = "SELECT * FROM df LIMIT 500"
+                            ui.spinner(size="lg")
+                    dataset = await run.io_bound(load_dataset, component["url"], settings.doip_url)
+                    if dataset is None:
+                        return
+                    current_dataset[0] = dataset
+                    names = dataset.table.column_names
+                    preview_controls["columns"].set_options(names, value=list(names))
+                    preview_controls["filter"].set_options(names, value=None)
+                    preview_controls["sort"].set_options(names, value=names[0])
+                    preview_controls["operator"].value = "="
+                    preview_controls["value"].value = ""
+                    preview_controls["direction"].value = "ASC"
+                    preview_controls["size"].value = 100
                     if sr:
                         sr.set_visibility(True)
-                    if dc:
-                        render_preview(df, dc)
-                except Exception as ex:
+                except Exception:
                     if dc:
                         dc.clear()
                         with dc:
-                            _error_label(f"Could not load component: {ex}")
+                            _error_label("Could not preview this component. It must be a valid Parquet file on the configured DOIP service within the preview size limits.")
+                    return
+                finally:
+                    preview_busy[0] = False
+                await update_preview()
 
             tbl.on("selection", on_selection)
 
@@ -502,28 +607,23 @@ def register_pages():
             with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white overflow-hidden"):
                 ds_table()
 
-            async def run_sql():
-                url = current_url[0]
-                if url is None:
-                    return
-                dc = data_container_ref[0]
-                query = sql_input_ref[0].value.strip() if sql_input_ref[0] else "SELECT * FROM df LIMIT 500"
-                try:
-                    result = await run.io_bound(_duckdb_query, url, query or "SELECT * FROM df LIMIT 500")
-                    if dc:
-                        render_preview(result, dc)
-                except Exception as ex:
-                    if dc:
-                        dc.clear()
-                        with dc:
-                            _error_label(f"SQL error: {ex}")
-
-            with ui.row().classes("w-full items-end gap-2") as _sql_row:
-                sql_inp = ui.input(label="SQL query", value="SELECT * FROM df LIMIT 500").classes("flex-1 font-mono text-sm")
-                ui.button("Run", icon="play_arrow", on_click=run_sql).classes("bg-blue-700 text-white")
-            _sql_row.set_visibility(False)
-            sql_row[0]       = _sql_row
-            sql_input_ref[0] = sql_inp
+            with ui.column().classes("w-full gap-3") as controls_row:
+                with ui.row().classes("w-full items-end gap-2"):
+                    preview_controls["columns"] = ui.select([], multiple=True, label="Columns").classes("min-w-48")
+                    preview_controls["filter"] = ui.select([], label="Filter column", clearable=True).classes("min-w-40")
+                    preview_controls["operator"] = ui.select(list(FILTER_OPERATORS), value="=", label="Condition").classes("w-32")
+                    preview_controls["value"] = ui.input(label="Filter value").classes("min-w-40")
+                with ui.row().classes("w-full items-end gap-2"):
+                    preview_controls["sort"] = ui.select([], label="Sort column").classes("min-w-40")
+                    preview_controls["direction"] = ui.select({"ASC": "Ascending", "DESC": "Descending"}, value="ASC", label="Order")
+                    preview_controls["size"] = ui.select(list(PAGE_SIZES), value=100, label="Rows per page")
+                    ui.button("Apply", icon="filter_alt", on_click=apply_preview).classes("bg-blue-700 text-white")
+                with ui.row().classes("items-center gap-2"):
+                    preview_controls["previous"] = ui.button("Previous", on_click=previous_page)
+                    preview_controls["page_label"] = ui.label("")
+                    preview_controls["next"] = ui.button("Next", on_click=next_page)
+            controls_row.set_visibility(False)
+            preview_controls_row[0] = controls_row
 
             _dc = ui.column().classes("w-full")
             data_container_ref[0] = _dc
