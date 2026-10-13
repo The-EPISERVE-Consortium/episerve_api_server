@@ -34,7 +34,10 @@ The NiceGUI interface is served at `/` (redirects to `/ui`).
 
 The `/ui/datasets` preview uses column selection, filtering, sorting, and server-side
 pagination instead of executable SQL. The server resolves the selected dataset from
-its own catalog records and downloads its Parquet component only from the configured
+its own catalog records. Use **Add filter** and **Remove filter** to combine up to
+20 conditions with AND, then click **Apply**; pagination retains those applied
+conditions until you apply changes. Selecting another dataset resets the filters.
+The server downloads its Parquet component only from the configured
 DOIP service's retrieve path. Redirects are rejected. Downloads and decoded samples
 are each limited to 64 MiB; queries cover the first 50,000 rows, with a visible notice
 when the source has more rows. Query connections have external access and automatic

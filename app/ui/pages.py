@@ -12,7 +12,7 @@ from app.clients import ckan as ckan_client
 from app.clients import blackboard as blackboard_client
 from app.config import settings
 from app.dataset_preview import (
-    FILTER_OPERATORS, PAGE_SIZES, PreviewOptions,
+    FILTER_OPERATORS, MAX_FILTERS, PAGE_SIZES, PreviewFilter, PreviewOptions,
     load_dataset, query_dataset, resolve_component,
 )
 
@@ -356,7 +356,31 @@ def register_pages():
 
         preview_controls_row = [None]
         preview_controls = {}
+        filter_controls = []
+        filters_container = [None]
         data_container_ref = [None]
+
+        def add_preview_filter():
+            """Append a removable condition row for the currently loaded schema."""
+            if len(filter_controls) >= MAX_FILTERS:
+                ui.notify(f"Use at most {MAX_FILTERS} filters.")
+                return
+            names = current_dataset[0].table.column_names if current_dataset[0] is not None else []
+            with filters_container[0]:
+                with ui.row().classes("w-full items-end gap-2") as row:
+                    controls = {
+                        "column": ui.select(names, label="Filter column", clearable=True).classes("min-w-40"),
+                        "operator": ui.select(list(FILTER_OPERATORS), value="=", label="Condition").classes("w-32"),
+                        "value": ui.input(label="Filter value").classes("min-w-40"),
+                    }
+
+                    def remove_filter():
+                        """Remove this condition row from the pending filter choices."""
+                        filter_controls.remove(controls)
+                        row.delete()
+
+                    ui.button("Remove filter", icon="delete_outline", on_click=remove_filter).props("flat")
+            filter_controls.append(controls)
 
         def render_preview(df, container):
             """Display a result page and update navigation controls.
@@ -411,9 +435,14 @@ def register_pages():
                 else:
                     options = PreviewOptions(
                         columns=tuple(preview_controls["columns"].value or []),
-                        filter_column=preview_controls["filter"].value,
-                        operator=preview_controls["operator"].value,
-                        value=preview_controls["value"].value or "",
+                        filters=tuple(
+                            PreviewFilter(
+                                column=controls["column"].value,
+                                operator=controls["operator"].value,
+                                value=controls["value"].value or "",
+                            )
+                            for controls in filter_controls if controls["column"].value is not None
+                        ),
                         sort_column=preview_controls["sort"].value,
                         direction=preview_controls["direction"].value,
                         page=page,
@@ -557,10 +586,10 @@ def register_pages():
                     current_dataset[0] = dataset
                     names = dataset.table.column_names
                     preview_controls["columns"].set_options(names, value=list(names))
-                    preview_controls["filter"].set_options(names, value=None)
                     preview_controls["sort"].set_options(names, value=names[0])
-                    preview_controls["operator"].value = "="
-                    preview_controls["value"].value = ""
+                    filters_container[0].clear()
+                    filter_controls.clear()
+                    add_preview_filter()
                     preview_controls["direction"].value = "ASC"
                     preview_controls["size"].value = 100
                     if sr:
@@ -610,9 +639,10 @@ def register_pages():
             with ui.column().classes("w-full gap-3") as controls_row:
                 with ui.row().classes("w-full items-end gap-2"):
                     preview_controls["columns"] = ui.select([], multiple=True, label="Columns").classes("min-w-48")
-                    preview_controls["filter"] = ui.select([], label="Filter column", clearable=True).classes("min-w-40")
-                    preview_controls["operator"] = ui.select(list(FILTER_OPERATORS), value="=", label="Condition").classes("w-32")
-                    preview_controls["value"] = ui.input(label="Filter value").classes("min-w-40")
+                ui.label("Match all filters (AND).").classes("text-sm text-gray-500")
+                filters_container[0] = ui.column().classes("w-full gap-2")
+                add_preview_filter()
+                ui.button("Add filter", icon="add", on_click=add_preview_filter).props("flat")
                 with ui.row().classes("w-full items-end gap-2"):
                     preview_controls["sort"] = ui.select([], label="Sort column").classes("min-w-40")
                     preview_controls["direction"] = ui.select({"ASC": "Ascending", "DESC": "Descending"}, value="ASC", label="Order")

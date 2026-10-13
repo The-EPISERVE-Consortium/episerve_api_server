@@ -15,6 +15,7 @@ MAX_SAMPLE_BYTES = 64 * 1024 * 1024
 MAX_SAMPLE_ROWS = 50_000
 PAGE_SIZES = (25, 100, 250, 500)
 FILTER_OPERATORS = ("=", "!=", "<", "<=", ">", ">=", "contains", "is null", "is not null")
+MAX_FILTERS = 20
 
 
 @dataclass(frozen=True)
@@ -26,13 +27,20 @@ class LoadedDataset:
 
 
 @dataclass(frozen=True)
+class PreviewFilter:
+    """Describe one validated condition in an AND-combined filter list."""
+
+    column: str
+    operator: str = "="
+    value: str = ""
+
+
+@dataclass(frozen=True)
 class PreviewOptions:
     """Describe a preview without accepting executable query text."""
 
     columns: tuple[str, ...] | None = None
-    filter_column: str | None = None
-    operator: str = "="
-    value: str = ""
+    filters: tuple[PreviewFilter, ...] = ()
     sort_column: str | None = None
     direction: str = "ASC"
     page: int = 1
@@ -183,26 +191,32 @@ def query_dataset(dataset: LoadedDataset, options: PreviewOptions) -> tuple[pd.D
         or options.page > max(1, (dataset.table.num_rows + 24) // 25)
         or type(options.page_size) is not int or options.page_size not in PAGE_SIZES
         or options.direction not in ("ASC", "DESC")
-        or options.operator not in FILTER_OPERATORS
-        or not isinstance(options.value, str) or len(options.value) > 4096
+        or not isinstance(options.filters, (tuple, list)) or len(options.filters) > MAX_FILTERS
     ):
         raise ValueError("Invalid preview controls.")
     selected = names if options.columns is None else options.columns
     if not isinstance(selected, (tuple, list)) or not selected or len(selected) > len(names):
         raise ValueError("Select at least one dataset column.")
     projection = ", ".join(_column_sql(name, names) for name in selected)
-    where = ""
+    conditions = []
     values = []
-    if options.filter_column is not None:
-        column = _column_sql(options.filter_column, names)
-        if options.operator in ("is null", "is not null"):
-            where = f" WHERE {column} {options.operator.upper()}"
-        elif options.operator == "contains":
-            where = f" WHERE contains(CAST({column} AS VARCHAR), ?)"
-            values.append(options.value)
+    for condition in options.filters:
+        if (
+            not isinstance(condition, PreviewFilter)
+            or condition.operator not in FILTER_OPERATORS
+            or not isinstance(condition.value, str) or len(condition.value) > 4096
+        ):
+            raise ValueError("Invalid preview filter.")
+        column = _column_sql(condition.column, names)
+        if condition.operator in ("is null", "is not null"):
+            conditions.append(f"{column} {condition.operator.upper()}")
+        elif condition.operator == "contains":
+            conditions.append(f"contains(CAST({column} AS VARCHAR), ?)")
+            values.append(condition.value)
         else:
-            where = f" WHERE {column} {options.operator} ?"
-            values.append(options.value)
+            conditions.append(f"{column} {condition.operator} ?")
+            values.append(condition.value)
+    where = " WHERE " + " AND ".join(conditions) if conditions else ""
     # Always order by a schema column so pagination is reproducible for ordinary data.
     sort = options.sort_column if options.sort_column is not None else names[0]
     order = f" ORDER BY {_column_sql(sort, names)} {options.direction}"

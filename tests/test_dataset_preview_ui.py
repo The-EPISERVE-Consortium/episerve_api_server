@@ -161,10 +161,42 @@ def test_anonymous_preview_resolves_selection_and_applies_controls(monkeypatch, 
             await trigger(apply_button, "click")
             assert [row["c0"] for row in elements(ui.table)[-1].rows] == ["115", "116", "117", "118", "119"]
             assert any(label.text == "Page 1 of 1" for label in elements(ui.label))
+            add_button = next(button for button in elements(ui.button) if button.text == "Add filter")
+            await trigger(add_button, "click")
+            columns = [element for element in elements(ui.select) if element.props.get("label") == "Filter column"]
+            conditions = [element for element in elements(ui.select) if element.props.get("label") == "Condition"]
+            values = [element for element in elements(ui.input) if element.props.get("label") == "Filter value"]
+            assert len(columns) == 2
+            columns[1].value = "cases"
+            conditions[1].value = "<"
+            values[1].value = "118"
+            await trigger(apply_button, "click")
+            assert [row["c0"] for row in elements(ui.table)[-1].rows] == ["115", "116", "117"]
+            values[0].value = "0"
+            await trigger(apply_button, "click")
+            assert len(elements(ui.table)[-1].rows) == 100
+            values[1].value = "1"
+            await trigger(next_button, "click")
+            assert [row["c0"] for row in elements(ui.table)[-1].rows] == [str(value) for value in range(100, 118)]
+            values[0].value = "115"
+            values[1].value = "118"
+            await trigger(apply_button, "click")
+            remove_buttons = [button for button in elements(ui.button) if button.text == "Remove filter"]
+            await trigger(remove_buttons[1], "click")
+            await trigger(apply_button, "click")
+            assert [row["c0"] for row in elements(ui.table)[-1].rows] == ["115", "116", "117", "118", "119"]
+            await trigger(remove_buttons[0], "click")
+            await trigger(apply_button, "click")
+            assert len(elements(ui.table)[-1].rows) == 100
+            await trigger(next_button, "click")
+            assert len(elements(ui.table)[-1].rows) == 20
+            await trigger(catalog_table, "selection", {"rows": [{"qid": "Q1"}]})
+            assert len([element for element in elements(ui.select) if element.props.get("label") == "Filter column"]) == 1
+            assert len(elements(ui.table)[-1].rows) == 100
             await trigger(catalog_table, "selection", {"added": False, "rows": [{"qid": "Q1"}], "keys": ["Q1"]})
-            assert downloads == [trusted_url] and len(elements(ui.table)) == 1
+            assert downloads == [trusted_url, trusted_url] and len(elements(ui.table)) == 1
             await trigger(catalog_table, "selection", {"rows": [{"qid": "unknown", "components": [{"url": trusted_url}]}]})
-            assert downloads == [trusted_url]
+            assert downloads == [trusted_url, trusted_url]
             assert len(elements(ui.table)) == 1
             client.delete()
 

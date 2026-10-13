@@ -26,7 +26,7 @@ def dataset():
 def test_filter_sort_projection_and_pagination(dataset):
     """Return the correct filtered page with a matching row count."""
     options = preview.PreviewOptions(
-        columns=("cases",), filter_column="region", value="north",
+        columns=("cases",), filters=(preview.PreviewFilter("region", value="north"),),
         sort_column="cases", direction="DESC", page_size=25,
     )
     first, total = preview.query_dataset(dataset, options)
@@ -42,7 +42,7 @@ def test_filter_value_cannot_execute_sql(dataset, tmp_path):
     target = tmp_path / "injected.csv"
     payload = f"north'; COPY (SELECT 1) TO '{target}'; --"
     result, total = preview.query_dataset(dataset, preview.PreviewOptions(
-        filter_column="region", value=payload,
+        filters=(preview.PreviewFilter("cases", ">=", "0"), preview.PreviewFilter("region", value=payload)),
     ))
     assert result.empty and total == 0
     assert not target.exists()
@@ -61,12 +61,15 @@ def test_schema_names_with_quotes_are_identifiers(tmp_path):
 @pytest.mark.parametrize("changes", [
     {"columns": ("read_text('/etc/passwd')",)},
     {"sort_column": "cases; SELECT 1"},
-    {"filter_column": "cases OR TRUE"},
-    {"operator": "= ?; SELECT 1; --"},
+    {"filters": (preview.PreviewFilter("cases OR TRUE"),)},
+    {"filters": (preview.PreviewFilter("cases", "= ?; SELECT 1; --"),)},
     {"direction": "ASC; SELECT 1"},
     {"page": 0}, {"page": True}, {"page": 10_000},
     {"page_size": 100_000}, {"page_size": "100"},
-    {"columns": ()}, {"value": "x" * 4097},
+    {"columns": ()}, {"filters": (preview.PreviewFilter("region", value="x" * 4097),)},
+    {"filters": ("raw SQL",)},
+    {"filters": (preview.PreviewFilter("cases"),) * (preview.MAX_FILTERS + 1)},
+    {"filters": (preview.PreviewFilter("cases", ">", "0"), preview.PreviewFilter("region", "OR TRUE"))},
 ])
 def test_invalid_controls_are_rejected(dataset, changes):
     """Reject forged controls before executing a database query.
@@ -83,13 +86,48 @@ def test_contains_uses_literal_text_and_null_filter():
     """Keep substring wildcards literal and handle null filters."""
     data = preview.LoadedDataset(pa.table({"text": ["100%", "100x", None]}), 3)
     result, total = preview.query_dataset(data, preview.PreviewOptions(
-        filter_column="text", operator="contains", value="%",
+        filters=(preview.PreviewFilter("text", "contains", "%"),),
     ))
     assert total == 1 and result["text"].tolist() == ["100%"]
     result, total = preview.query_dataset(data, preview.PreviewOptions(
-        filter_column="text", operator="is null",
+        filters=(preview.PreviewFilter("text", "is null"),),
     ))
     assert total == 1 and result["text"].isna().all()
+
+
+def test_multiple_filters_use_and_and_keep_pagination_consistent(dataset):
+    """Apply multiple conditions, including repeated columns, before pagination.
+
+    Args:
+        dataset: Typed test data.
+    """
+    options = preview.PreviewOptions(
+        filters=(
+            preview.PreviewFilter("region", "contains", "north"),
+            preview.PreviewFilter("cases", ">=", "5"),
+            preview.PreviewFilter("cases", "<", "60"),
+        ),
+        page_size=25,
+    )
+    first, total = preview.query_dataset(dataset, options)
+    second, second_total = preview.query_dataset(dataset, replace(options, page=2))
+    assert total == second_total == 28
+    assert first["cases"].tolist() == list(range(5, 55, 2))
+    assert second["cases"].tolist() == [55, 57, 59]
+
+
+def test_null_filters_do_not_shift_bound_values():
+    """Bind each value to its own condition when null checks require no value."""
+    data = preview.LoadedDataset(pa.table({
+        "cases": [1, 2, 3, 4], "region": ["north", "north", "south", "north"],
+        "note": [None, "done", None, None],
+    }), 4)
+    result, total = preview.query_dataset(data, preview.PreviewOptions(filters=(
+        preview.PreviewFilter("region", "=", "north"),
+        preview.PreviewFilter("note", "is null"),
+        preview.PreviewFilter("cases", ">", "1"),
+    )))
+    assert total == 1 and result["cases"].tolist() == [4]
 
 
 def test_forged_component_fields_are_ignored():
