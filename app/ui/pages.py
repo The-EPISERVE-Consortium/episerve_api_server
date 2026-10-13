@@ -16,6 +16,11 @@ from app.dataset_preview import (
     load_dataset, query_dataset, resolve_component,
 )
 
+from app.model_run_preview import (
+    MAX_PREVIEW_ROWS, fetch_component_preview, fetch_run_metadata,
+    find_run_components, resolve_model_run,
+)
+
 
 NAV_ITEMS = [
     ("Datasets",        "/ui/datasets"),
@@ -807,6 +812,11 @@ def register_pages():
 
     @ui.page("/ui/model-runs")
     def model_runs(request: Request):
+        """Render model runs using validated, bounded component previews.
+
+        Args:
+            request: Incoming request used to construct the API link.
+        """
         from datetime import datetime
         _header("/ui/model-runs")
 
@@ -962,13 +972,24 @@ def register_pages():
                 </q-td>''')
 
             async def on_selection(e):
-                selected = e.args.get("rows", [])
+                """Resolve a selected run and preview its saved components safely.
+
+                Args:
+                    e: Browser selection event; only its run identifier is used.
+                """
+                preview_generation[0] += 1
+                generation = preview_generation[0]
+                selected = e.args.get("rows", []) if e.args.get("added", True) else []
                 preview_container[0].clear()
                 if not selected:
                     return
-                row = selected[0]
-                doip_url = row.get("doip_url", "")
-                if not doip_url:
+                try:
+                    if len(selected) != 1 or not isinstance(selected[0], dict):
+                        raise ValueError("Select one known model run.")
+                    row = resolve_model_run(all_rows, selected[0].get("qid"))
+                except ValueError:
+                    with preview_container[0]:
+                        _error_label("Select one known model run.")
                     return
 
                 dc = preview_container[0]
@@ -977,49 +998,15 @@ def register_pages():
                         ui.spinner(size="sm")
                         ui.label("Fetching metadata…").classes("text-sm text-gray-400")
 
-                def _fetch_metadata(url: str) -> dict:
-                    import requests
-                    return requests.get(url, timeout=30).json()
-
-                def _find_components(meta: dict):
-                    components = meta.get("kernel", {}).get("fdo:hasComponent", [])
-                    if isinstance(components, dict):
-                        components = [components]
-                    result = []
-                    for comp in components:
-                        cid = str(comp.get("componentId", ""))
-                        for ext in (".parquet", ".tsv", ".csv"):
-                            if cid.lower().endswith(ext):
-                                result.append((comp, cid, ext))
-                                break
-                    return result
-
-                def _fetch_preview(url: str, ext: str, limit: int = 500, sql: str = ""):
-                    if ext == ".parquet":
-                        conn = duckdb.connect()
-                        conn.execute("INSTALL httpfs; LOAD httpfs")
-                        if sql:
-                            conn.execute(f"CREATE VIEW df AS SELECT * FROM read_parquet('{url}')")
-                            total = conn.execute(f"SELECT COUNT(*) FROM ({sql}) _q").fetchone()[0]
-                            df = conn.execute(f"SELECT * FROM ({sql}) _q LIMIT {limit}").df()
-                        else:
-                            total = conn.execute(f"SELECT COUNT(*) FROM read_parquet('{url}')").fetchone()[0]
-                            df = conn.execute(f"SELECT * FROM read_parquet('{url}') LIMIT {limit}").df()
-                        conn.close()
-                        df.attrs["total_rows"] = total
-                        return df
-                    import io, pandas as pd
-                    from app.clients.doip import fetch_text_head
-                    sep = "\t" if ext == ".tsv" else ","
-                    df = pd.read_csv(io.StringIO(fetch_text_head(url)), sep=sep, nrows=limit)
-                    df.attrs["total_rows"] = None
-                    return df
-
-                def _component_url(base: str, qid: str, comp: dict, cid: str) -> str:
-                    path = comp.get("@id", f"output/{cid}").removeprefix("components/")
-                    return f"{base}/doip/retrieve/{qid}/{path}"
-
                 def _preview_card(dc, icon: str, label: str, df):
+                    """Display a safely loaded component and its source row count.
+
+                    Args:
+                        dc: Parent container for the card.
+                        icon: Card icon name.
+                        label: Component label identifying saved or original input.
+                        df: Bounded preview dataframe.
+                    """
                     total = df.attrs.get("total_rows")
                     if total is None:
                         row_lbl = f"{len(df):,} rows"
@@ -1042,21 +1029,24 @@ def register_pages():
                             ).classes("w-full")
 
                 try:
-                    meta = await run.io_bound(_fetch_metadata, doip_url)
-                except Exception as exc:
+                    meta = await run.io_bound(fetch_run_metadata, row["qid"], settings.doip_url)
+                    if generation != preview_generation[0] or meta is None:
+                        return
+                    components = find_run_components(meta, row["qid"], settings.doip_url)
+                except Exception:
+                    if generation != preview_generation[0]:
+                        return
                     dc.clear()
                     with dc:
-                        _error_label(f"Could not fetch metadata: {exc}")
+                        _error_label("Could not load valid model-run metadata and approved component URLs.")
                     return
 
-                all_comps = _find_components(meta)
                 dc.clear()
-                if not any("predictions" in cid.lower() for _, cid, _ in all_comps):
+                if not any(not component.is_input and "predictions" in component.label.lower() for component in components):
                     with dc:
                         ui.label("No predictions component found in metadata.").classes("text-sm text-gray-400 italic")
                     return
 
-                qid  = meta.get("@id", row.get("qid", ""))
                 base = settings.doip_url.rstrip("/")
 
                 with dc:
@@ -1067,57 +1057,35 @@ def register_pages():
                 cur_limit = [500]
                 cards_container = [None]
 
-                # Load input parquet from fdo:hasComponent first, then fall back to prov:used
-                loaded = []  # list of (cid, df)
-                input_cids_loaded: set[str] = set()
-                for comp, cid, ext in all_comps:
-                    if cid == "input_annotated.parquet":
-                        continue
-                    if ext != ".parquet" or not comp.get("@id", "").startswith("components/input/"):
-                        continue
-                    url = _component_url(base, qid, comp, cid)
-                    try:
-                        df = await run.io_bound(_fetch_preview, url, ext, cur_limit[0])
-                        loaded.append((cid, df))
-                        input_cids_loaded.add(cid)
-                    except Exception as exc:
-                        with dc:
-                            _error_label(f"Could not load {cid}: {exc}")
+                async def load_previews(limit: int):
+                    """Load the same validated components for initial and resized previews.
 
-                # Fall back to prov:used for any input not yet loaded above
-                for entry in meta.get("provenance", {}).get("prov:used", []):
-                    src_url = entry.get("@id", "") if isinstance(entry, dict) else str(entry)
-                    filename = src_url.split("?")[0].rstrip("/").split("/")[-1]
-                    if not filename.lower().endswith(".parquet"):
-                        continue
-                    if filename in input_cids_loaded:
-                        continue
-                    sql = entry.get("schema:query", "") if isinstance(entry, dict) else ""
-                    label = f"{filename} (filtered)" if sql else filename
-                    try:
-                        df = await run.io_bound(_fetch_preview, src_url, ".parquet", cur_limit[0], sql)
-                        df["x_auto_converted"] = range(1, len(df) + 1)
-                        loaded.append((label, df))
-                        input_cids_loaded.add(filename)
-                    except Exception as exc:
-                        with dc:
-                            _error_label(f"Could not load input {filename}: {exc}")
+                    Args:
+                        limit: Maximum displayed rows per component.
 
-                # Load output components (predictions etc.) after inputs
-                for comp, cid, ext in all_comps:
-                    if cid == "input_annotated.parquet":
-                        continue
-                    if comp.get("@id", "").startswith("components/input/"):
-                        continue
-                    if ext not in (".parquet", ".tsv", ".csv"):
-                        continue
-                    url = _component_url(base, qid, comp, cid)
-                    try:
-                        df = await run.io_bound(_fetch_preview, url, ext, cur_limit[0])
-                        loaded.append((cid, df))
-                    except Exception as exc:
-                        with dc:
-                            _error_label(f"Could not load {cid}: {exc}")
+                    Returns:
+                        Component labels and safely loaded dataframes.
+                    """
+                    results = []
+                    for component in components:
+                        if generation != preview_generation[0]:
+                            return []
+                        try:
+                            frame = await run.io_bound(fetch_component_preview, component, base, limit)
+                            if generation != preview_generation[0]:
+                                return []
+                            if frame is not None:
+                                results.append((component.label, frame))
+                        except Exception:
+                            if generation != preview_generation[0]:
+                                return []
+                            with dc:
+                                _error_label(f"Could not preview {component.label} within the size and format limits.")
+                    return results
+
+                loaded = await load_previews(cur_limit[0])
+                if generation != preview_generation[0]:
+                    return
 
                 if not any("predictions" in cid.lower() for cid, _ in loaded):
                     dc.clear()
@@ -1153,6 +1121,16 @@ def register_pages():
 
                 dc.clear()
                 with dc:
+                    provenance = meta.get("provenance", {})
+                    entries = provenance.get("prov:used", []) if isinstance(provenance, dict) else []
+                    recorded_queries = [
+                        entry.get("schema:query") for entry in entries[:20]
+                        if isinstance(entry, dict) and isinstance(entry.get("schema:query"), str)
+                    ] if isinstance(entries, list) else []
+                    if recorded_queries:
+                        with ui.expansion("Recorded transformations (provenance)").classes("w-full"):
+                            for recorded_query in recorded_queries:
+                                ui.code(recorded_query[:4096], language="sql").classes("w-full")
                     with ui.element("div").classes("w-full border border-gray-200 rounded-xl bg-white p-5"):
                         ui.label("Chart").classes("text-base font-bold text-gray-900 mb-1")
 
@@ -1269,41 +1247,21 @@ def register_pages():
                         xlabel_sel = None
 
                         async def on_limit(e):
+                            """Reload approved components with a bounded display row limit.
+
+                            Args:
+                                e: Row-limit control change event.
+                            """
                             try:
                                 v = int(e.value or 0)
-                            except (ValueError, TypeError):
+                            except (ValueError, TypeError, OverflowError):
                                 return
-                            if v <= 0 or v == cur_limit[0]:
+                            if not 1 <= v <= MAX_PREVIEW_ROWS or v == cur_limit[0] or generation != preview_generation[0]:
                                 return
                             cur_limit[0] = v
-                            new_loaded = []
-                            loaded_names: set[str] = set()
-                            # Input first (prov:used)
-                            for entry2 in meta.get("provenance", {}).get("prov:used", []):
-                                src_url2 = entry2.get("@id", "") if isinstance(entry2, dict) else str(entry2)
-                                fname2 = src_url2.split("?")[0].rstrip("/").split("/")[-1]
-                                if not fname2.lower().endswith(".parquet") or fname2 in loaded_names:
-                                    continue
-                                sql2 = entry2.get("schema:query", "") if isinstance(entry2, dict) else ""
-                                label2 = f"{fname2} (filtered)" if sql2 else fname2
-                                try:
-                                    df2 = await run.io_bound(_fetch_preview, src_url2, ".parquet", v, sql2)
-                                    df2["x_auto_converted"] = range(1, len(df2) + 1)
-                                    new_loaded.append((label2, df2))
-                                    loaded_names.add(fname2)
-                                except Exception:
-                                    pass
-                            # Output (predictions etc.) from fdo:hasComponent
-                            for comp2, cid2, ext2 in all_comps:
-                                if cid2 in loaded_names:
-                                    continue
-                                url2 = _component_url(base, qid, comp2, cid2)
-                                try:
-                                    df2 = await run.io_bound(_fetch_preview, url2, ext2, v)
-                                    new_loaded.append((cid2, df2))
-                                    loaded_names.add(cid2)
-                                except Exception:
-                                    pass
+                            new_loaded = await load_previews(v)
+                            if generation != preview_generation[0] or v != cur_limit[0] or cards_container[0] is None:
+                                return
                             loaded.clear()
                             loaded.extend(new_loaded)
                             col_map.clear()
@@ -1336,7 +1294,7 @@ def register_pages():
                                     </q-item-section>
                                 </q-item>
                             ''')
-                            ui.number(label="Max rows", value=cur_limit[0], min=1, step=100,
+                            ui.number(label="Max rows", value=cur_limit[0], min=1, max=MAX_PREVIEW_ROWS, step=100,
                                       on_change=on_limit).classes("w-28")
 
                         update_chart()
@@ -1351,6 +1309,7 @@ def register_pages():
             tbl.on("selection", on_selection)
 
         preview_container = [None]
+        preview_generation = [0]
 
         with ui.column().classes("px-8 py-6 w-full gap-4"):
             with ui.row().classes("w-full items-start justify-between gap-6"):

@@ -109,6 +109,42 @@ def validate_component_url(url: str, doip_base: str) -> str:
     return url
 
 
+def download_preview_bytes(url: str, doip_base: str, max_bytes: int, partial: bool = False) -> bytes:
+    """Download bounded data from an approved DOIP URL without redirects.
+
+    Args:
+        url: URL on the configured DOIP retrieve service.
+        doip_base: Trusted service base URL.
+        max_bytes: Maximum response size in bytes.
+        partial: Request a bounded text prefix and accept HTTP 206.
+
+    Returns:
+        Downloaded bytes, ending at a complete line for partial responses.
+
+    Raises:
+        ValueError: If the URL, response status, or size is unsuitable.
+        requests.HTTPError: If the service returns an error.
+    """
+    validate_component_url(url, doip_base)
+    content = BytesIO()
+    options = {"stream": True, "allow_redirects": False, "timeout": (5, 30)}
+    if partial:
+        options["params"] = {"size": max_bytes}
+    with requests.get(url, **options) as response:
+        if response.status_code not in ((200, 206) if partial else (200,)):
+            response.raise_for_status()
+            raise ValueError("Preview downloads must not redirect or return unexpected partial files.")
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            if content.tell() + len(chunk) > max_bytes:
+                raise ValueError("Preview exceeds the download limit.")
+            content.write(chunk)
+        data = content.getvalue()
+        if response.status_code == 206:
+            cut = data.rfind(b"\n")
+            data = data[:cut + 1] if cut >= 0 else b""
+    return data
+
+
 def load_dataset(url: str, doip_base: str) -> LoadedDataset:
     """Download an approved Parquet component and decode a bounded row sample.
 
@@ -123,17 +159,7 @@ def load_dataset(url: str, doip_base: str) -> LoadedDataset:
         ValueError: If the URL, download, schema, or decoded sample is unsuitable.
         requests.HTTPError: If the service returns an error.
     """
-    validate_component_url(url, doip_base)
-    content = BytesIO()
-    with requests.get(url, stream=True, allow_redirects=False, timeout=(5, 30)) as response:
-        if response.status_code != 200:
-            response.raise_for_status()
-            raise ValueError("Preview downloads must return a complete file without redirects.")
-        for chunk in response.iter_content(chunk_size=64 * 1024):
-            if content.tell() + len(chunk) > MAX_DOWNLOAD_BYTES:
-                raise ValueError("This component exceeds the 64 MiB preview download limit.")
-            content.write(chunk)
-    content.seek(0)
+    content = BytesIO(download_preview_bytes(url, doip_base, MAX_DOWNLOAD_BYTES))
     parquet = pq.ParquetFile(content)
     schema = parquet.schema_arrow
     names = schema.names

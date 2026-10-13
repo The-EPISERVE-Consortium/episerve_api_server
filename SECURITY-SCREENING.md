@@ -440,3 +440,30 @@ unchanged. F3's separate model-run preview SQL/URL paths remain unchanged and mu
 be addressed independently; the dataset URL interpolation portion is removed by
 this change.
 
+## 10. F3 remediation in the working tree (2026-10-13)
+
+`app/model_run_preview.py` resolves selections against server-held catalog run
+identifiers and derives metadata URLs from the configured DOIP base. Browser row
+URLs and metadata's own run identifier cannot redirect preview requests. Saved
+component paths must stay in the input/output namespace; original input URLs must
+pass the same origin/path validation used by dataset previews.
+
+Parquet previews now use bounded downloads and generated queries over registered
+Arrow data in a connection with external access disabled. CSV/TSV downloads are
+also validated, bounded, and redirect-free. Metadata is limited to 1 MiB, runs to
+20 preview components, and displayed rows to 1–500 per component. All limits and
+validation apply to both initial loading and changes to the row-limit control.
+
+The page never executes `schema:query`. Recorded SQL is displayed as provenance
+only. Saved inputs take priority; fallback original inputs are clearly identified
+as data whose transformations have not been reapplied. The row-limit callback uses
+the same validated component list, preserving that preference. Stale callbacks
+cannot replace another selected run's preview.
+
+Regression tests cover malicious metadata SQL and paths, forged browser selections
+and metadata identifiers, original-input destination validation, redirects and
+response-size limits, text-prefix handling, saved-input preference, and the actual
+initial/reload UI callbacks. Backends are mocked; no live testing or deployment was
+performed. This records source remediation of F3's preview paths. F2 and F4 remain
+unchanged, and the earlier findings describe the previously reviewed revision.
+

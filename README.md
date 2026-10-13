@@ -44,10 +44,16 @@ when the source has more rows. Query connections have external access and automa
 extension installation/loading disabled. Components hosted elsewhere or exceeding
 these limits remain available through their download links but cannot be previewed.
 
-Model-run previews retain their existing behavior: Parquet files use DuckDB HTTP
-range requests, and CSV/TSV previews request the first 4 MiB (`?size=` on the retrieve
-URL, see `app/clients/doip.py`). Their separate metadata-driven query and URL risks
-(F3 in `SECURITY-SCREENING.md`) are outside this F1 change.
+Model-run previews use the same restricted DOIP downloads and generated Parquet
+queries. Metadata downloads are capped at 1 MiB, each run previews at most 20
+components, and the **Max rows** control accepts 1–500 rows. CSV/TSV previews request
+at most 4 MiB and reject larger responses even if the gateway ignores that request.
+All preview downloads reject redirects and unapproved destinations.
+
+Saved input components take priority over original input references. If no saved
+inputs exist, original inputs are explicitly labelled as untransformed data.
+Recorded transformation SQL is available as provenance only; previews never execute
+it. Changing **Max rows** uses the same validated component list and input preference.
 
 ## Running locally
 
