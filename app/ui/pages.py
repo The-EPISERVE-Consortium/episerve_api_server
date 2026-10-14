@@ -20,6 +20,7 @@ from app.model_run_preview import (
     MAX_PREVIEW_ROWS, fetch_component_preview, fetch_run_metadata,
     find_run_components, resolve_model_run,
 )
+from app.sql_validation import validate_transformation_sql
 
 
 NAV_ITEMS = [
@@ -2073,12 +2074,14 @@ def register_pages():
                         ui.notify("Enter a SQL query to verify", type="warning", position="top")
                         return
                     try:
-                        duckdb.connect().execute(f"EXPLAIN {sql}")
+                        validate_transformation_sql(sql)
                         ui.notify("SQL syntax is valid", type="positive", position="top")
                     except duckdb.ParserException as ex:
                         ui.notify(f"Syntax error: {ex}", type="negative", position="top")
-                    except Exception:
-                        ui.notify("SQL syntax is valid", type="positive", position="top")
+                    except ValueError as ex:
+                        ui.notify(str(ex), type="negative", position="top")
+                    except duckdb.Error as ex:
+                        ui.notify(f"Could not parse SQL: {ex}", type="negative", position="top")
                 return verify
 
             def _make_format_sql(inp):
@@ -2421,12 +2424,14 @@ def register_pages():
                     ui.notify("Enter a SQL query to verify", type="warning", position="top")
                     return
                 try:
-                    duckdb.connect().execute(f"EXPLAIN {sql}")
+                    validate_transformation_sql(sql)
                     ui.notify("SQL syntax is valid", type="positive", position="top")
                 except duckdb.ParserException as ex:
                     ui.notify(f"Syntax error: {ex}", type="negative", position="top")
-                except Exception:
-                    ui.notify("SQL syntax is valid", type="positive", position="top")
+                except ValueError as ex:
+                    ui.notify(str(ex), type="negative", position="top")
+                except duckdb.Error as ex:
+                    ui.notify(f"Could not parse SQL: {ex}", type="negative", position="top")
             return verify
 
         def make_format_sql(inp):
