@@ -7,3 +7,7 @@ dist/
 *:Zone.Identifier
 *~
 .nicegui/
+
+# Local security-screening working directory: contains live evidence and
+# credentials captured during an audit. Never commit.
+_security_screening/
