@@ -34,6 +34,13 @@ else
     echo "kubectl not found — skipping K8s secrets. Set LAKEFS_ACCESS_KEY, LAKEFS_SECRET_KEY, CKAN_API_TOKEN, BLACKBOARD_PASSWORD manually."
 fi
 
+# Local development: the server refuses to start on the shipped default storage
+# secret. Generate a throwaway one if none was provided (sessions reset on restart).
+if [ -z "${STORAGE_SECRET:-}" ]; then
+    export STORAGE_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    echo "Generated a local STORAGE_SECRET (sessions will not survive a restart)."
+fi
+
 echo ""
 PORT=${PORT:-8000}
 echo "Starting EPISERVE API server at http://localhost:${PORT}"

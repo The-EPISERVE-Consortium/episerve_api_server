@@ -1,8 +1,8 @@
-import os
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from nicegui import ui
 from app.routers import auth, datasets, models, model_runs
+from app.secrets import require_secret
 from app.ui.pages import register_pages
 
 app = FastAPI(
@@ -254,5 +254,5 @@ ui.run_with(
     title="EPISERVE",
     favicon="🔬",
     dark=False,
-    storage_secret=os.environ.get("STORAGE_SECRET", "episerve-dev-secret-change-me"),
+    storage_secret=require_secret("STORAGE_SECRET", dev_default="episerve-dev-secret-change-me"),
 )
