@@ -254,5 +254,5 @@ ui.run_with(
     title="EPISERVE",
     favicon="🔬",
     dark=False,
-    storage_secret=require_secret("STORAGE_SECRET", dev_default="episerve-dev-secret-change-me"),
+    storage_secret=require_secret("SESSION_SECRET", dev_default="episerve-dev-secret-change-me"),
 )

@@ -1,7 +1,7 @@
 """Test configuration.
 
 Allow insecure default secrets so importing ``app.main`` (which now fails
-closed on a shipped-default STORAGE_SECRET) works in the test suite.
+closed on a shipped-default SESSION_SECRET) works in the test suite.
 """
 
 import os

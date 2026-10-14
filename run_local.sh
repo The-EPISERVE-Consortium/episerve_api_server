@@ -36,9 +36,9 @@ fi
 
 # Local development: the server refuses to start on the shipped default storage
 # secret. Generate a throwaway one if none was provided (sessions reset on restart).
-if [ -z "${STORAGE_SECRET:-}" ]; then
-    export STORAGE_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
-    echo "Generated a local STORAGE_SECRET (sessions will not survive a restart)."
+if [ -z "${SESSION_SECRET:-}" ]; then
+    export SESSION_SECRET="$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+    echo "Generated a local SESSION_SECRET (sessions will not survive a restart)."
 fi
 
 echo ""
