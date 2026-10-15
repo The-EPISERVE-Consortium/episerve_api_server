@@ -1,9 +1,10 @@
 """Assemble a ranked leaderboard from catalog runs, predictions and observations."""
 
+import copy
 import math
+import threading
 from dataclasses import dataclass, field
 from datetime import date
-from functools import lru_cache
 from typing import Callable
 
 import pandas as pd
@@ -72,7 +73,10 @@ def sort_key(metric: str) -> Callable[[Entry], tuple]:
 
 
 def _num(value) -> float | None:
-    return None if value is None or (isinstance(value, float) and math.isnan(value)) else float(value)
+    if value is None:
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
 
 
 def _points(forecast: pd.DataFrame, truth: pd.DataFrame) -> list[dict]:
@@ -147,7 +151,7 @@ def build_leaderboard(
             run_qid=run["qid"], model_name=name, docker_tag=run.get("docker_tag", ""),
             params=load_params(run["qid"]), history_start=verdict.window.start,
             history_end=verdict.window.end, run_timestamp=run.get("run_timestamp", ""),
-            n_scored=result.n_scored, n_expected=result.n_expected, metrics=result.metrics,
+            n_scored=result.n_scored, n_expected=result.n_expected, metrics={name: _num(value) for name, value in result.metrics.items()},
             points=_points(forecast, truth),
         ))
     entries.sort(key=sort_key(rank_by))
@@ -164,40 +168,76 @@ def build_leaderboard(
     )
 
 
-@lru_cache(maxsize=512)
+_CACHE_LIMIT = 16
+_lock = threading.Lock()
+_predictions_cache: dict = {}
+_params_cache: dict = {}
+_truth_cache: dict = {}
+
+
+def clear_caches() -> None:
+    """Empty every loader cache."""
+    with _lock:
+        _predictions_cache.clear()
+        _params_cache.clear()
+        _truth_cache.clear()
+
+
+def _remember(cache: dict, key, value, limit: int) -> None:
+    with _lock:
+        cache[key] = value
+        while len(cache) > limit:
+            cache.pop(next(iter(cache)))
+
+
 def _cached_predictions(resource_id: str, benchmark: Benchmark) -> pd.DataFrame:
-    return loaders.load_predictions(ckan_client.get_datastore_records(resource_id), benchmark)
+    key = (resource_id, benchmark)
+    with _lock:
+        hit = _predictions_cache.get(key)
+    if hit is None:
+        hit = loaders.load_predictions(ckan_client.get_datastore_records(resource_id), benchmark)
+        _remember(_predictions_cache, key, hit, 512)
+    return hit.copy()
 
 
-@lru_cache(maxsize=256)
 def _cached_params(qid: str, doip_base: str) -> dict:
-    return loaders.fetch_run_params(qid, doip_base)
+    key = (qid, doip_base)
+    with _lock:
+        hit = _params_cache.get(key)
+    if hit is None:
+        hit = loaders.fetch_run_params(qid, doip_base)
+        if hit:  # an empty result means the fetch failed; retry next time
+            _remember(_params_cache, key, hit, 256)
+    return copy.deepcopy(hit)
 
 
-@lru_cache(maxsize=16)
-def _cached_truth(dataset_qid: str, last_modified: str, benchmark: Benchmark, doip_base: str) -> pd.DataFrame:
-    dataset = next(d for d in ckan_client.list_processed_datasets() if d["qid"] == dataset_qid)
-    return loaders.load_truth(dataset, benchmark, doip_base)
+def _cached_truth(dataset: dict, benchmark: Benchmark, doip_base: str) -> pd.DataFrame:
+    key = (dataset["qid"], dataset.get("last_modified", ""), benchmark, doip_base)
+    with _lock:
+        hit = _truth_cache.get(key)
+    if hit is None:
+        hit = loaders.load_truth(dataset, benchmark, doip_base)
+        _remember(_truth_cache, key, hit, _CACHE_LIMIT)
+    return hit.copy()
 
 
 def default_loaders(doip_base: str | None = None) -> dict:
     """Loader callables for ``build_leaderboard`` wired to CKAN and DOIP.
 
-    Predictions and parameters are immutable per run, so they are cached by run;
-    observations are cached by the dataset's ``last_modified`` timestamp, so a
-    refresh of the dataset invalidates them.
+    Predictions and parameters are immutable per run, so they are cached by run
+    (empty parameter results are not cached); observations are cached by the
+    dataset's ``last_modified`` timestamp, so a refresh of the dataset
+    invalidates them.
     """
     base = doip_base or settings.doip_url
 
     def load_predictions(run: dict, benchmark: Benchmark) -> pd.DataFrame:
         if not run.get("predictions_resource_id"):
             raise LoadError("run has no predictions.tsv in CKAN")
-        return _cached_predictions(run["predictions_resource_id"], benchmark).copy()
+        return _cached_predictions(run["predictions_resource_id"], benchmark)
 
     return {
-        "load_truth": lambda dataset, benchmark: _cached_truth(
-            dataset["qid"], dataset.get("last_modified", ""), benchmark, base
-        ).copy(),
+        "load_truth": lambda dataset, benchmark: _cached_truth(dataset, benchmark, base),
         "load_predictions": load_predictions,
-        "load_params": lambda qid: dict(_cached_params(qid, base)),
+        "load_params": lambda qid: _cached_params(qid, base),
     }

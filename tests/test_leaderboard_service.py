@@ -1,5 +1,6 @@
 """Tests for assembling and ranking a leaderboard from fake loaders."""
 
+import math
 from datetime import date
 
 import pandas as pd
@@ -111,3 +112,93 @@ def test_entry_carries_params_history_and_points():
     assert entry.params == {"history_length": 91}
     assert entry.history_end == date(2021, 12, 31) and entry.history_start is None
     assert entry.points[0] == {"date": "2022-01-05", "forecast": 11.0, "q10": 9.0, "q90": 12.0, "truth": 10.0}
+
+
+@pytest.fixture(autouse=True)
+def _clear_caches():
+    service.clear_caches()
+    yield
+    service.clear_caches()
+
+
+def test_non_finite_values_become_none():
+    runs = [_run("Q10", "a")]
+    board = _build(runs, {"Q10": _pred([float("inf"), 19.0])})
+    entry = board.entries[0]
+    assert entry.points[0]["forecast"] is None
+    for value in entry.metrics.values():
+        assert value is None or math.isfinite(value)
+
+
+@pytest.fixture
+def wired(monkeypatch):
+    calls = {"truth": 0, "records": 0, "params": 0}
+    state = {"params": {"history_length": 91}}
+
+    def load_truth(dataset, benchmark, base):
+        calls["truth"] += 1
+        return TRUTH.copy()
+
+    def records(resource_id):
+        calls["records"] += 1
+        return [{"x": 1}]
+
+    def load_predictions(rows, benchmark):
+        return _pred([11.0, 21.0])
+
+    def fetch(qid, base):
+        calls["params"] += 1
+        return state["params"]
+
+    monkeypatch.setattr(service.loaders, "load_truth", load_truth)
+    monkeypatch.setattr(service.ckan_client, "get_datastore_records", records)
+    monkeypatch.setattr(service.loaders, "load_predictions", load_predictions)
+    monkeypatch.setattr(service.loaders, "fetch_run_params", fetch)
+    return calls, state, service.default_loaders("http://doip")
+
+
+def test_default_loaders_cache_each_call(wired):
+    calls, _, fns = wired
+    ds = {"qid": "Q1", "last_modified": "t1"}
+    for _ in range(2):
+        fns["load_truth"](ds, BENCH)
+        fns["load_predictions"](_run("Q10", "a"), BENCH)
+        fns["load_params"]("Q10")
+    assert calls == {"truth": 1, "records": 1, "params": 1}
+
+
+def test_changed_last_modified_reloads_truth(wired):
+    calls, _, fns = wired
+    fns["load_truth"]({"qid": "Q1", "last_modified": "t1"}, BENCH)
+    fns["load_truth"]({"qid": "Q1", "last_modified": "t2"}, BENCH)
+    assert calls["truth"] == 2
+
+
+def test_returned_values_are_copies(wired):
+    _, state, fns = wired
+    state["params"] = {"nested": {"a": 1}}
+    ds = {"qid": "Q1", "last_modified": "t1"}
+    frame = fns["load_truth"](ds, BENCH)
+    frame.loc[0, "truth"] = -1.0
+    assert fns["load_truth"](ds, BENCH).loc[0, "truth"] == 10.0
+    run = _run("Q10", "a")
+    frame = fns["load_predictions"](run, BENCH)
+    frame.loc[0, "forecast"] = -1.0
+    assert fns["load_predictions"](run, BENCH).loc[0, "forecast"] == 11.0
+    fns["load_params"]("Q10")["nested"]["a"] = 99
+    assert fns["load_params"]("Q10") == {"nested": {"a": 1}}
+
+
+def test_run_without_predictions_resource_raises(wired):
+    _, _, fns = wired
+    with pytest.raises(LoadError):
+        fns["load_predictions"](_run("Q10", "a", predictions_resource_id=None), BENCH)
+
+
+def test_empty_params_are_not_cached(wired):
+    calls, state, fns = wired
+    state["params"] = {}
+    assert fns["load_params"]("Q10") == {}
+    state["params"] = {"history_length": 7}
+    assert fns["load_params"]("Q10") == {"history_length": 7}
+    assert calls["params"] == 2
