@@ -4,6 +4,7 @@ import json
 from io import BytesIO
 
 import duckdb
+import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
@@ -49,6 +50,8 @@ def load_predictions(records: list[dict], benchmark: Benchmark) -> pd.DataFrame:
         column = benchmark.target_column + suffix
         if column in frame.columns:
             out[key] = pd.to_numeric(frame[column], errors="coerce")
+    for key in [name for name in ("forecast", "q10", "q90") if name in out.columns]:
+        out[key] = out[key].where(np.isfinite(out[key]))
     window = (out["date"] >= pd.Timestamp(benchmark.test_start)) & (out["date"] <= pd.Timestamp(benchmark.test_end))
     clipped = out[window].drop_duplicates("date", keep="last")
     return clipped.reset_index(drop=True)
@@ -104,7 +107,8 @@ def load_truth(dataset: dict, benchmark: Benchmark, doip_base: str) -> pd.DataFr
             connection.register("source", table)
             truth = connection.execute(
                 f"SELECT TRY_CAST({date_sql} AS DATE) AS date, TRY_CAST({target_sql} AS DOUBLE) AS truth "
-                f"FROM source WHERE {where} AND TRY_CAST({target_sql} AS DOUBLE) IS NOT NULL ORDER BY 1",
+                f"FROM source WHERE {where} AND TRY_CAST({target_sql} AS DOUBLE) IS NOT NULL "
+                f"AND isfinite(TRY_CAST({target_sql} AS DOUBLE)) ORDER BY 1",
                 values,
             ).df()
     except (duckdb.Error, pa.ArrowException) as exc:
@@ -124,7 +128,9 @@ def fetch_run_params(qid: str, doip_base: str) -> dict:
     """Fetch a run's ``config.json``; an empty dict if it cannot be read."""
     url = f"{doip_base.rstrip('/')}/doip/retrieve/{qid}/input/config.json"
     try:
-        parsed = json.loads(download_preview_bytes(url, doip_base, MAX_CONFIG_BYTES))
+        parsed = json.loads(
+            download_preview_bytes(url, doip_base, MAX_CONFIG_BYTES), parse_constant=lambda _: None
+        )
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}

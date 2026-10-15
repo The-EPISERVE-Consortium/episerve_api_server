@@ -8,6 +8,7 @@ from datetime import date
 from typing import Callable
 
 import pandas as pd
+import requests
 
 from app.clients import ckan as ckan_client
 from app.config import settings
@@ -234,7 +235,10 @@ def default_loaders(doip_base: str | None = None) -> dict:
     def load_predictions(run: dict, benchmark: Benchmark) -> pd.DataFrame:
         if not run.get("predictions_resource_id"):
             raise LoadError("run has no predictions.tsv in CKAN")
-        return _cached_predictions(run["predictions_resource_id"], benchmark)
+        try:
+            return _cached_predictions(run["predictions_resource_id"], benchmark)
+        except (requests.RequestException, RuntimeError) as exc:
+            raise LoadError("predictions could not be read from the CKAN DataStore") from exc
 
     return {
         "load_truth": lambda dataset, benchmark: _cached_truth(dataset, benchmark, base),

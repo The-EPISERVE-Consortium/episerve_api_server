@@ -32,8 +32,8 @@ def score_forecast(forecast: pd.DataFrame, truth: pd.DataFrame) -> ScoreResult:
         truth: Columns ``date`` and ``truth``.
 
     Returns:
-        The counts and the metrics. Interval metrics are ``None`` when the
-        forecast has no ``q10``/``q90`` columns or nothing could be scored.
+        The counts and the metrics. Interval metrics are ``None`` unless every
+        scored row has both ``q10`` and ``q90``, or nothing could be scored.
     """
     merged = truth.merge(forecast, on="date", how="left")
     scored = merged.dropna(subset=["forecast", "truth"])
@@ -43,9 +43,8 @@ def score_forecast(forecast: pd.DataFrame, truth: pd.DataFrame) -> ScoreResult:
         metrics["mae"] = float(error.abs().mean())
         metrics["rmse"] = float(np.sqrt((error ** 2).mean()))
         if {"q10", "q90"} <= set(scored.columns):
-            both = scored.dropna(subset=["q10", "q90"])
-            if not both.empty:
-                low, high, y = both["q10"], both["q90"], both["truth"]
+            if not scored[["q10", "q90"]].isna().any().any():
+                low, high, y = scored["q10"], scored["q90"], scored["truth"]
                 metrics["coverage"] = float(((y >= low) & (y <= high)).mean())
                 penalty = 2 / ALPHA
                 interval = (high - low) + penalty * (low - y).clip(lower=0) + penalty * (y - high).clip(lower=0)

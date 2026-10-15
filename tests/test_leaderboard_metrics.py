@@ -72,3 +72,14 @@ def test_nothing_scored_gives_none_metrics_not_nan():
     assert result.n_scored == 0
     assert all(value is None for value in result.metrics.values())
     assert not any(isinstance(v, float) and math.isnan(v) for v in result.metrics.values())
+
+
+def test_partial_quantiles_leave_interval_metrics_none():
+    result = score_forecast(
+        _forecast([10.0, 20.0], q10=[9.0, float("nan")], q90=[11.0, float("nan")]),
+        _truth([10.0, 22.0]),
+    )
+    assert result.metrics["coverage"] is None
+    assert result.metrics["interval_score"] is None
+    assert result.metrics["mae"] == pytest.approx(1.0)
+    assert result.metrics["rmse"] is not None

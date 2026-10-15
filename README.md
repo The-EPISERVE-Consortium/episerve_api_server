@@ -71,13 +71,13 @@ Status codes: `400` if `test_start` is after `test_end`; `404` if the dataset is
 A run is ranked only if:
 
 - it is on the benchmark's dataset and its status is `success`;
-- its history window, read from the transformation SQL (bounds on the date column written as `DATE 'YYYY-MM-DD'`), ends before `test_start`. A run without a single recognisable upper bound is listed as not scorable;
-- if a filter is set, the SQL contains it as an equality condition (any `OR` in the SQL means it does not count);
+- its history window, read from the transformation SQL, ends before `test_start`. Bounds on the date column are accepted as plain `'YYYY-MM-DD'` or `DATE 'YYYY-MM-DD'` literals, with the column bare, qualified, quoted or wrapped as `CAST(col AS DATE)`. A run without a single recognisable upper bound, with a start after the end, or whose SQL contains `OR`, `NOT`, `UNION`/`EXCEPT`/`INTERSECT`, `INTERVAL` arithmetic or arithmetic on the date literal is listed as not scorable;
+- if a filter is set, the SQL contains it as an equality condition (any `OR`, `NOT` or `CASE` in the SQL means it does not count);
 - its forecast covers every observed date in the window.
 
 Runs that fail these checks are returned in `not_scorable` with the reason.
 
-Forecasts are read from the run's `predictions.tsv` DataStore resource in CKAN; coverage and interval score need the `<target>_q10` and `<target>_q90` columns. Observations are read from the dataset's Parquet file via DOIP. Metrics are MAE, RMSE, 80% coverage and the 80% interval score (alpha 0.2).
+Forecasts are read from the run's `predictions.tsv` DataStore resource in CKAN; coverage and interval score need the `<target>_q10` and `<target>_q90` columns. Observations are read from the dataset's Parquet file via DOIP. Metrics are MAE, RMSE, 80% coverage and the 80% interval score (alpha 0.2). Coverage and interval score are shown only when every scored date has both q10 and q90. Non-finite forecast or observed values count as missing. A forecast beyond the last observed date is scored on the observed dates only.
 
 The web view is at `/ui/leaderboard`.
 

@@ -39,7 +39,12 @@ class Qualification:
     window: HistoryWindow | None = None
 
 
-_DATE = r"(?:DATE\s*)?'(\d{4}-\d{2}-\d{2})'"
+_DATE = r"(?:DATE\s*)?'(\d{4}-\d{2}-\d{2})'(?!\s*[-+*/|])"
+
+# Constructs that can widen, negate or replace the filtered rows; their
+# presence makes the history window unprovable.
+_WINDOW_BLOCKERS = re.compile(r"\b(?:OR|NOT|UNION|EXCEPT|INTERSECT|INTERVAL)\b", re.IGNORECASE)
+_FILTER_BLOCKERS = re.compile(r"\b(?:OR|NOT|CASE)\b", re.IGNORECASE)
 
 
 _QUALIFIER = r'(?:"?\w+"?\.)?'
@@ -84,9 +89,13 @@ def parse_history_window(sql: str, date_column: str) -> HistoryWindow | None:
 
     Returns:
         The window, or None when no single upper date bound can be recognised,
-        when the bounds are impossible dates, or when the upper bounds disagree.
+        when the bounds are impossible dates, when the upper bounds disagree,
+        when the start is after the end, or when the SQL contains OR, NOT,
+        UNION/EXCEPT/INTERSECT or INTERVAL (the bounds might not hold).
         Several distinct lower bounds leave the start unbounded (None).
     """
+    if _WINDOW_BLOCKERS.search(sql):
+        return None
     try:
         uppers = set(_bound_dates(sql, date_column, "<=|<"))
         lowers = set(_bound_dates(sql, date_column, ">=|>"))
@@ -95,16 +104,20 @@ def parse_history_window(sql: str, date_column: str) -> HistoryWindow | None:
     if len(uppers) != 1:
         return None
     start = next(iter(lowers)) if len(lowers) == 1 else None
-    return HistoryWindow(start, next(iter(uppers)))
+    end = next(iter(uppers))
+    if start is not None and start > end:
+        return None
+    return HistoryWindow(start, end)
 
 
 def has_equality_filter(sql: str, column: str, value: str) -> bool:
     """Whether the SQL restricts ``column`` to exactly ``value``.
 
     The column name is matched case-insensitively, the value case-sensitively.
-    Any OR in the SQL makes the filter ambiguous, so it counts as not a filter.
+    Any OR, NOT or CASE in the SQL makes the filter ambiguous, so it counts as
+    not a filter.
     """
-    if re.search(r"\bOR\b", sql, re.IGNORECASE):
+    if _FILTER_BLOCKERS.search(sql):
         return False
     literal = re.escape(value.replace("'", "''"))
     pattern = rf"(?i:{_column_pattern(column)})\s*=\s*'{literal}'(?!')"

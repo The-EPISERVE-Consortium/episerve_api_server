@@ -7,6 +7,7 @@ def _get(action: str, params: dict) -> dict:
     response = requests.get(
         f"{settings.ckan_url}/api/3/action/{action}",
         params=params,
+        timeout=(5, 30),
     )
     response.raise_for_status()
     body = response.json()

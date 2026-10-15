@@ -145,3 +145,34 @@ def test_load_truth_filter_column_without_value_raises(monkeypatch):
     bench = Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": None})
     with pytest.raises(loaders.LoadError, match="filter value"):
         loaders.load_truth(_dataset(), bench, "https://doip.example")
+
+
+def test_fetch_run_params_non_finite_constants_become_null(monkeypatch):
+    monkeypatch.setattr(
+        loaders, "download_preview_bytes",
+        lambda url, base, limit: b'{"a": NaN, "b": Infinity, "c": -Infinity, "d": 1}',
+    )
+    assert loaders.fetch_run_params("Q1", "https://doip.example") == {
+        "a": None, "b": None, "c": None, "d": 1,
+    }
+
+
+def test_load_truth_drops_non_finite_values(monkeypatch):
+    source = pd.DataFrame({
+        "datum": ["2022-01-05", "2022-01-12", "2022-01-19"],
+        "value": [float("nan"), float("inf"), 2.5],
+    })
+    _patch(monkeypatch, _parquet_bytes(source))
+    truth = loaders.load_truth(_dataset(), BENCH, "https://doip.example")
+    assert truth["date"].tolist() == [pd.Timestamp("2022-01-19")]
+    assert truth["truth"].tolist() == [2.5]
+
+
+def test_load_predictions_non_finite_values_become_nan():
+    records = [
+        {"datum": "2022-01-05", "value": "inf", "value_q10": "-inf", "value_q90": "Infinity"},
+        {"datum": "2022-01-12", "value": "1", "value_q10": "0", "value_q90": "2"},
+    ]
+    frame = loaders.load_predictions(records, BENCH)
+    assert frame.loc[0, ["forecast", "q10", "q90"]].isna().all()
+    assert frame.loc[1, "forecast"] == 1.0

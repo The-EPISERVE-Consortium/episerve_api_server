@@ -165,3 +165,40 @@ def test_filter_value_with_apostrophe_matches_sql_escape():
 def test_filter_value_must_not_match_a_prefix_of_a_longer_literal():
     sql = "SELECT * FROM df WHERE name = 'A''B'"
     assert not has_equality_filter(sql, "name", "A")
+
+
+import pytest
+
+
+def test_real_catalog_sql_still_parses():
+    assert parse_history_window(SQL, "datum") == HistoryWindow(date(2024, 1, 3), date(2026, 3, 25))
+    assert has_equality_filter(SQL, "typ", "Influenza A+B")
+
+
+@pytest.mark.parametrize("clause", [
+    "datum <= DATE '2021-12-31' + INTERVAL 1 YEAR",
+    "datum <= DATE '2021-12-31' - 5",
+    "datum <= DATE '2021-12-31' * 2",
+    "datum <= DATE '2021-12-31' || 'x'",
+    "datum <= DATE '2021-12-31' OR datum >= DATE '2023-01-01'",
+    "NOT (datum <= DATE '2021-12-31')",
+    "datum <= DATE '2021-12-31' UNION ALL SELECT * FROM df",
+    "datum <= DATE '2021-12-31' EXCEPT SELECT * FROM df",
+    "datum <= DATE '2021-12-31' INTERSECT SELECT * FROM df",
+    "datum <= DATE '2021-12-31' AND datum >= DATE '2022-06-01'",
+])
+def test_unsafe_sql_shapes_give_no_window(clause):
+    assert parse_history_window(_window_sql(clause), "datum") is None
+
+
+def test_column_names_containing_or_and_not_do_not_block_parsing():
+    sql = "SELECT origin, notification FROM df WHERE datum <= DATE '2021-12-31' ORDER BY origin"
+    assert parse_history_window(sql, "datum") == HistoryWindow(None, date(2021, 12, 31))
+
+
+def test_equality_filter_rejects_not_and_case():
+    assert not has_equality_filter("SELECT * FROM df WHERE NOT typ = 'A'", "typ", "A")
+    assert not has_equality_filter(
+        "SELECT CASE WHEN typ = 'A' THEN 1 END FROM df WHERE typ = 'A'", "typ", "A"
+    )
+    assert has_equality_filter("SELECT notification FROM df WHERE typ = 'A'", "typ", "A")

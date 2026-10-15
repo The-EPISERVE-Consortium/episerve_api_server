@@ -37,3 +37,22 @@ def test_get_datastore_records_paginates_and_strips_ids(monkeypatch):
     rows = ckan.get_datastore_records("res", page_size=2)
     assert rows == [{"datum": "a"}, {"datum": "b"}, {"datum": "c"}]
     assert calls == [("datastore_search", 0), ("datastore_search", 2)]
+
+
+def test_get_passes_a_request_timeout(monkeypatch):
+    seen = {}
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"success": True, "result": {}}
+
+    def fake_get(url, **kwargs):
+        seen.update(kwargs)
+        return Response()
+
+    monkeypatch.setattr(ckan.requests, "get", fake_get)
+    ckan._get("package_search", {})
+    assert seen["timeout"] == (5, 30)

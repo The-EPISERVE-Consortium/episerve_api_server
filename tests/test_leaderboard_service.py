@@ -202,3 +202,53 @@ def test_empty_params_are_not_cached(wired):
     state["params"] = {"history_length": 7}
     assert fns["load_params"]("Q10") == {"history_length": 7}
     assert calls["params"] == 2
+
+
+def test_forecast_past_last_truth_date_is_ranked_on_observed_dates():
+    longer = pd.DataFrame({
+        "date": pd.to_datetime(["2022-01-05", "2022-01-12", "2022-01-19"]),
+        "forecast": [11.0, 21.0, 999.0],
+    })
+    board = _build([_run("Q10", "a")], {"Q10": longer}, rank_by="mae")
+    assert len(board.entries) == 1
+    assert board.entries[0].n_scored == 2 and board.entries[0].n_expected == 2
+    assert board.entries[0].metrics["mae"] == pytest.approx(1.0)
+
+
+def test_datastore_failure_lists_run_as_not_scorable_and_keeps_others(monkeypatch):
+    import requests
+
+    service.clear_caches()
+
+    def records(resource_id):
+        if resource_id == "res-Q10":
+            raise requests.HTTPError("404 no datastore table")
+        return [{"datum": "2022-01-05", "v": "11"}, {"datum": "2022-01-12", "v": "21"}]
+
+    monkeypatch.setattr(service.ckan_client, "get_datastore_records", records)
+    fns = service.default_loaders("http://doip")
+    board = service.build_leaderboard(
+        BENCH, [_run("Q10", "a"), _run("Q11", "b")], {"last_modified": "t"},
+        load_truth=lambda dataset, benchmark: TRUTH,
+        load_predictions=fns["load_predictions"],
+        load_params=lambda qid: {},
+        rank_by="mae",
+    )
+    assert [e.model_name for e in board.entries] == ["b"]
+    assert [(s.run_qid, s.reason) for s in board.not_scorable] == [
+        ("Q10", "predictions could not be read from the CKAN DataStore")
+    ]
+    service.clear_caches()
+
+
+def test_runtime_error_from_ckan_is_also_a_load_error(monkeypatch):
+    service.clear_caches()
+
+    def records(resource_id):
+        raise RuntimeError("CKAN datastore_search failed")
+
+    monkeypatch.setattr(service.ckan_client, "get_datastore_records", records)
+    fns = service.default_loaders("http://doip")
+    with pytest.raises(LoadError):
+        fns["load_predictions"](_run("Q10", "a"), BENCH)
+    service.clear_caches()
