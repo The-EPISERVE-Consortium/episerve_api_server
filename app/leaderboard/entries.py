@@ -42,10 +42,37 @@ class Qualification:
 _DATE = r"(?:DATE\s*)?'(\d{4}-\d{2}-\d{2})'"
 
 
+_QUALIFIER = r'(?:"?\w+"?\.)?'
+
+
+def _column_pattern(column: str) -> str:
+    """Match a bare or quoted column, optionally qualified, as a whole word."""
+    col = re.escape(column)
+    return rf'(?<![\w"]){_QUALIFIER}"?{col}"?(?!\w)'
+
+
 def _bound_pattern(date_column: str, operators: str) -> re.Pattern:
     col = re.escape(date_column)
-    column = rf'(?:CAST\(\s*"?{col}"?\s+AS\s+DATE\s*\)|"?{col}"?)'
+    column = (
+        rf'(?:CAST\(\s*{_QUALIFIER}"?{col}"?\s+AS\s+DATE\s*\)'
+        rf"|{_column_pattern(date_column)})"
+    )
     return re.compile(rf"{column}\s*({operators})\s*{_DATE}", re.IGNORECASE)
+
+
+def _bound_dates(sql: str, date_column: str, operators: str) -> list[date]:
+    """Effective dates of every bound in ``sql`` with the given operators.
+
+    Exclusive operators are converted to the inclusive day they cover.
+    Raises ValueError for impossible dates.
+    """
+    dates = []
+    for operator, text in _bound_pattern(date_column, operators).findall(sql):
+        value = date.fromisoformat(text)
+        if operator in ("<", ">"):
+            value += timedelta(days=-1 if operator == "<" else 1)
+        dates.append(value)
+    return dates
 
 
 def parse_history_window(sql: str, date_column: str) -> HistoryWindow | None:
@@ -56,29 +83,32 @@ def parse_history_window(sql: str, date_column: str) -> HistoryWindow | None:
         date_column: Date column of the source dataset.
 
     Returns:
-        The window, or None when no upper date bound can be recognised.
+        The window, or None when no single upper date bound can be recognised,
+        when the bounds are impossible dates, or when the upper bounds disagree.
+        Several distinct lower bounds leave the start unbounded (None).
     """
-    upper = _bound_pattern(date_column, "<=|<").search(sql)
-    if upper is None:
+    try:
+        uppers = set(_bound_dates(sql, date_column, "<=|<"))
+        lowers = set(_bound_dates(sql, date_column, ">=|>"))
+    except (ValueError, OverflowError):
         return None
-    end = date.fromisoformat(upper.group(2))
-    if upper.group(1) == "<":
-        end -= timedelta(days=1)
-    lower = _bound_pattern(date_column, ">=|>").search(sql)
-    start = None
-    if lower is not None:
-        start = date.fromisoformat(lower.group(2))
-        if lower.group(1) == ">":
-            start += timedelta(days=1)
-    return HistoryWindow(start, end)
+    if len(uppers) != 1:
+        return None
+    start = next(iter(lowers)) if len(lowers) == 1 else None
+    return HistoryWindow(start, next(iter(uppers)))
 
 
 def has_equality_filter(sql: str, column: str, value: str) -> bool:
-    """Whether the SQL restricts ``column`` to exactly ``value``."""
-    col = re.escape(column)
-    literal = re.escape(value).replace("''", "'")
-    pattern = rf"\"?{col}\"?\s*=\s*'{literal}'"
-    return re.search(pattern, sql, re.IGNORECASE) is not None
+    """Whether the SQL restricts ``column`` to exactly ``value``.
+
+    The column name is matched case-insensitively, the value case-sensitively.
+    Any OR in the SQL makes the filter ambiguous, so it counts as not a filter.
+    """
+    if re.search(r"\bOR\b", sql, re.IGNORECASE):
+        return False
+    literal = re.escape(value.replace("'", "''"))
+    pattern = rf"(?i:{_column_pattern(column)})\s*=\s*'{literal}'(?!')"
+    return re.search(pattern, sql) is not None
 
 
 def qualify_run(run: dict, benchmark: Benchmark) -> Qualification:
