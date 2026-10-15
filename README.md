@@ -55,6 +55,32 @@ inputs exist, original inputs are explicitly labelled as untransformed data.
 Recorded transformation SQL is available as provenance only; previews never execute
 it. Changing **Max rows** uses the same validated component list and input preference.
 
+## Leaderboard
+
+A **benchmark** fixes one prediction task: a processed dataset (`dataset_qid`), a target column, a date column, an optional single equality filter (`filter_column` = `filter_value`), and a test window (`test_start`..`test_end`). Model runs on that dataset are scored against the observed values in the window.
+
+`GET /leaderboard` is unauthenticated, like the other GET endpoints. Parameters:
+
+- `dataset_qid`, `target`, `date_column`, `test_start`, `test_end` (`YYYY-MM-DD`): required
+- `filter_column`, `filter_value`: optional filter
+- `rank_by`: `mae`, `rmse`, `coverage` (distance from the 80% target) or `interval_score` (default); lower is better
+- `all_runs`: `false` (default) shows each model's best run; `true` shows every run
+
+Status codes: `400` if `test_start` is after `test_end`; `404` if the dataset is unknown; `422` if the benchmark cannot be scored (no observations in the window, several observations per date, or a missing column); `502` if CKAN or the scoring backend fails.
+
+A run is ranked only if:
+
+- it is on the benchmark's dataset and its status is `success`;
+- its history window, read from the transformation SQL (bounds on the date column written as `DATE 'YYYY-MM-DD'`), ends before `test_start`. A run without a single recognisable upper bound is listed as not scorable;
+- if a filter is set, the SQL contains it as an equality condition (any `OR` in the SQL means it does not count);
+- its forecast covers every observed date in the window.
+
+Runs that fail these checks are returned in `not_scorable` with the reason.
+
+Forecasts are read from the run's `predictions.tsv` DataStore resource in CKAN; coverage and interval score need the `<target>_q10` and `<target>_q90` columns. Observations are read from the dataset's Parquet file via DOIP. Metrics are MAE, RMSE, 80% coverage and the 80% interval score (alpha 0.2).
+
+The web view is at `/ui/leaderboard`.
+
 ## Running locally
 
 ```bash
