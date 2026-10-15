@@ -11,6 +11,10 @@ from app.auth import _daily_token
 from app.clients import ckan as ckan_client
 from app.clients import blackboard as blackboard_client
 from app.config import settings
+from app.leaderboard.entries import Benchmark
+from app.leaderboard.loaders import LoadError
+from app.leaderboard.present import LABELS, summary, table_rows
+from app.leaderboard.service import build_leaderboard, default_loaders
 from app.dataset_preview import (
     FILTER_OPERATORS, MAX_FILTERS, PAGE_SIZES, PreviewFilter, PreviewOptions,
     load_dataset, query_dataset, resolve_component,
@@ -27,6 +31,7 @@ NAV_ITEMS = [
     ("Datasets",        "/ui/datasets"),
     ("Models",          "/ui/models"),
     ("Model Runs",      "/ui/model-runs"),
+    ("Leaderboard",     "/ui/leaderboard"),
     ("AI Blackboard",   "/ui/blackboard"),
     ("Run Workflow",        "/ui/run_workflow/1"),
     ("Run Workflow Simple", "/ui/trigger"),
@@ -1338,6 +1343,122 @@ def register_pages():
                 runs_table()
 
             preview_container[0] = ui.column().classes("w-full")
+
+    @ui.page("/ui/leaderboard")
+    def leaderboard_page(request: Request):
+        from datetime import date as _date
+
+        _header("/ui/leaderboard")
+        try:
+            datasets = ckan_client.list_processed_datasets()
+        except Exception as e:
+            with ui.column().classes("px-8 py-6"):
+                _error_label(f"Could not load datasets: {e}")
+            return
+        options = {d["qid"]: f"{d['name']} ({d['qid']})" for d in datasets}
+
+        with ui.column().classes("px-8 py-6 w-full gap-4"):
+            with ui.row().classes("w-full items-start justify-between gap-6"):
+                with ui.column().classes("gap-0"):
+                    ui.label("Leaderboard").classes("text-3xl font-bold text-gray-900")
+                    ui.label(
+                        "Which model predicted a chosen series best over a test window? "
+                        "Runs are scored against the real data in the catalog."
+                    ).classes("text-sm text-gray-500 mt-1")
+                _api_box(f"{request.base_url}leaderboard?dataset_qid=…&target=…&date_column=…&test_start=…&test_end=…")
+
+            with ui.row().classes("w-full items-end gap-3 flex-wrap"):
+                dataset_sel = ui.select(options, label="Dataset", value=next(iter(options), None)).props("outlined dense").classes("min-w-[22rem]")
+                target_inp = ui.input("Target column").props("outlined dense")
+                date_inp = ui.input("Date column", value="datum").props("outlined dense")
+                start_inp = ui.input("Test start (C)", placeholder="YYYY-MM-DD").props("outlined dense")
+                end_inp = ui.input("Test end (D)", placeholder="YYYY-MM-DD").props("outlined dense")
+                fcol_inp = ui.input("Filter column (optional)").props("outlined dense")
+                fval_inp = ui.input("Filter value").props("outlined dense")
+                rank_sel = ui.select(LABELS, label="Rank by", value="interval_score").props("outlined dense")
+                all_sw = ui.switch("Show all runs")
+                run_btn = ui.button("Compute")
+
+            result = ui.column().classes("w-full gap-3")
+
+        def _chart(entry, bench) -> dict:
+            dates = [p["date"] for p in entry.points]
+            return {
+                "tooltip": {"trigger": "axis"},
+                "legend": {"data": ["Observed", "Forecast", "q10", "q90"]},
+                "xAxis": {"type": "category", "data": dates},
+                "yAxis": {"type": "value", "scale": True},
+                "series": [
+                    {"name": "Observed", "type": "line", "data": [p["truth"] for p in entry.points]},
+                    {"name": "Forecast", "type": "line", "data": [p["forecast"] for p in entry.points]},
+                    {"name": "q10", "type": "line", "lineStyle": {"type": "dashed"}, "data": [p["q10"] for p in entry.points]},
+                    {"name": "q90", "type": "line", "lineStyle": {"type": "dashed"}, "data": [p["q90"] for p in entry.points]},
+                ],
+            }
+
+        def compute():
+            result.clear()
+            with result:
+                try:
+                    start, end = _date.fromisoformat(start_inp.value), _date.fromisoformat(end_inp.value)
+                except ValueError:
+                    _error_label("Enter test start and end as YYYY-MM-DD.")
+                    return
+                if not dataset_sel.value or not target_inp.value or not date_inp.value or start > end:
+                    _error_label("Choose a dataset, target and date column, and a test start not after the test end.")
+                    return
+                bench = Benchmark(
+                    dataset_qid=dataset_sel.value, target_column=target_inp.value.strip(),
+                    date_column=date_inp.value.strip(), test_start=start, test_end=end,
+                    filter_column=fcol_inp.value.strip() or None,
+                    filter_value=fval_inp.value if fcol_inp.value.strip() else None,
+                )
+                dataset = next(d for d in datasets if d["qid"] == bench.dataset_qid)
+                try:
+                    board = build_leaderboard(
+                        bench, ckan_client.list_model_runs(), dataset, rank_by=rank_sel.value,
+                        best_per_model=not all_sw.value, **default_loaders(),
+                    )
+                except LoadError as e:
+                    _error_label(str(e))
+                    return
+                except Exception as e:
+                    _error_label(f"Could not compute the leaderboard: {e}")
+                    return
+                ui.label(summary(board)).classes("text-sm text-gray-700")
+                rows = table_rows(board)
+                if rows:
+                    columns = [
+                        {"name": "rank", "label": "#", "field": "rank", "align": "left"},
+                        {"name": "model", "label": "Model", "field": "model", "align": "left"},
+                        {"name": "params", "label": "Parameters", "field": "params", "align": "left"},
+                        {"name": "history", "label": "History (A→B)", "field": "history", "align": "left"},
+                        *[{"name": m, "label": LABELS[m], "field": m, "align": "right"} for m in LABELS],
+                        {"name": "scored", "label": "Scored", "field": "scored", "align": "right"},
+                    ]
+                    table = ui.table(columns=columns, rows=rows, row_key="run_qid").classes("w-full")
+                    for m in LABELS:
+                        table.add_slot(f"body-cell-{m}", (
+                            "<q-td :props='props' :class=\"props.row.best." + m + " ? 'text-green-700 font-bold' : ''\">"
+                            "{{ props.value }}</q-td>"
+                        ))
+
+                    def open_detail(e):
+                        entry = next(x for x in board.entries if x.run_qid == e.args[1]["run_qid"])
+                        with ui.dialog() as dialog, ui.card().classes("w-[60rem] max-w-full"):
+                            ui.label(f"{entry.model_name} — run {entry.run_qid}").classes("text-lg font-semibold")
+                            ui.label(f"Parameters: {entry.params or '—'}").classes("text-sm text-gray-600")
+                            ui.echart(_chart(entry, bench)).classes("w-full h-80")
+                            ui.button("Close", on_click=dialog.close).props("flat")
+                        dialog.open()
+
+                    table.on("rowClick", open_detail)
+                if board.not_scorable:
+                    with ui.expansion(f"Not scorable runs ({len(board.not_scorable)})").classes("w-full"):
+                        for s in board.not_scorable:
+                            ui.label(f"{s.model_name} ({s.run_qid}): {s.reason}").classes("text-sm text-gray-600")
+
+        run_btn.on_click(compute)
 
     @ui.page("/ui/blackboard")
     def blackboard(request: Request):
