@@ -1396,34 +1396,54 @@ def register_pages():
                 ],
             }
 
-        def compute():
+        async def compute():
             result.clear()
+            target = (target_inp.value or "").strip()
+            date_col = (date_inp.value or "").strip()
+            fcol = (fcol_inp.value or "").strip()
+            fval = fval_inp.value or ""
             with result:
                 try:
                     start, end = _date.fromisoformat(start_inp.value), _date.fromisoformat(end_inp.value)
-                except ValueError:
+                except (ValueError, TypeError):
                     _error_label("Enter test start and end as YYYY-MM-DD.")
                     return
-                if not dataset_sel.value or not target_inp.value or not date_inp.value or start > end:
+                if not dataset_sel.value or not target or not date_col or start > end:
                     _error_label("Choose a dataset, target and date column, and a test start not after the test end.")
                     return
-                bench = Benchmark(
-                    dataset_qid=dataset_sel.value, target_column=target_inp.value.strip(),
-                    date_column=date_inp.value.strip(), test_start=start, test_end=end,
-                    filter_column=fcol_inp.value.strip() or None,
-                    filter_value=fval_inp.value if fcol_inp.value.strip() else None,
-                )
-                dataset = next(d for d in datasets if d["qid"] == bench.dataset_qid)
-                try:
-                    board = build_leaderboard(
-                        bench, ckan_client.list_model_runs(), dataset, rank_by=rank_sel.value,
-                        best_per_model=not all_sw.value, **default_loaders(),
-                    )
-                except LoadError as e:
-                    _error_label(str(e))
+                if fcol and not fval:
+                    _error_label("Enter a filter value for the filter column, or clear the filter column.")
                     return
+                bench = Benchmark(
+                    dataset_qid=dataset_sel.value, target_column=target, date_column=date_col,
+                    test_start=start, test_end=end,
+                    filter_column=fcol or None, filter_value=fval if fcol else None,
+                )
+                dataset = next((d for d in datasets if d["qid"] == bench.dataset_qid), None)
+                if dataset is None:
+                    _error_label("Unknown dataset.")
+                    return
+                rank_by, best_per_model = rank_sel.value, not all_sw.value
+
+                def _build():
+                    return build_leaderboard(
+                        bench, ckan_client.list_model_runs(), dataset, rank_by=rank_by,
+                        best_per_model=best_per_model, **default_loaders(),
+                    )
+
+                run_btn.disable()
+                spinner = ui.spinner(size="lg")
+                try:
+                    board = await run.io_bound(_build)
+                except LoadError as e:
+                    board, error = None, str(e)
                 except Exception as e:
-                    _error_label(f"Could not compute the leaderboard: {e}")
+                    board, error = None, f"Could not compute the leaderboard: {e}"
+                finally:
+                    spinner.delete()
+                    run_btn.enable()
+                if board is None:
+                    _error_label(error)
                     return
                 ui.label(summary(board)).classes("text-sm text-gray-700")
                 rows = table_rows(board)
@@ -1444,19 +1464,27 @@ def register_pages():
                         ))
 
                     def open_detail(e):
-                        entry = next(x for x in board.entries if x.run_qid == e.args[1]["run_qid"])
+                        try:
+                            qid = e.args[1]["run_qid"]
+                            entry = next((x for x in board.entries if x.run_qid == qid), None)
+                        except (IndexError, KeyError, TypeError):
+                            entry = None
+                        if entry is None:
+                            ui.notify("Run not found", type="warning")
+                            return
                         with ui.dialog() as dialog, ui.card().classes("w-[60rem] max-w-full"):
                             ui.label(f"{entry.model_name} — run {entry.run_qid}").classes("text-lg font-semibold")
                             ui.label(f"Parameters: {entry.params or '—'}").classes("text-sm text-gray-600")
                             ui.echart(_chart(entry, bench)).classes("w-full h-80")
                             ui.button("Close", on_click=dialog.close).props("flat")
+                        dialog.on("hide", dialog.delete)
                         dialog.open()
 
                     table.on("rowClick", open_detail)
                 if board.not_scorable:
                     with ui.expansion(f"Not scorable runs ({len(board.not_scorable)})").classes("w-full"):
-                        for s in board.not_scorable:
-                            ui.label(f"{s.model_name} ({s.run_qid}): {s.reason}").classes("text-sm text-gray-600")
+                        for sk in board.not_scorable:
+                            ui.label(f"{sk.model_name} ({sk.run_qid}): {sk.reason}").classes("text-sm text-gray-600")
 
         run_btn.on_click(compute)
 
