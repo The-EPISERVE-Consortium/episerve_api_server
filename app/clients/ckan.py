@@ -84,6 +84,9 @@ def list_model_runs() -> list[dict]:
         qid = extras.get("qid", "")
         input_files  = [r["url"] for r in pkg.get("resources", []) if r.get("description") == "Input file"]
         output_files = [r["url"] for r in pkg.get("resources", []) if r.get("description") == "Output file"]
+        predictions_resource_id = next(
+            (r.get("id", "") for r in pkg.get("resources", []) if r.get("name") == "predictions.tsv"), ""
+        )
         raw_qids = extras.get("input_dataset_qids", "")
         try:
             input_dataset_qids = json.loads(raw_qids) if raw_qids else []
@@ -104,8 +107,30 @@ def list_model_runs() -> list[dict]:
             "computation_time":    extras.get("computation_time", ""),
             "input_files":             input_files,
             "output_files":            output_files,
+            "predictions_resource_id": predictions_resource_id,
             "input_dataset_qids":      input_dataset_qids,
             "data_transformation_sql": data_transformation_sql,
             "doip_url":                _doip_url(qid) if qid else "",
         })
     return runs
+
+
+def get_datastore_records(resource_id: str, page_size: int = 1000) -> list[dict]:
+    """Return every row of a DataStore resource.
+
+    Args:
+        resource_id: CKAN resource id with an active DataStore table.
+        page_size: Rows requested per call.
+
+    Returns:
+        Row dicts without CKAN's internal ``_id`` field.
+    """
+    rows: list[dict] = []
+    offset = 0
+    while True:
+        result = _get("datastore_search", {"resource_id": resource_id, "limit": page_size, "offset": offset})
+        batch = result.get("records", [])
+        rows.extend({k: v for k, v in record.items() if k != "_id"} for record in batch)
+        if len(batch) < page_size:
+            return rows
+        offset += page_size
