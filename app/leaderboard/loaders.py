@@ -5,6 +5,7 @@ from io import BytesIO
 
 import duckdb
 import pandas as pd
+import pyarrow as pa
 import pyarrow.parquet as pq
 
 from app.dataset_preview import (
@@ -65,41 +66,56 @@ def load_truth(dataset: dict, benchmark: Benchmark, doip_base: str) -> pd.DataFr
         Columns ``date`` and ``truth`` sorted by date.
 
     Raises:
-        LoadError: If a column is missing, the data is too large, or the window is empty.
-        ValueError: If the dataset has no component or the URL is not trusted.
+        LoadError: If a column is missing, the data is unreadable, the window is
+            empty, or several observations share a date.
+        ValueError: If the dataset has no component, the URL is not trusted or
+            the download exceeds the size limit.
     """
     component = resolve_component([dataset], dataset.get("qid", ""))
     data = download_preview_bytes(component["url"], doip_base, MAX_DOWNLOAD_BYTES)
-    table = pq.read_table(BytesIO(data))
-    names = table.column_names
+    if benchmark.filter_column and benchmark.filter_value is None:
+        raise LoadError("filter value is required with a filter column")
     needed = [benchmark.date_column, benchmark.target_column]
     if benchmark.filter_column:
         needed.append(benchmark.filter_column)
-    for name in needed:
-        if name not in names:
-            raise LoadError(f"dataset has no column {name!r}")
+    try:
+        names = pq.read_schema(BytesIO(data)).names
+        for name in needed:
+            if name not in names:
+                raise LoadError(f"dataset has no column {name!r}")
+        table = pq.read_table(BytesIO(data), columns=needed)
+    except (pa.ArrowException, duckdb.Error) as exc:
+        raise LoadError("the dataset file could not be read") from exc
     date_sql = _column_sql(benchmark.date_column, names)
     target_sql = _column_sql(benchmark.target_column, names)
-    where = f"CAST({date_sql} AS DATE) BETWEEN ? AND ?"
+    where = f"TRY_CAST({date_sql} AS DATE) BETWEEN ? AND ?"
     values: list = [benchmark.test_start, benchmark.test_end]
     if benchmark.filter_column:
         where += f" AND CAST({_column_sql(benchmark.filter_column, names)} AS VARCHAR) = ?"
-        values.append(benchmark.filter_value or "")
-    with duckdb.connect(config={
-        "enable_external_access": "false",
-        "autoinstall_known_extensions": "false",
-        "autoload_known_extensions": "false",
-        "memory_limit": "256MB",
-        "threads": "1",
-    }) as connection:
-        connection.register("source", table)
-        truth = connection.execute(
-            f"SELECT CAST({date_sql} AS DATE) AS date, CAST({target_sql} AS DOUBLE) AS truth "
-            f"FROM source WHERE {where} AND {target_sql} IS NOT NULL ORDER BY 1",
-            values,
-        ).df()
+        values.append(benchmark.filter_value)
+    try:
+        with duckdb.connect(config={
+            "enable_external_access": "false",
+            "autoinstall_known_extensions": "false",
+            "autoload_known_extensions": "false",
+            "memory_limit": "256MB",
+            "threads": "1",
+        }) as connection:
+            connection.register("source", table)
+            truth = connection.execute(
+                f"SELECT TRY_CAST({date_sql} AS DATE) AS date, TRY_CAST({target_sql} AS DOUBLE) AS truth "
+                f"FROM source WHERE {where} AND TRY_CAST({target_sql} AS DOUBLE) IS NOT NULL ORDER BY 1",
+                values,
+            ).df()
+    except (duckdb.Error, pa.ArrowException) as exc:
+        raise LoadError("the dataset could not be queried") from exc
     if truth.empty:
         raise LoadError("the dataset has no observations in the test window")
+    if truth["date"].duplicated().any():
+        raise LoadError(
+            "the dataset has several observations per date in the test window; "
+            "add a filter to select one series"
+        )
     truth["date"] = pd.to_datetime(truth["date"]).dt.normalize()
     return truth
 

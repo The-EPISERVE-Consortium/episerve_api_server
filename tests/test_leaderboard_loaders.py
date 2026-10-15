@@ -109,3 +109,39 @@ def test_load_predictions_duplicate_dates_keep_last():
     frame = loaders.load_predictions(records, BENCH)
     assert len(frame) == 1
     assert frame["forecast"].tolist() == [2.0]
+
+
+def _patch(monkeypatch, data):
+    monkeypatch.setattr(loaders, "download_preview_bytes", lambda url, base, limit: data)
+
+
+def test_load_truth_skips_non_numeric_and_bad_dates(monkeypatch):
+    source = pd.DataFrame({
+        "datum": ["2022-01-05", "2022-01-12", "2022-01-19", "garbage"],
+        "value": ["1.5", "abc", "", "7"],
+    })
+    _patch(monkeypatch, _parquet_bytes(source))
+    truth = loaders.load_truth(_dataset(), BENCH, "https://doip.example")
+    assert truth["date"].tolist() == [pd.Timestamp("2022-01-05")]
+    assert truth["truth"].tolist() == [1.5]
+
+
+def test_load_truth_corrupt_parquet_raises_load_error(monkeypatch):
+    _patch(monkeypatch, b"not a parquet file")
+    with pytest.raises(loaders.LoadError):
+        loaders.load_truth(_dataset(), BENCH, "https://doip.example")
+
+
+def test_load_truth_duplicate_dates_raise(monkeypatch):
+    source = pd.DataFrame({"datum": ["2022-01-05", "2022-01-05"], "value": [1.0, 2.0]})
+    _patch(monkeypatch, _parquet_bytes(source))
+    with pytest.raises(loaders.LoadError, match="several observations"):
+        loaders.load_truth(_dataset(), BENCH, "https://doip.example")
+
+
+def test_load_truth_filter_column_without_value_raises(monkeypatch):
+    source = pd.DataFrame({"datum": ["2022-01-05"], "value": [1.0], "typ": ["a"]})
+    _patch(monkeypatch, _parquet_bytes(source))
+    bench = Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": None})
+    with pytest.raises(loaders.LoadError, match="filter value"):
+        loaders.load_truth(_dataset(), bench, "https://doip.example")
