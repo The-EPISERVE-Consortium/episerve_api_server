@@ -4,6 +4,7 @@ This is the only place that writes the leaderboard. Scores are computed here, on
 when a run is added; reading a board only queries the database.
 """
 
+import logging
 from datetime import date
 
 import pandas as pd
@@ -11,19 +12,16 @@ import requests
 
 from app.clients import ckan as ckan_client
 from app.clients import lakefs as lakefs_client
+from app.benchmarks import store as bstore
+from app.benchmarks.errors import Conflict, NotFound
 from app.config import settings
-from app.leaderboard import loaders, scoring, store
+from app.leaderboard import loaders, run_inputs, scoring, store
 from app.leaderboard.entries import Benchmark
 from app.leaderboard.loaders import LoadError
+from app.leaderboard.run_inputs import RunInput
 from app.leaderboard.service import Leaderboard, rank_entries
 
-
-class NotFound(LookupError):
-    """The benchmark, entry, run or dataset does not exist (or is retired)."""
-
-
-class Conflict(Exception):
-    """The run is already on the leaderboard."""
+logger = logging.getLogger(__name__)
 
 
 def _dataset(qid: str) -> dict:
@@ -31,6 +29,22 @@ def _dataset(qid: str) -> dict:
     if dataset is None:
         raise NotFound(f"Dataset {qid!r} not found")
     return dataset
+
+
+def _final_benchmark(benchmark_id: int) -> dict:
+    row = bstore.get(benchmark_id)
+    if row is None or bstore.state(row) != "final":
+        raise NotFound(f"Benchmark {benchmark_id} not found or not final")
+    return row
+
+
+def _load_inputs(run_qid: str) -> list[RunInput] | None:
+    """The run's inputs from its DOIP provenance, or None when they cannot be read."""
+    try:
+        return run_inputs.fetch_run_inputs(run_qid, settings.doip_url)
+    except Exception:
+        logger.exception("could not read the provenance of run %s", run_qid)
+        return None
 
 
 def get_benchmark(benchmark_id: int) -> dict:
@@ -42,13 +56,6 @@ def get_benchmark(benchmark_id: int) -> dict:
     row = store.get_benchmark(benchmark_id)
     if row is None:
         raise NotFound(f"Benchmark {benchmark_id} not found")
-    return row
-
-
-def _active_benchmark(benchmark_id: int) -> dict:
-    row = get_benchmark(benchmark_id)
-    if row["retired_at"]:
-        raise NotFound(f"Benchmark {benchmark_id} is retired")
     return row
 
 
@@ -111,25 +118,27 @@ def add_run(benchmark_id: int, run_qid: str) -> int:
         The new entry id.
 
     Raises:
-        NotFound: Benchmark missing/retired, or run unknown.
+        NotFound: Benchmark missing, draft or retired, or run unknown.
         Conflict: The run is already on the leaderboard.
         scoring.NotScorable: The run cannot be scored (reason in the message).
         LoadError: The truth cannot be read.
     """
-    row = _active_benchmark(benchmark_id)
+    row = _final_benchmark(benchmark_id)
     if run_qid in {e.run_qid for e in store.list_entries(benchmark_id)}:
         raise Conflict(f"Run {run_qid} is already on this leaderboard.")
-    benchmark = store.benchmark_from_row(row)
+    benchmark = bstore.benchmark_from_row(row)
     run = next((r for r in ckan_client.list_model_runs() if r["qid"] == run_qid), None)
     if run is None:
         raise NotFound(f"Model run {run_qid!r} not found")
     dataset = _dataset(benchmark.dataset_qid)
-    commit = lakefs_client.processed_head_commit()
+    commit = row["data_commit"]
     truth = loaders.truth_at_commit(dataset, benchmark, commit)
+    inputs = _load_inputs(run_qid)
     entry = scoring.score_run(
-        benchmark, run, truth, truth_commit=commit, truth_as_of=dataset.get("last_modified", ""),
+        benchmark, run, truth, truth_commit=commit, truth_as_of=row["finalized_at"],
         load_predictions=_load_predictions,
         load_params=lambda qid: loaders.fetch_run_params(qid, settings.doip_url),
+        inputs=inputs,
     )
     try:
         return store.add_entry(benchmark_id, entry)
@@ -162,14 +171,16 @@ def read_leaderboard(benchmark_id: int, rank_by: str = "interval_score", best_pe
     """The stored, ranked board; database only.
 
     Raises:
-        NotFound: Unknown benchmark.
+        NotFound: Unknown or draft benchmark.
         ValueError: Unknown ``rank_by``.
     """
-    row = get_benchmark(benchmark_id)
+    row = bstore.get(benchmark_id)
+    if row is None or bstore.state(row) == "draft":
+        raise NotFound(f"Benchmark {benchmark_id} not found")
     entries = store.list_entries(benchmark_id)
     ranked = rank_entries(entries, rank_by, best_per_model)
     return Leaderboard(
-        benchmark=store.benchmark_from_row(row), rank_by=rank_by, truth_points=row["truth_points"],
+        benchmark=bstore.benchmark_from_row(row), rank_by=rank_by, truth_points=row["truth_points"] or 0,
         truth_as_of=max((e.truth_as_of for e in entries), default=""), entries=ranked,
         name=row["name"], benchmark_id=row["id"],
     )
@@ -177,6 +188,8 @@ def read_leaderboard(benchmark_id: int, rank_by: str = "interval_score", best_pe
 
 def candidates(benchmark_id: int) -> list[dict]:
     """Runs on the benchmark's dataset with the reason each cannot be added (None if it can)."""
-    row = _active_benchmark(benchmark_id)
+    row = _final_benchmark(benchmark_id)
     active = {e.run_qid for e in store.list_entries(benchmark_id)}
-    return scoring.candidate_runs(store.benchmark_from_row(row), ckan_client.list_model_runs(), active)
+    return scoring.candidate_runs(
+        bstore.benchmark_from_row(row), ckan_client.list_model_runs(), active, load_inputs=_load_inputs,
+    )
