@@ -79,21 +79,49 @@ def sort_key(metric: str) -> Callable[[Entry], tuple]:
     return key
 
 
-def _num(value) -> float | None:
+def rank_entries(entries: list[Entry], rank_by: str, best_per_model: bool = True) -> list[Entry]:
+    """Sort entries by ``rank_by`` (best first) and optionally keep each model's best.
+
+    Args:
+        entries: Scored entries.
+        rank_by: One of ``RANK_METRICS``.
+        best_per_model: Keep only the best entry per model name when True.
+
+    Returns:
+        The ranked entries.
+
+    Raises:
+        ValueError: If ``rank_by`` is not a known metric.
+    """
+    if rank_by not in RANK_METRICS:
+        raise ValueError(f"rank_by must be one of {RANK_METRICS}")
+    ordered = sorted(entries, key=sort_key(rank_by))
+    if not best_per_model:
+        return ordered
+    seen: set[str] = set()
+    best = []
+    for entry in ordered:
+        if entry.model_name not in seen:
+            seen.add(entry.model_name)
+            best.append(entry)
+    return best
+
+
+def finite_or_none(value) -> float | None:
     if value is None:
         return None
     number = float(value)
     return number if math.isfinite(number) else None
 
 
-def _points(forecast: pd.DataFrame, truth: pd.DataFrame) -> list[dict]:
+def points_for(forecast: pd.DataFrame, truth: pd.DataFrame) -> list[dict]:
     merged = truth.merge(forecast, on="date", how="left")
     return [
         {
             "date": row["date"].date().isoformat(),
-            "forecast": _num(row.get("forecast")),
-            "q10": _num(row.get("q10")),
-            "q90": _num(row.get("q90")),
+            "forecast": finite_or_none(row.get("forecast")),
+            "q10": finite_or_none(row.get("q10")),
+            "q90": finite_or_none(row.get("q90")),
             "truth": float(row["truth"]),
         }
         for _, row in merged.iterrows()
@@ -158,17 +186,10 @@ def build_leaderboard(
             run_qid=run["qid"], model_name=name, docker_tag=run.get("docker_tag", ""),
             params=load_params(run["qid"]), history_start=verdict.window.start,
             history_end=verdict.window.end, run_timestamp=run.get("run_timestamp", ""),
-            n_scored=result.n_scored, n_expected=result.n_expected, metrics={name: _num(value) for name, value in result.metrics.items()},
-            points=_points(forecast, truth),
+            n_scored=result.n_scored, n_expected=result.n_expected, metrics={name: finite_or_none(value) for name, value in result.metrics.items()},
+            points=points_for(forecast, truth),
         ))
-    entries.sort(key=sort_key(rank_by))
-    if best_per_model:
-        seen, best = set(), []
-        for entry in entries:
-            if entry.model_name not in seen:
-                seen.add(entry.model_name)
-                best.append(entry)
-        entries = best
+    entries = rank_entries(entries, rank_by, best_per_model)
     return Leaderboard(
         benchmark=benchmark, rank_by=rank_by, truth_points=len(truth),
         truth_as_of=dataset.get("last_modified", ""), entries=entries, not_scorable=skipped,
