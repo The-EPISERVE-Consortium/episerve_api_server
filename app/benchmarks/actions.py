@@ -1,0 +1,282 @@
+"""Design, check, finalize and retire benchmarks; build run specs.
+
+A benchmark is edited as a draft and frozen by ``finalize``, which pins the current lakeFS
+head commit of ``data-processed``: the reference data is read at that commit and the run
+spec makes model runs read their input at the same commit.
+"""
+
+from dataclasses import dataclass, field, replace
+from datetime import date, timedelta
+
+from app.benchmarks import store
+from app.benchmarks.definition import (
+    Benchmark, DefinitionError, derive_horizon, input_sql, validate,
+)
+from app.benchmarks.errors import Conflict, NotDraft, NotFound  # noqa: F401  (re-exported)
+from app.clients import ckan as ckan_client
+from app.clients import lakefs as lakefs_client
+from app.config import settings
+from app.dataset_preview import MAX_DOWNLOAD_BYTES
+from app.leaderboard import loaders
+from app.leaderboard.entries import has_equality_filter, parse_history_window
+from app.leaderboard.loaders import LoadError
+
+_EDITABLE = {
+    "name", "description", "dataset_qid", "target_column", "date_column", "test_start", "test_end",
+    "filter_column", "filter_value", "history_start", "history_end", "input_filename",
+}
+
+
+@dataclass
+class CheckReport:
+    """What a check of a draft found (problems block finalization, warnings do not)."""
+
+    ok: bool
+    problems: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+    data_commit: str | None = None
+    component_name: str | None = None
+    truth_points: int | None = None
+    history_end: date | None = None
+    last_history_date: date | None = None
+    prediction_length: int | None = None
+    frequency_days: int | None = None
+    input_sql: str | None = None
+
+
+def _dataset(qid: str) -> dict:
+    dataset = next((d for d in ckan_client.list_processed_datasets() if d["qid"] == qid), None)
+    if dataset is None:
+        raise NotFound(f"Dataset {qid!r} not found")
+    return dataset
+
+
+def _row(benchmark_id: int) -> dict:
+    row = store.get(benchmark_id)
+    if row is None:
+        raise NotFound(f"Benchmark {benchmark_id} not found")
+    return row
+
+
+def _draft_row(benchmark_id: int) -> dict:
+    row = _row(benchmark_id)
+    if store.state(row) != "draft":
+        raise NotDraft(f"Benchmark {benchmark_id} is final or retired and cannot be changed.")
+    return row
+
+
+def create_draft(
+    name: str,
+    description: str | None,
+    dataset_qid: str,
+    target_column: str,
+    date_column: str,
+    test_start: date,
+    test_end: date,
+    filter_column: str | None = None,
+    filter_value: str | None = None,
+    history_start: date | None = None,
+    history_end: date | None = None,
+    input_filename: str = "input.parquet",
+) -> int:
+    """Validate a definition and store it as a draft.
+
+    Raises:
+        DefinitionError: Invalid definition.
+        NotFound: Unknown dataset.
+    """
+    benchmark = Benchmark(
+        dataset_qid=dataset_qid, target_column=(target_column or "").strip(), date_column=(date_column or "").strip(),
+        test_start=test_start, test_end=test_end, filter_column=filter_column or None,
+        filter_value=filter_value if filter_column else None, history_start=history_start,
+        history_end=history_end, input_filename=input_filename,
+    )
+    validate(benchmark, name)
+    _dataset(dataset_qid)
+    return store.create_draft(name.strip(), description, benchmark)
+
+
+def update_draft(benchmark_id: int, **fields) -> None:
+    """Change fields of a draft (only the given ones; ``None`` clears an optional field).
+
+    Raises:
+        NotFound: Unknown benchmark or dataset.
+        NotDraft: The benchmark is final or retired.
+        DefinitionError: The merged definition is invalid.
+    """
+    unknown = set(fields) - _EDITABLE
+    if unknown:
+        raise DefinitionError(f"Unknown field(s): {', '.join(sorted(unknown))}.")
+    row = _draft_row(benchmark_id)
+    current = store.benchmark_from_row(row)
+    name = fields.get("name", row["name"])
+    description = fields.get("description", row["description"])
+    changes = {k: v for k, v in fields.items() if k not in ("name", "description")}
+    if "filter_column" in changes and not changes["filter_column"]:
+        changes["filter_column"], changes["filter_value"] = None, None
+    merged = replace(current, **changes)
+    validate(merged, name)
+    if "dataset_qid" in changes:
+        _dataset(merged.dataset_qid)
+    if not store.update_draft(benchmark_id, name.strip(), description, merged):
+        raise NotFound(f"Benchmark {benchmark_id} not found")
+
+
+def _evaluate(benchmark: Benchmark, dataset: dict, commit: str) -> CheckReport:
+    """Read the data at ``commit`` and report problems, warnings and the derived values."""
+    report = CheckReport(ok=False, data_commit=commit)
+    components = dataset.get("components") or []
+    if not components:
+        report.problems.append("The dataset has no downloadable component.")
+        return report
+    report.component_name = components[0]["name"]
+    try:
+        data = lakefs_client.read_processed_component(commit, dataset["qid"], report.component_name, MAX_DOWNLOAD_BYTES)
+    except ValueError as exc:
+        report.problems.append(str(exc))
+        return report
+    try:
+        truth = loaders.parse_truth(data, benchmark)
+    except LoadError as exc:
+        report.problems.append(str(exc))
+        return report
+    report.truth_points = len(truth)
+    history_end = benchmark.history_end
+    try:
+        if history_end is None:
+            history_end = loaders.last_observed_date(data, benchmark, benchmark.test_start - timedelta(days=1))
+        elif history_end >= benchmark.test_start:
+            raise LoadError("The history must end before the test start.")
+        resolved = replace(benchmark, history_end=history_end)
+        report.history_end = history_end
+        report.last_history_date = loaders.last_observed_date(data, resolved, history_end)
+    except LoadError as exc:
+        report.problems.append(str(exc))
+        return report
+    try:
+        horizon = derive_horizon([d.date() for d in truth["date"]], report.last_history_date)
+    except DefinitionError as exc:
+        report.problems.append(str(exc))
+        return report
+    report.prediction_length, report.frequency_days = horizon.prediction_length, horizon.frequency_days
+    if not horizon.regular:
+        report.warnings.append(
+            "The observed dates are not evenly spaced; one forecast grid may not hit every observed date."
+        )
+    report.input_sql = input_sql(resolved)
+    window = parse_history_window(report.input_sql, benchmark.date_column)
+    filter_ok = not benchmark.filter_column or has_equality_filter(
+        report.input_sql, benchmark.filter_column, benchmark.filter_value or ""
+    )
+    if window is None or window.end != history_end or not filter_ok:
+        report.problems.append(
+            "The generated input SQL is not accepted by the qualification rules "
+            "(a filter value or column name may contain a reserved word such as OR, NOT or UNION)."
+        )
+    report.ok = not report.problems
+    return report
+
+
+def check(benchmark_id: int) -> CheckReport:
+    """Check a draft against the current data (lakeFS head); nothing is stored.
+
+    Raises:
+        NotFound / NotDraft: Unknown benchmark or not a draft.
+    """
+    row = _draft_row(benchmark_id)
+    benchmark = store.benchmark_from_row(row)
+    return _evaluate(benchmark, _dataset(benchmark.dataset_qid), lakefs_client.processed_head_commit())
+
+
+def finalize(benchmark_id: int) -> None:
+    """Freeze a draft and pin the lakeFS commit that was just checked.
+
+    Raises:
+        NotFound / NotDraft: Unknown benchmark or not a draft.
+        LoadError: The check found problems (all of them in the message).
+    """
+    row = _draft_row(benchmark_id)
+    benchmark = store.benchmark_from_row(row)
+    dataset = _dataset(benchmark.dataset_qid)
+    commit = lakefs_client.processed_head_commit()
+    report = _evaluate(benchmark, dataset, commit)
+    if not report.ok:
+        raise LoadError("; ".join(report.problems))
+    done = store.finalize(
+        benchmark_id, data_commit=commit, component_name=report.component_name, truth_points=report.truth_points,
+        prediction_length=report.prediction_length, history_end=report.history_end,
+    )
+    if not done:
+        raise NotFound(f"Benchmark {benchmark_id} not found")
+
+
+def retire(benchmark_id: int) -> None:
+    """Hide a benchmark from the lists.
+
+    Raises:
+        NotFound: Unknown or already retired.
+    """
+    _row(benchmark_id)
+    if not store.retire(benchmark_id):
+        raise NotFound(f"Benchmark {benchmark_id} is already retired")
+
+
+def get(benchmark_id: int, *, include_draft: bool = False) -> dict:
+    """One benchmark row; drafts only with ``include_draft`` (they are not public).
+
+    Raises:
+        NotFound: Unknown, or a draft without ``include_draft``.
+    """
+    row = _row(benchmark_id)
+    if store.state(row) == "draft" and not include_draft:
+        raise NotFound(f"Benchmark {benchmark_id} not found")
+    return row
+
+
+def list_final() -> list[dict]:
+    """Final, not retired benchmarks (public)."""
+    return store.list_final()
+
+
+def list_drafts() -> list[dict]:
+    """Draft benchmarks (for logged-in users)."""
+    return store.list_drafts()
+
+
+def run_spec(benchmark_id: int) -> dict:
+    """Everything the run workflow prefills for a final benchmark (no external call).
+
+    Raises:
+        NotFound: Unknown, draft or retired.
+    """
+    row = _row(benchmark_id)
+    if store.state(row) != "final":
+        raise NotFound(f"Benchmark {benchmark_id} is not final")
+    benchmark = store.benchmark_from_row(row)
+    url = (
+        f"{settings.doip_url.rstrip('/')}/doip/retrieve/{benchmark.dataset_qid}/"
+        f"{row['component_name']}?version={benchmark.data_commit}"
+    )
+    return {
+        "benchmark_id": row["id"],
+        "dataset_qid": benchmark.dataset_qid,
+        "data_commit": benchmark.data_commit,
+        "input_data_files": [[url, benchmark.input_filename]],
+        "data_transformation_sql": [input_sql(benchmark)],
+        "config": {"prediction_length": benchmark.prediction_length, "prediction_offset": 0},
+        "test_start": benchmark.test_start.isoformat(),
+        "test_end": benchmark.test_end.isoformat(),
+    }
+
+
+def copy_as_draft(benchmark_id: int) -> int:
+    """New draft with the same definition (the way to change a final benchmark).
+
+    Raises:
+        NotFound: Unknown benchmark.
+    """
+    row = _row(benchmark_id)
+    benchmark = replace(store.benchmark_from_row(row), prediction_length=None, data_commit=None)
+    suffix = " (copy)"
+    name = row["name"][: 200 - len(suffix)] + suffix
+    return store.create_draft(name, row.get("description"), benchmark)
