@@ -97,6 +97,57 @@ async def _add_run_dialog(benchmark_id: int) -> None:
                     ui.label(f"{c['model_name']} ({c['qid']}): {c['reason']}").classes("text-sm text-gray-600")
 
 
+_OPEN_RUN_JS = (
+    "(evt, row) => window.open('/ui/benchmarks/BENCHMARK/runs/' + encodeURIComponent(row.run_qid), '_blank')"
+)
+
+
+def _entry_detail(entry, benchmark_id: int, logged_in: bool) -> None:
+    """The detail of one scored run: window, pins, parameters, chart and per-date rows (+ Remove when logged in)."""
+    ui.label(f"{entry.model_name} — run {entry.run_qid}").classes("text-2xl font-semibold")
+    ui.link(
+        "Show run in ModelHub",
+        f"https://data.episerve.zib.de/dataset/{entry.run_qid.lower()}", new_tab=True,
+    ).classes("text-sm")
+    ui.label(f"History window: {history_window(entry)}").classes("text-sm text-gray-600")
+    ui.label(
+        f"Data: lakeFS commit {entry.truth_commit} · CKAN last modified "
+        f"{entry.truth_as_of or 'unknown'} · scored {entry.scored_at}"
+    ).classes("text-sm text-gray-600")
+    if entry.params:
+        with ui.column().classes("gap-0"):
+            for k, v in entry.params.items():
+                ui.label(f"{k}: {v}").classes("text-sm text-gray-600")
+    else:
+        ui.label("Parameters: —").classes("text-sm text-gray-600")
+    ui.echart(chart_option(entry)).classes("w-full h-80")
+    ui.table(
+        columns=[
+            {"name": c, "label": c if c != "error" else "error (forecast − observed)",
+             "field": c, "align": "left" if c == "date" else "right"}
+            for c in ("date", "observed", "forecast", "q10", "q90", "error")
+        ],
+        rows=point_rows(entry), row_key="date",
+    ).props("dense flat").classes("w-full")
+    if logged_in and entry.entry_id is not None:
+        def remove(entry_id=entry.entry_id):
+            if not _is_logged_in():
+                ui.notify(_LOGIN_EXPIRED, type="warning")
+                return
+            try:
+                actions.remove_entry(benchmark_id, entry_id)
+            except actions.NotFound as e:
+                ui.notify(str(e), type="negative")
+                return
+            except Exception:
+                logger.exception("could not remove the entry")
+                ui.notify("Could not remove the entry.", type="negative")
+                return
+            ui.navigate.to(f"/ui/benchmarks/{benchmark_id}")
+
+        ui.button("Remove from leaderboard", on_click=remove).props("flat color=negative")
+
+
 def _definition_text(row: dict) -> list[tuple[str, str]]:
     """Caption/value pairs describing what a benchmark scores."""
     filter_text = f"{row['filter_column']} = {row['filter_value']}" if row.get("filter_column") else "none"
@@ -120,6 +171,28 @@ def register_leaderboard_page() -> None:
         except (TypeError, ValueError):
             target = "/ui/benchmarks"
         ui.navigate.to(target)
+
+    @ui.page("/ui/benchmarks/{benchmark_id}/runs/{run_qid}")
+    def run_page(benchmark_id: int, run_qid: str):
+        """One scored run of a benchmark (opened in its own window from the leaderboard)."""
+        _header("/ui/benchmarks")
+        logged_in = _is_logged_in()
+        with ui.column().classes("px-8 py-6 w-full max-w-5xl gap-3"):
+            ui.link("← Back to the leaderboard", f"/ui/benchmarks/{benchmark_id}").classes("text-sm")
+            try:
+                board = actions.read_leaderboard(benchmark_id, "interval_score", False)
+            except actions.NotFound:
+                _error_label("Benchmark not found.")
+                return
+            except Exception:
+                logger.exception("could not load the run")
+                _error_label("Could not load the run.")
+                return
+            entry = next((x for x in board.entries if x.run_qid == run_qid), None)
+            if entry is None:
+                _error_label("Run not found.")
+                return
+            _entry_detail(entry, benchmark_id, logged_in)
 
     @ui.page("/ui/benchmarks/{benchmark_id}")
     def leaderboard_page(request: Request, benchmark_id: int):
@@ -215,64 +288,9 @@ def register_leaderboard_page() -> None:
                         "{{ props.value }}</q-td>"
                     ))
 
-                def open_detail(e):
-                    try:
-                        qid = e.args[1]["run_qid"]
-                        entry = next((x for x in board.entries if x.run_qid == qid), None)
-                    except (IndexError, KeyError, TypeError):
-                        entry = None
-                    if entry is None:
-                        ui.notify("Run not found", type="warning")
-                        return
-                    with ui.dialog() as dialog, ui.card().classes("w-[60rem] max-w-full"):
-                        ui.label(f"{entry.model_name} — run {entry.run_qid}").classes("text-lg font-semibold")
-                        ui.link(
-                            "Show run in ModelHub",
-                            f"https://data.episerve.zib.de/dataset/{entry.run_qid.lower()}", new_tab=True,
-                        ).classes("text-sm")
-                        ui.label(f"History window: {history_window(entry)}").classes("text-sm text-gray-600")
-                        ui.label(
-                            f"Data: lakeFS commit {entry.truth_commit} · CKAN last modified "
-                            f"{entry.truth_as_of or 'unknown'} · scored {entry.scored_at}"
-                        ).classes("text-sm text-gray-600")
-                        if entry.params:
-                            with ui.column().classes("gap-0"):
-                                for k, v in entry.params.items():
-                                    ui.label(f"{k}: {v}").classes("text-sm text-gray-600")
-                        else:
-                            ui.label("Parameters: —").classes("text-sm text-gray-600")
-                        ui.echart(chart_option(entry)).classes("w-full h-80")
-                        ui.table(
-                            columns=[
-                                {"name": c, "label": c if c != "error" else "error (forecast − observed)",
-                                 "field": c, "align": "left" if c == "date" else "right"}
-                                for c in ("date", "observed", "forecast", "q10", "q90", "error")
-                            ],
-                            rows=point_rows(entry), row_key="date",
-                        ).props("dense flat").classes("w-full")
-                        ui.button("Close", on_click=dialog.close).props("flat")
-                        if logged_in and entry.entry_id is not None:
-                            def remove(entry_id=entry.entry_id):
-                                if not _is_logged_in():
-                                    ui.notify(_LOGIN_EXPIRED, type="warning")
-                                    return
-                                try:
-                                    actions.remove_entry(selected, entry_id)
-                                except actions.NotFound as e:
-                                    ui.notify(str(e), type="negative")
-                                    return
-                                except Exception:
-                                    logger.exception("could not remove the entry")
-                                    ui.notify("Could not remove the entry.", type="negative")
-                                    return
-                                dialog.close()
-                                ui.navigate.reload()
-
-                            ui.button("Remove from leaderboard", on_click=remove).props("flat color=negative")
-                    dialog.on("hide", dialog.delete)
-                    dialog.open()
-
-                table.on("rowClick", open_detail)
+                # The click is handled in the browser so window.open runs inside the user's click (no popup
+                # blocking); every entry has its own page, which can also be linked or opened in a new tab.
+                table.on("rowClick", js_handler=_OPEN_RUN_JS.replace("BENCHMARK", str(selected)))
 
             def set_model(e):
                 flt["model"] = state["model"] = e.value if e.value != _ALL_MODELS else None

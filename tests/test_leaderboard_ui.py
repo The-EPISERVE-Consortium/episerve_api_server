@@ -35,7 +35,7 @@ def _board(entries, bid=3):
     return Leaderboard(BENCH, "interval_score", 2, "2026-10-14T00:00:00Z", entries, name="Flu", benchmark_id=bid)
 
 
-def _render(monkeypatch, *, row=ROW, board=None, logged_in=False, bid=3, after=None, rank_log=None):
+def _render(monkeypatch, *, row=ROW, board=None, logged_in=False, bid=3, after=None, rank_log=None, path=None):
     """Render the page in memory and return what a test needs to inspect it."""
     def read(benchmark_id, rank_by="interval_score", best_per_model=True):
         if rank_log is not None:
@@ -51,7 +51,7 @@ def _render(monkeypatch, *, row=ROW, board=None, logged_in=False, bid=3, after=N
         monkeypatch.setattr(leaderboard_page.bactions, "get", get)
         monkeypatch.setattr(leaderboard_page.actions, "read_leaderboard", read)
 
-    return render(monkeypatch, leaderboard_page, f"/ui/benchmarks/{bid}", logged_in=logged_in, setup=setup,
+    return render(monkeypatch, leaderboard_page, path or f"/ui/benchmarks/{bid}", logged_in=logged_in, setup=setup,
                   after=after, table_key="run_qid")
 
 
@@ -195,31 +195,72 @@ def test_model_filter_rerenders_only_matching_rows(monkeypatch):
     assert out["rows_min"] == []
 
 
-def test_detail_dialog_shows_link_window_params_pins_and_per_date_rows(monkeypatch):
-    async def open_row(out, client, find, drain):
-        table = out["table"]
-        for listener in table._event_listeners.values():
-            if listener.type == "rowClick":
-                res = listener.handler(events.GenericEventArguments(
-                    sender=table, client=client, args=[{}, {"run_qid": "Q10"}, 0]))
-                if asyncio.iscoroutine(res):
-                    await res
-        out["dialog_labels"] = [e.text for e in find(ui.label)]
+def test_row_click_opens_the_run_in_a_new_window_without_a_server_round_trip(monkeypatch):
+    """The handler runs in the browser (window.open from the click itself), so popup blockers allow it."""
+    def inspect(out, client, find, drain):
+        listeners = [l for l in out["table"]._event_listeners.values() if l.type == "rowClick"]
+        out["js"] = [l.js_handler for l in listeners]
+        out["python"] = [l.handler for l in listeners]
+
+    out = _render(monkeypatch, board=_board([_entry()]), after=inspect)
+    assert len(out["js"]) == 1 and out["python"] == [None]
+    js = out["js"][0]
+    assert "window.open" in js and "'_blank'" in js and "/ui/benchmarks/3/runs/" in js and "row.run_qid" in js
+
+
+def _detail(monkeypatch, qid="Q10", **kw):
+    kw.setdefault("board", _board([_entry()]))
+    return _render(monkeypatch, path=f"/ui/benchmarks/3/runs/{qid}", **kw)
+
+
+def test_run_page_shows_link_window_params_pins_and_per_date_rows(monkeypatch):
+    def grab(out, client, find, drain):
         out["links"] = [(e.props.get("href"), e.props.get("target")) for e in find(ui.link)]
         out["tables"] = find(ui.table)
         out["charts"] = find(ui.echart)
 
-    out = _render(monkeypatch, board=_board([_entry()]), after=open_row)
+    out = _detail(monkeypatch, after=grab)
+    assert out["status"] == 200
     assert ("https://data.episerve.zib.de/dataset/q10", "_blank") in out["links"]
-    assert any(t.startswith("History window:") and "→ 2021-12-31" in t for t in out["dialog_labels"])
-    assert "history_length: 91" in out["dialog_labels"]
-    assert "timesfm — run Q10" in out["dialog_labels"]
-    assert f"Data: lakeFS commit {COMMIT} · CKAN last modified 2026-10-14T00:00:00Z · scored 2026-10-16 10:00:00" in out["dialog_labels"]
+    assert ("/ui/benchmarks/3", "_self") in out["links"]
+    labels = out["labels"]
+    assert any(t.startswith("History window:") and "→ 2021-12-31" in t for t in labels)
+    assert "history_length: 91" in labels
+    assert "timesfm — run Q10" in labels
+    assert f"Data: lakeFS commit {COMMIT} · CKAN last modified 2026-10-14T00:00:00Z · scored 2026-10-16 10:00:00" in labels
     detail = out["tables"][-1]
     assert [c["name"] for c in detail.columns] == ["date", "observed", "forecast", "q10", "q90", "error"]
     assert detail.rows[0]["error"] == "1.00"
     series = {s["name"]: s["data"] for s in out["charts"][0].options["series"]}
     assert series["Observed"] == [10.0, 20.0] and series["q10–q90"] == [4.0, 4.0]
+
+
+def test_run_page_reads_every_entry_not_only_the_best_per_model(monkeypatch):
+    log = []
+    _detail(monkeypatch, rank_log=log)
+    assert log == [(3, "interval_score", False)]
+
+
+def test_run_page_for_an_unknown_run_says_so(monkeypatch):
+    out = _detail(monkeypatch, qid="Q99")
+    assert any(t.endswith("Run not found.") for t in out["labels"])
+
+
+def test_run_page_for_an_unknown_benchmark_says_so(monkeypatch):
+    def gone(benchmark_id, rank_by="interval_score", best_per_model=True):
+        raise leaderboard_page.actions.NotFound("no")
+    out = _detail(monkeypatch, board=lambda bid: gone(bid))
+    assert any(t.endswith("Benchmark not found.") for t in out["labels"])
+
+
+def test_run_page_read_failure_shows_generic_text_and_logs(monkeypatch, caplog):
+    def broken(bid):
+        raise RuntimeError("db secret")
+    with caplog.at_level("ERROR"):
+        out = _detail(monkeypatch, board=broken)
+    assert any(t.endswith("Could not load the run.") for t in out["labels"])
+    assert "db secret" not in out["text"]
+    assert "could not load the run" in caplog.text
 
 
 def test_model_filter_survives_a_rank_by_change(monkeypatch):
@@ -304,23 +345,24 @@ def test_add_run_shows_the_reason_when_scoring_fails(monkeypatch):
     assert any("forecast covers 1 of 2 dates" in t for t in out["labels_after"])
 
 
-def test_remove_button_in_the_detail_dialog_removes_the_entry(monkeypatch):
-    removed = []
+def test_remove_button_on_the_run_page_removes_the_entry_and_returns_to_the_board(monkeypatch):
+    removed, went = [], []
     monkeypatch.setattr(leaderboard_page.actions, "remove_entry", lambda bid, eid: removed.append((bid, eid)))
+    monkeypatch.setattr(leaderboard_page.ui.navigate, "to", lambda target, *a, **k: went.append(target))
 
     async def scenario(out, client, find, drain):
-        table = out["table"]
-        for listener in table._event_listeners.values():
-            if listener.type == "rowClick":
-                res = listener.handler(events.GenericEventArguments(
-                    sender=table, client=client, args=[{}, {"run_qid": "Q10"}, 0]))
-                if asyncio.iscoroutine(res):
-                    await res
         await _click(_button(find, "Remove from leaderboard"), client)
         await drain()
 
-    _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
-    assert removed == [(3, 9)]
+    _detail(monkeypatch, logged_in=True, after=scenario)
+    assert removed == [(3, 9)] and went == ["/ui/benchmarks/3"]
+
+
+def test_anonymous_users_get_no_remove_button_on_the_run_page(monkeypatch):
+    def grab(out, client, find, drain):
+        out["buttons"] = [b.text for b in find(ui.button)]
+    out = _detail(monkeypatch, after=grab)
+    assert "Remove from leaderboard" not in out["buttons"]
 
 
 def _capture_notify(monkeypatch):
@@ -358,18 +400,11 @@ def test_expired_login_blocks_remove_entry(monkeypatch):
     notes = _capture_notify(monkeypatch)
 
     async def scenario(out, client, find, drain):
-        table = out["table"]
-        for listener in table._event_listeners.values():
-            if listener.type == "rowClick":
-                res = listener.handler(events.GenericEventArguments(
-                    sender=table, client=client, args=[{}, {"run_qid": "Q10"}, 0]))
-                if asyncio.iscoroutine(res):
-                    await res
         _expired(monkeypatch)
         await _click(_button(find, "Remove from leaderboard"), client)
         await drain()
 
-    _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    _detail(monkeypatch, logged_in=True, after=scenario)
     assert called == [] and notes and notes[-1][1]["type"] == "warning"
 
 
