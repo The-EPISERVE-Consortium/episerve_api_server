@@ -13,7 +13,9 @@ from app.clients import blackboard as blackboard_client
 from app.config import settings
 from app.leaderboard.entries import Benchmark
 from app.leaderboard.loaders import LoadError
-from app.leaderboard.present import LABELS, summary, table_rows
+from app.leaderboard.present import (
+    LABELS, chart_option, filter_entries, history_window, point_rows, summary, table_rows,
+)
 from app.leaderboard.service import build_leaderboard, default_loaders
 from app.dataset_preview import (
     FILTER_OPERATORS, MAX_FILTERS, PAGE_SIZES, PreviewFilter, PreviewOptions,
@@ -1344,6 +1346,14 @@ def register_pages():
 
             preview_container[0] = ui.column().classes("w-full")
 
+    _ALL_MODELS = "All models"
+    # Metric cells show formatted strings; sort on the raw numbers, missing values last when ascending.
+    _RAW_SORT = (
+        "(a, b, rowA, rowB) => { const x = rowA.raw.METRIC, y = rowB.raw.METRIC;"
+        " if (x === null || x === undefined) return (y === null || y === undefined) ? 0 : 1;"
+        " if (y === null || y === undefined) return -1; return x - y; }"
+    )
+
     @ui.page("/ui/leaderboard")
     def leaderboard_page(request: Request):
         from datetime import date as _date
@@ -1380,21 +1390,6 @@ def register_pages():
                 run_btn = ui.button("Compute")
 
             result = ui.column().classes("w-full gap-3")
-
-        def _chart(entry, bench) -> dict:
-            dates = [p["date"] for p in entry.points]
-            return {
-                "tooltip": {"trigger": "axis"},
-                "legend": {"data": ["Observed", "Forecast", "q10", "q90"]},
-                "xAxis": {"type": "category", "data": dates},
-                "yAxis": {"type": "value", "scale": True},
-                "series": [
-                    {"name": "Observed", "type": "line", "data": [p["truth"] for p in entry.points]},
-                    {"name": "Forecast", "type": "line", "data": [p["forecast"] for p in entry.points]},
-                    {"name": "q10", "type": "line", "lineStyle": {"type": "dashed"}, "data": [p["q10"] for p in entry.points]},
-                    {"name": "q90", "type": "line", "lineStyle": {"type": "dashed"}, "data": [p["q90"] for p in entry.points]},
-                ],
-            }
 
         async def compute():
             result.clear()
@@ -1446,41 +1441,86 @@ def register_pages():
                     _error_label(error)
                     return
                 ui.label(summary(board)).classes("text-sm text-gray-700")
-                rows = table_rows(board)
-                if rows:
+                if board.entries:
                     columns = [
-                        {"name": "rank", "label": "#", "field": "rank", "align": "left"},
-                        {"name": "model", "label": "Model", "field": "model", "align": "left"},
+                        {"name": "rank", "label": "#", "field": "rank", "align": "left", "sortable": True},
+                        {"name": "model", "label": "Model", "field": "model", "align": "left", "sortable": True},
                         {"name": "params", "label": "Parameters", "field": "params", "align": "left"},
-                        {"name": "history", "label": "History (A→B)", "field": "history", "align": "left"},
-                        *[{"name": m, "label": LABELS[m], "field": m, "align": "right"} for m in LABELS],
+                        {"name": "history", "label": "History (A→B)", "field": "history", "align": "left", "sortable": True},
+                        *[{"name": m, "label": LABELS[m], "field": m, "align": "right", "sortable": True,
+                           ":sort": _RAW_SORT.replace("METRIC", m)} for m in LABELS],
                         {"name": "scored", "label": "Scored", "field": "scored", "align": "right"},
                     ]
-                    table = ui.table(columns=columns, rows=rows, row_key="run_qid").classes("w-full")
-                    for m in LABELS:
-                        table.add_slot(f"body-cell-{m}", (
-                            "<q-td :props='props' :class=\"props.row.best." + m + " ? 'text-green-700 font-bold' : ''\">"
-                            "{{ props.value }}</q-td>"
-                        ))
+                    models = sorted({e.model_name for e in board.entries})
+                    flt = {"model": None, "min_days": 0}
 
-                    def open_detail(e):
+                    def shown():
+                        return filter_entries(board.entries, flt["model"], flt["min_days"])
+
+                    @ui.refreshable
+                    def board_table():
+                        entries = shown()
+                        if flt["model"] or flt["min_days"]:
+                            ui.label(f"Showing {len(entries)} of {len(board.entries)} entries").classes("text-xs text-gray-500")
+                        table = ui.table(columns=columns, rows=table_rows(board, entries), row_key="run_qid").classes("w-full")
+                        for m in LABELS:
+                            table.add_slot(f"body-cell-{m}", (
+                                "<q-td :props='props' :class=\"props.row.best." + m + " ? 'text-green-700 font-bold' : ''\">"
+                                "{{ props.value }}</q-td>"
+                            ))
+
+                        def open_detail(e):
+                            try:
+                                qid = e.args[1]["run_qid"]
+                                entry = next((x for x in board.entries if x.run_qid == qid), None)
+                            except (IndexError, KeyError, TypeError):
+                                entry = None
+                            if entry is None:
+                                ui.notify("Run not found", type="warning")
+                                return
+                            with ui.dialog() as dialog, ui.card().classes("w-[60rem] max-w-full"):
+                                ui.label(f"{entry.model_name} — run {entry.run_qid}").classes("text-lg font-semibold")
+                                ui.link(
+                                    "Show run in ModelHub",
+                                    f"https://data.episerve.zib.de/dataset/{entry.run_qid.lower()}", new_tab=True,
+                                ).classes("text-sm")
+                                ui.label(f"History window: {history_window(entry)}").classes("text-sm text-gray-600")
+                                if entry.params:
+                                    with ui.column().classes("gap-0"):
+                                        for k, v in entry.params.items():
+                                            ui.label(f"{k}: {v}").classes("text-sm text-gray-600")
+                                else:
+                                    ui.label("Parameters: —").classes("text-sm text-gray-600")
+                                ui.echart(chart_option(entry)).classes("w-full h-80")
+                                ui.table(
+                                    columns=[
+                                        {"name": c, "label": c if c != "error" else "error (forecast − observed)",
+                                         "field": c, "align": "left" if c == "date" else "right"}
+                                        for c in ("date", "observed", "forecast", "q10", "q90", "error")
+                                    ],
+                                    rows=point_rows(entry), row_key="date",
+                                ).props("dense flat").classes("w-full")
+                                ui.button("Close", on_click=dialog.close).props("flat")
+                            dialog.on("hide", dialog.delete)
+                            dialog.open()
+
+                        table.on("rowClick", open_detail)
+
+                    def set_model(e):
+                        flt["model"] = e.value if e.value != _ALL_MODELS else None
+                        board_table.refresh()
+
+                    def set_min_days(e):
                         try:
-                            qid = e.args[1]["run_qid"]
-                            entry = next((x for x in board.entries if x.run_qid == qid), None)
-                        except (IndexError, KeyError, TypeError):
-                            entry = None
-                        if entry is None:
-                            ui.notify("Run not found", type="warning")
-                            return
-                        with ui.dialog() as dialog, ui.card().classes("w-[60rem] max-w-full"):
-                            ui.label(f"{entry.model_name} — run {entry.run_qid}").classes("text-lg font-semibold")
-                            ui.label(f"Parameters: {entry.params or '—'}").classes("text-sm text-gray-600")
-                            ui.echart(_chart(entry, bench)).classes("w-full h-80")
-                            ui.button("Close", on_click=dialog.close).props("flat")
-                        dialog.on("hide", dialog.delete)
-                        dialog.open()
+                            flt["min_days"] = max(0, int(e.value or 0))
+                        except (TypeError, ValueError):
+                            flt["min_days"] = 0
+                        board_table.refresh()
 
-                    table.on("rowClick", open_detail)
+                    with ui.row().classes("items-end gap-3"):
+                        ui.select([_ALL_MODELS, *models], label="Model", value=_ALL_MODELS, on_change=set_model).props("outlined dense").classes("min-w-[14rem]")
+                        ui.number("Min. history (days)", value=0, min=0, precision=0, on_change=set_min_days).props("outlined dense")
+                    board_table()
                 if board.not_scorable:
                     with ui.expansion(f"Not scorable runs ({len(board.not_scorable)})").classes("w-full"):
                         for sk in board.not_scorable:

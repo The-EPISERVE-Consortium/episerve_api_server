@@ -26,7 +26,7 @@ def test_nav_has_leaderboard_item():
     assert ("Leaderboard", "/ui/leaderboard") in pages.NAV_ITEMS
 
 
-def _run_compute(monkeypatch, loaders, values=None):
+def _run_compute(monkeypatch, loaders, values=None, after=None, runs_extra=None):
     """Render the page, press Compute, and return (client, elements-by-type helper)."""
     import re
 
@@ -43,6 +43,7 @@ def _run_compute(monkeypatch, loaders, values=None):
          "input_dataset_qids": ["Q1"], "data_transformation_sql": ["SELECT 1"],
          "run_timestamp": "2026-01-01T00:00:00Z", "predictions_resource_id": "r11"},
     ]
+    runs.extend(runs_extra or [])
     monkeypatch.setattr(pages.ckan_client, "list_processed_datasets",
                         lambda: [{"qid": "Q1", "name": "Wastewater", "last_modified": "2026-10-14"}])
     monkeypatch.setattr(pages.ckan_client, "list_model_runs", lambda: runs)
@@ -98,6 +99,22 @@ def _run_compute(monkeypatch, loaders, values=None):
                             if asyncio.iscoroutine(res):
                                 await res
                 out["charts"] = find(ui.echart)
+                if after:
+                    pending = []
+
+                    def defer(awaitable=None, *, coroutine=None, **kwargs):
+                        pending.append(awaitable or coroutine)    # UI updates run when drained
+
+                    async def drain():
+                        while pending:
+                            await pending.pop(0)
+
+                    with monkeypatch.context() as patches, client:
+                        patches.setattr(background_tasks, "create", defer)
+                        patches.setattr(background_tasks, "create_or_defer", defer)
+                        res = after(out, client, find, ui, drain)
+                        if asyncio.iscoroutine(res):
+                            await res
 
     asyncio.run(scenario())
     return out
@@ -122,7 +139,7 @@ def test_compute_shows_ranked_table_detail_chart_and_unscorable_reasons(monkeypa
     assert any("Not scorable runs (1)" in str(e.props.get("label", "")) for e in out["find"](out["ui"].expansion))
     chart = out["charts"][0]
     series = {s["name"]: s["data"] for s in chart.options["series"]}
-    assert series["Observed"] == [10.0, 20.0] and series["q90"] == [13.0, 23.0]
+    assert series["Observed"] == [10.0, 20.0] and series["q10–q90"] == [4.0, 4.0]
 
 
 def test_compute_shows_error_label_when_truth_cannot_load(monkeypatch):
@@ -151,3 +168,70 @@ def test_compute_rejects_invalid_input_without_building(monkeypatch, values, mes
                                      "load_params": must_not_run}, values)
     assert any(message in text for text in out["labels"])
     assert "table" not in out
+
+
+def _two_model_loaders():
+    import pandas as pd
+
+    dates = pd.to_datetime(["2022-01-05", "2022-01-12"])
+    return {
+        "load_truth": lambda dataset, bench: pd.DataFrame({"date": dates, "truth": [10.0, 20.0]}),
+        "load_predictions": lambda run, bench: pd.DataFrame(
+            {"date": dates, "forecast": [11.0, 21.0], "q10": [9.0, 19.0], "q90": [13.0, 23.0]}),
+        "load_params": lambda qid: {"history_length": 91},
+    }
+
+
+_SECOND_RUN = {"qid": "Q12", "model_name": "timesfm2", "docker_tag": "latest", "status": "success",
+               "input_dataset_qids": ["Q1"],
+               "data_transformation_sql": ["SELECT * FROM df WHERE CAST(datum AS DATE) <= DATE '2021-12-31'"],
+               "run_timestamp": "2026-01-01T00:00:00Z", "predictions_resource_id": "r12"}
+
+
+def test_columns_are_sortable_and_metrics_sort_on_raw_values(monkeypatch):
+    out = _run_compute(monkeypatch, _two_model_loaders())
+    columns = {c["name"]: c for c in out["table"].columns}
+    for name in ("rank", "model", "history", "mae", "rmse", "coverage", "interval_score"):
+        assert columns[name]["sortable"] is True
+    for name in ("mae", "rmse", "coverage", "interval_score"):
+        assert f"rowA.raw.{name}" in columns[name][":sort"]
+    assert out["table"].rows[0]["raw"]["mae"] == 1.0
+
+
+def test_model_filter_rerenders_only_matching_rows(monkeypatch):
+    async def pick(out, client, find, ui, drain):
+        select = next(e for e in find(ui.select) if e.props.get("label") == "Model")
+        assert list(select.options) == ["All models", "timesfm", "timesfm2"]
+        board = lambda: [t for t in find(ui.table) if t.props.get("row-key") == "run_qid"]  # noqa: E731
+        assert [len(t.rows) for t in board()] == [2]
+        select.value = "timesfm2"
+        await drain()
+        assert len(board()) == 1                      # the table was replaced, not duplicated
+        out["rows_after"] = [r["model"] for r in board()[0].rows]
+        out["labels_after"] = [e.text for e in find(ui.label)]
+        number = next(e for e in find(ui.number) if e.props.get("label") == "Min. history (days)")
+        number.value = 10_000
+        await drain()
+        out["rows_min"] = [r["model"] for r in board()[0].rows]
+
+    out = _run_compute(monkeypatch, _two_model_loaders(), after=pick, runs_extra=[_SECOND_RUN])
+    assert out["rows_after"] == ["timesfm2"]
+    assert "Showing 1 of 2 entries" in out["labels_after"]
+    assert out["rows_min"] == []
+
+
+def test_detail_dialog_shows_link_window_params_and_per_date_rows(monkeypatch):
+    def texts(out, client, find, ui, drain):
+        out["dialog_labels"] = [e.text for e in find(ui.label)]
+        out["links"] = [(e.props.get("href"), e.props.get("target")) for e in find(ui.link)]
+        out["tables"] = find(ui.table)
+        out["charts"] = find(ui.echart)
+
+    out = _run_compute(monkeypatch, _two_model_loaders(), after=texts)
+    assert ("https://data.episerve.zib.de/dataset/q10", "_blank") in out["links"]
+    assert any(t.startswith("History window:") and "→ 2021-12-31" in t for t in out["dialog_labels"])
+    assert "history_length: 91" in out["dialog_labels"]
+    assert "timesfm — run Q10" in out["dialog_labels"]
+    detail = out["tables"][-1]
+    assert [c["name"] for c in detail.columns] == ["date", "observed", "forecast", "q10", "q90", "error"]
+    assert detail.rows[0]["error"] == "1.00" and detail.rows[1]["observed"] == "20.00"

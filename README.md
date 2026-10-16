@@ -79,7 +79,7 @@ Runs that fail these checks are returned in `not_scorable` with the reason.
 
 Forecasts are read from the run's `predictions.tsv` DataStore resource in CKAN; coverage and interval score need the `<target>_q10` and `<target>_q90` columns. Observations are read from the dataset's Parquet file via DOIP. Metrics are MAE, RMSE, 80% coverage and the 80% interval score (alpha 0.2). Coverage and interval score are shown only when every scored date has both q10 and q90. Non-finite forecast or observed values count as missing. A forecast beyond the last observed date is scored on the observed dates only.
 
-The web view is at `/ui/leaderboard`.
+The web view is at `/ui/leaderboard`. Table columns sort on click (metrics by their numeric values, missing ones last when ascending), a model select and a minimum history length filter the displayed entries in the browser (ranks and best-value highlighting then refer to the displayed entries; entries with an unknown history start are hidden once a minimum above 0 is set), and clicking a row opens a dialog with the run's ModelHub link, history window, parameters, a chart with a shaded q10–q90 band and a per-date table of observed, forecast, quantiles and error. Ties for the best value in a column are all highlighted.
 
 ## Running locally
 
