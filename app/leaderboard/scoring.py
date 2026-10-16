@@ -1,5 +1,6 @@
 """Score one model run against a benchmark."""
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 import pandas as pd
@@ -77,20 +78,31 @@ def candidate_runs(
     Only the cheap checks run here (status, dataset, history window, filter); a run that
     passes them can still be rejected when added if its predictions are unusable. For a
     benchmark pinned to a data commit, ``load_inputs(run_qid)`` supplies the run's provenance
-    inputs (for runs that are successful and not yet added); a failing loader counts as unreadable.
+    inputs (for runs that are successful and not yet added; fetched in parallel); a failing loader counts as unreadable.
     """
+    relevant = [(run, qualify_run(run, benchmark)) for run in runs]
+    relevant = [(run, verdict) for run, verdict in relevant if verdict.relevant]
+    pinned = benchmark.data_commit is not None
+    to_load = [
+        run["qid"] for run, _ in relevant
+        if pinned and load_inputs and run.get("status") == "success" and run["qid"] not in active_run_qids
+    ]
+
+    def safe_load(qid: str) -> list[RunInput] | None:
+        try:
+            return load_inputs(qid)
+        except Exception:
+            return None
+
+    if to_load:
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            loaded = dict(zip(to_load, pool.map(safe_load, to_load)))
+    else:
+        loaded = {}
     candidates = []
-    for run in runs:
-        verdict = qualify_run(run, benchmark)
-        if not verdict.relevant:
-            continue
-        pinned = benchmark.data_commit is not None
-        if pinned and load_inputs and run.get("status") == "success" and run["qid"] not in active_run_qids:
-            try:
-                inputs = load_inputs(run["qid"])
-            except Exception:
-                inputs = None
-            verdict = qualify_run(run, benchmark, inputs=inputs)
+    for run, verdict in relevant:
+        if run["qid"] in loaded:
+            verdict = qualify_run(run, benchmark, inputs=loaded[run["qid"]])
         reason = "already on this leaderboard" if run["qid"] in active_run_qids else verdict.reason
         candidates.append({
             "qid": run["qid"], "model_name": run.get("model_name", ""),

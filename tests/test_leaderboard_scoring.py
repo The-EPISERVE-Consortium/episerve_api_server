@@ -141,3 +141,26 @@ def test_candidates_for_a_strict_benchmark_check_provenance_only_where_needed():
     assert result["Q13"] == "already on this leaderboard"
     assert "provenance could not be read" in result["Q14"]
     assert sorted(calls) == ["Q10", "Q11", "Q14"]                       # not for failed or already-added runs
+
+
+def test_candidates_fetch_provenance_in_parallel_and_keep_the_order():
+    import threading
+
+    runs = [_run(f"Q{n}", run_timestamp=f"2026-01-{n - 29:02d}T00:00:00Z") for n in range(30, 40)]
+    barrier = threading.Barrier(3, timeout=5)                       # three calls must be in flight together
+    seen = []
+
+    def inputs_for(qid):
+        seen.append(qid)
+        if qid in ("Q30", "Q31", "Q32"):
+            barrier.wait()
+        if qid == "Q35":
+            raise RuntimeError("DOIP down")
+        return [RunInput("Q1", "x.parquet", PIN if qid != "Q36" else "cd" * 32, SQL)]
+
+    result = candidate_runs(STRICT, runs, set(), load_inputs=inputs_for)
+    assert sorted(seen) == [f"Q{n}" for n in range(30, 40)]
+    assert [c["qid"] for c in result] == [f"Q{n}" for n in range(39, 29, -1)]      # newest first, as before
+    reasons = {c["qid"]: c["reason"] for c in result}
+    assert reasons["Q30"] is None and "pinned to" in reasons["Q36"]
+    assert "provenance could not be read" in reasons["Q35"]

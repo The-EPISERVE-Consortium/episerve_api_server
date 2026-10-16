@@ -60,6 +60,7 @@ def render(monkeypatch, module, path, *, logged_in=False, setup=None, after=None
                     res = after(out, client, find, drain)
                     if asyncio.iscoroutine(res):
                         await res
+                    await drain()
 
     asyncio.run(scenario())
     return out

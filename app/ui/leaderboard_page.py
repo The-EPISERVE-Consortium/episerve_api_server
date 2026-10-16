@@ -31,25 +31,20 @@ def _is_logged_in() -> bool:
     return _napp.storage.user.get("token") == _daily_token()
 
 
-def _add_run_dialog(benchmark_id: int) -> None:
-    """Dialog to add a model run to the benchmark; scoring runs when 'Add' is pressed."""
+async def _add_run_dialog(benchmark_id: int) -> None:
+    """Dialog to add a model run to the benchmark; scoring runs when 'Add' is pressed.
+
+    The dialog opens at once; the candidate runs (one provenance fetch each) load in a worker thread.
+    """
+    holder: dict = {}
     with ui.dialog() as dialog, ui.card().classes("w-[40rem] max-w-full gap-2"):
         ui.label("Add run").classes("text-lg font-semibold")
         error = ui.label("").classes("text-red-600 text-sm")
-        try:
-            candidates = actions.candidates(benchmark_id)
-        except Exception:
-            logger.exception("could not list the candidate runs")
-            candidates = []
-            error.set_text("Could not list runs.")
-        addable = {c["qid"]: f"{c['model_name']} · {c['qid']} · {c['run_timestamp'][:10]}"
-                   for c in candidates if c["reason"] is None}
-        blocked = [c for c in candidates if c["reason"] is not None]
-        select = ui.select(addable, label="Model run").props("outlined dense").classes("w-full")
-        if blocked:
-            with ui.expansion(f"Runs that cannot be added ({len(blocked)})").classes("w-full"):
-                for c in blocked:
-                    ui.label(f"{c['model_name']} ({c['qid']}): {c['reason']}").classes("text-sm text-gray-600")
+        loading = ui.row().classes("items-center gap-2")
+        with loading:
+            ui.spinner(size="sm")
+            ui.label("Loading runs…").classes("text-sm text-gray-600")
+        body = ui.column().classes("w-full gap-2")
         spinner = ui.spinner(size="md")
         spinner.set_visibility(False)
 
@@ -58,7 +53,8 @@ def _add_run_dialog(benchmark_id: int) -> None:
                 ui.notify(_LOGIN_EXPIRED, type="warning")
                 return
             error.set_text("")
-            if not select.value:
+            select = holder.get("select")
+            if select is None or not select.value:
                 error.set_text("Choose a model run.")
                 return
             add_btn.disable()
@@ -83,6 +79,22 @@ def _add_run_dialog(benchmark_id: int) -> None:
             add_btn = ui.button("Add", on_click=add)
     dialog.on("hide", dialog.delete)
     dialog.open()
+    try:
+        candidates = await run.io_bound(actions.candidates, benchmark_id)
+    except Exception:
+        logger.exception("could not list the candidate runs")
+        candidates = []
+        error.set_text("Could not list runs.")
+    loading.delete()
+    addable = {c["qid"]: f"{c['model_name']} · {c['qid']} · {c['run_timestamp'][:10]}"
+               for c in candidates if c["reason"] is None}
+    blocked = [c for c in candidates if c["reason"] is not None]
+    with body:
+        holder["select"] = ui.select(addable, label="Model run").props("outlined dense").classes("w-full")
+        if blocked:
+            with ui.expansion(f"Runs that cannot be added ({len(blocked)})").classes("w-full"):
+                for c in blocked:
+                    ui.label(f"{c['model_name']} ({c['qid']}): {c['reason']}").classes("text-sm text-gray-600")
 
 
 def register_leaderboard_page() -> None:

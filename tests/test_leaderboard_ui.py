@@ -250,6 +250,7 @@ def test_add_run_dialog_lists_addable_runs_and_explains_the_others(monkeypatch):
 
     async def scenario(out, client, find, drain):
         await _click(_button(find, "Add run"), client)
+        await drain()
         select = next(e for e in find(ui.select) if e.props.get("label") == "Model run")
         assert list(select.options.values()) == ["timesfm · Q10 · 2026-01-02"] or list(select.options) == ["Q10"]
         out["labels_dialog"] = _labels(find)
@@ -275,6 +276,7 @@ def test_add_run_shows_the_reason_when_scoring_fails(monkeypatch):
 
     async def scenario(out, client, find, drain):
         await _click(_button(find, "Add run"), client)
+        await drain()
         next(e for e in find(ui.select) if e.props.get("label") == "Model run").value = "Q10"
         await _click(_button(find, "Add"), client)
         await drain()
@@ -322,6 +324,7 @@ def test_expired_login_blocks_add_run(monkeypatch):
 
     async def scenario(out, client, find, drain):
         await _click(_button(find, "Add run"), client)
+        await drain()
         next(e for e in find(ui.select) if e.props.get("label") == "Model run").value = "Q10"
         _expired(monkeypatch)
         await _click(_button(find, "Add"), client)
@@ -363,6 +366,7 @@ def test_unexpected_write_errors_are_generic_and_logged(monkeypatch, caplog):
 
     async def scenario(out, client, find, drain):
         await _click(_button(find, "Add run"), client)
+        await drain()
         next(e for e in find(ui.select) if e.props.get("label") == "Model run").value = "Q10"
         await _click(_button(find, "Add"), client)
         await drain()
@@ -373,3 +377,46 @@ def test_unexpected_write_errors_are_generic_and_logged(monkeypatch, caplog):
     assert "Could not add the run." in out["labels_after"]
     assert not any("db.internal" in t for t in out["labels_after"])
     assert any("db.internal" in (r.exc_text or "") for r in caplog.records)
+
+
+def test_add_run_dialog_opens_with_a_loading_label_before_the_runs_arrive(monkeypatch):
+    snapshot = {}
+
+    def slow(bid):                       # runs in the worker thread while the dialog is already open
+        snapshot["labels"] = _labels(snapshot["find_fn"])
+        snapshot["selects"] = [e for e in snapshot["find_fn"](ui.select) if e.props.get("label") == "Model run"]
+        return [{"qid": "Q10", "model_name": "timesfm", "run_timestamp": "2026-01-02T00:00:00Z", "reason": None}]
+
+    monkeypatch.setattr(leaderboard_page.actions, "candidates", slow)
+
+    async def scenario(out, client, find, drain):
+        snapshot["find_fn"] = find
+        await _click(_button(find, "Add run"), client)
+        await drain()
+        out["after"] = _labels(find)
+        out["select_after"] = [e for e in find(ui.select) if e.props.get("label") == "Model run"]
+
+    out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert "Add run" in snapshot["labels"] and "Loading runs…" in snapshot["labels"]
+    assert snapshot["selects"] == []
+    assert "Loading runs…" not in out["after"] and len(out["select_after"]) == 1
+    assert list(out["select_after"][0].options) == ["Q10"]
+
+
+def test_add_run_dialog_shows_a_generic_error_when_listing_fails_and_stays_usable(monkeypatch, caplog):
+    def boom(bid):
+        raise RuntimeError("Can't connect to 'doip.internal'")
+
+    monkeypatch.setattr(leaderboard_page.actions, "candidates", boom)
+
+    async def scenario(out, client, find, drain):
+        await _click(_button(find, "Add run"), client)
+        await drain()
+        out["labels_after"] = _labels(find)
+        out["has_cancel"] = _button(find, "Cancel") is not None
+
+    with caplog.at_level("ERROR"):
+        out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert "Could not list runs." in out["labels_after"] and "Loading runs…" not in out["labels_after"]
+    assert not any("doip.internal" in t for t in out["labels_after"]) and out["has_cancel"]
+    assert any("doip.internal" in (r.exc_text or "") for r in caplog.records)
