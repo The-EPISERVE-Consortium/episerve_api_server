@@ -4,6 +4,7 @@ import asyncio
 from datetime import date
 
 import httpx
+import pytest
 from nicegui import events, ui
 
 from app.leaderboard.entries import Benchmark
@@ -35,7 +36,14 @@ def _board(entries, bid=3):
     return Leaderboard(BENCH, "interval_score", 2, "2026-10-14T00:00:00Z", entries, name="Flu", benchmark_id=bid)
 
 
-def _render(monkeypatch, *, row=ROW, board=None, logged_in=False, bid=3, after=None, rank_log=None, path=None):
+SPEC = {"benchmark_id": 3, "dataset_qid": "Q1", "data_commit": COMMIT,
+        "input_data_files": [[f"https://doip.example/doip/retrieve/Q1/d.parquet?version={COMMIT}", "input.parquet"]],
+        "data_transformation_sql": ["SELECT 1 FROM df"], "config": {"prediction_length": 5, "prediction_offset": 0},
+        "test_start": "2022-01-01", "test_end": "2022-01-31"}
+
+
+def _render(monkeypatch, *, row=ROW, board=None, logged_in=False, bid=3, after=None, rank_log=None, path=None,
+            spec=SPEC):
     """Render the page in memory and return what a test needs to inspect it."""
     def read(benchmark_id, rank_by="interval_score", best_per_model=True):
         if rank_log is not None:
@@ -50,6 +58,13 @@ def _render(monkeypatch, *, row=ROW, board=None, logged_in=False, bid=3, after=N
     def setup():
         monkeypatch.setattr(leaderboard_page.bactions, "get", get)
         monkeypatch.setattr(leaderboard_page.actions, "read_leaderboard", read)
+
+        def run_spec(benchmark_id):
+            if isinstance(spec, Exception):
+                raise spec
+            return spec
+
+        monkeypatch.setattr(leaderboard_page.bactions, "run_spec", run_spec)
 
     return render(monkeypatch, leaderboard_page, path or f"/ui/benchmarks/{bid}", logged_in=logged_in, setup=setup,
                   after=after, table_key="run_qid")
@@ -473,3 +488,123 @@ def test_add_run_dialog_shows_a_generic_error_when_listing_fails_and_stays_usabl
     assert "Could not list runs." in out["labels_after"] and "Loading runs…" not in out["labels_after"]
     assert not any("doip.internal" in t for t in out["labels_after"]) and out["has_cancel"]
     assert any("doip.internal" in (r.exc_text or "") for r in caplog.records)
+
+
+# --- tabs: Overview | Data | Evaluation | Leaderboard -------------------------------------------------------------
+
+
+def _tabs(out):
+    tabs = out["find"](ui.tabs)[0]
+    names = [(tab.props.get("name"), tab.props.get("label")) for tab in out["find"](ui.tab)]
+    return tabs.value, names
+
+
+def test_page_has_four_tabs_and_opens_on_the_overview(monkeypatch):
+    value, names = _tabs(_render(monkeypatch, board=_board([_entry()])))
+    assert value == "overview"
+    assert names == [("overview", "Overview"), ("data", "Data"), ("evaluation", "Evaluation"),
+                     ("leaderboard", "Leaderboard")]
+
+
+@pytest.mark.parametrize("query,expected", [("?tab=leaderboard", "leaderboard"), ("?tab=data", "data"),
+                                            ("?tab=evaluation", "evaluation"), ("?tab=nonsense", "overview"),
+                                            ("", "overview")])
+def test_the_tab_query_selects_the_open_tab(monkeypatch, query, expected):
+    out = _render(monkeypatch, board=_board([_entry()]), path=f"/ui/benchmarks/3{query}")
+    assert _tabs(out)[0] == expected
+
+
+def test_overview_has_description_how_it_works_and_the_start_button(monkeypatch):
+    row = {**ROW, "description": "Weekly wastewater viral load."}
+    out = _render(monkeypatch, row=row, board=_board([_entry()]))
+    assert "Weekly wastewater viral load." in out["labels"]
+    assert "How it works" in out["labels"]
+    assert any(b.props.get("label") == "Start a run from this benchmark" for b in out["find"](ui.button))
+
+
+def test_overview_without_a_description_keeps_the_standard_sentence(monkeypatch):
+    out = _render(monkeypatch, board=_board([_entry()]))
+    assert any(t.startswith("Which model predicted this series best") for t in out["labels"])
+
+
+def test_data_tab_lists_the_facts_the_pin_the_input_link_and_the_sql(monkeypatch):
+    def grab(out, client, find, drain):
+        out["code"] = [e.content for e in find(ui.code)]
+        out["links"] = [(e.text, e.props.get("href")) for e in find(ui.link)]
+        out["facts"] = [dict((r["property"], r["value"]) for r in t.rows) for t in find(ui.table)
+                        if t.props.get("row-key") == "property"]
+
+    out = _render(monkeypatch, board=_board([_entry()]), after=grab)
+    facts = out["facts"][0]
+    assert facts["Data commit"] == COMMIT and facts["Filter"] == "region = DE" and facts["Dataset"] == "Q1"
+    assert "SELECT 1 FROM df" in out["code"]
+    url = f"https://doip.example/doip/retrieve/Q1/d.parquet?version={COMMIT}"
+    assert (url, url) in out["links"]
+
+
+def test_data_tab_survives_a_missing_run_spec(monkeypatch):
+    def grab(out, client, find, drain):
+        out["code"] = [e.content for e in find(ui.code)]
+        out["facts"] = [t for t in find(ui.table) if t.props.get("row-key") == "property"]
+
+    out = _render(monkeypatch, board=_board([_entry()]), spec=RuntimeError("db down"), after=grab)
+    assert out["status"] == 200 and len(out["facts"]) == 1
+    assert not any("SELECT" in c for c in out["code"])
+    assert "The input URL and SQL are not available right now." in out["labels"]
+
+
+def test_evaluation_tab_documents_metrics_ranking_rules_and_how_to_run(monkeypatch):
+    def grab(out, client, find, drain):
+        out["metrics"] = [t.rows for t in find(ui.table) if t.props.get("row-key") == "metric"]
+        out["code"] = [e.content for e in find(ui.code)]
+
+    out = _render(monkeypatch, board=_board([_entry()]), after=grab)
+    names = [r["metric"] for r in out["metrics"][0]]
+    assert names == ["MAE", "RMSE", "80% coverage", "interval score"]
+    assert out["metrics"][0][2]["better"] == "closest to 80%"
+    labels = out["labels"]
+    assert any("Ranking" in t for t in labels) and any("Which runs are accepted" in t for t in labels)
+    assert any("filter region = DE" in t for t in labels)
+    assert any("episerve benchmark run-spec 3" in c for c in out["code"])
+
+
+def test_leaderboard_table_has_date_and_run_columns_and_a_baseline_badge(monkeypatch):
+    def grab(out, client, find, drain):
+        out["slots"] = sorted(out["table"].slots)
+
+    out = _render(monkeypatch, board=_board([_entry(), _entry("Q11", "x__baseline-naive", mae=9.0)]), after=grab)
+    columns = [c["name"] for c in out["table"].columns]
+    assert columns[:5] == ["rank", "model", "run", "date", "params"]
+    assert next(c for c in out["table"].columns if c["name"] == "date")["sortable"] is True
+    assert "body-cell-model" in out["slots"] and "body-cell-run" in out["slots"]
+    assert "\\u200b" in str(out["table"].slots["body-cell-model"].template)      # may wrap after '__' only
+    assert [r["baseline"] for r in out["table"].rows] == [False, True]
+
+
+def test_the_run_cell_links_to_the_run_page_in_a_new_window(monkeypatch):
+    def grab(out, client, find, drain):
+        out["slot"] = str(out["table"].slots["body-cell-run"].template)
+
+    out = _render(monkeypatch, board=_board([_entry()]), after=grab)
+    assert "/ui/benchmarks/3/runs/" in out["slot"] and "_blank" in out["slot"] and "@click.stop" in out["slot"]
+
+
+def test_the_table_is_paginated(monkeypatch):
+    out = _render(monkeypatch, board=_board([_entry()]))
+    assert out["table"].pagination["rowsPerPage"] == 25
+    assert out["table"].props[":rows-per-page-options"] == "[10, 25, 50, 0]"      # bound, i.e. an array in the browser
+
+
+def test_search_filters_rows_and_survives_a_rank_by_change(monkeypatch):
+    async def scenario(out, client, find, drain):
+        search = next(e for e in find(ui.input) if e.props.get("label") == "Search")
+        search.value = "other"
+        await drain()
+        next(e for e in find(ui.select) if e.props.get("label") == "Rank by").value = "mae"
+        await drain()
+        out["rows_after"] = [r["model"] for t in find(ui.table) if t.props.get("row-key") == "run_qid" for r in t.rows]
+        out["labels_after"] = [e.text for e in find(ui.label)]
+
+    out = _render(monkeypatch, board=_board([_entry(), _entry("Q11", "other", mae=2.0)]), after=scenario)
+    assert out["rows_after"] == ["other"]
+    assert "Showing 1 of 2 entries" in out["labels_after"]

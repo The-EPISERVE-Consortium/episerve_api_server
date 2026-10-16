@@ -149,3 +149,28 @@ def test_summary_flags_mixed_data_versions():
 
 def test_summary_without_commits_adds_nothing():
     assert "lakeFS" not in summary(_board([_entry("Q1", "a", mae=1.0)]))
+
+
+def _run(qid, name, params=None, timestamp="2026-01-01T00:00:00Z"):
+    return Entry(qid, name, "latest", params or {"history_length": 91}, date(2021, 1, 1), date(2021, 12, 31),
+                 timestamp, 52, 52, {"mae": 1.0, "rmse": 1.0, "coverage": None, "interval_score": None}, [])
+
+
+def test_rows_carry_the_run_date_and_a_baseline_flag():
+    rows = table_rows(_board([_run("Q10", "timesfm", timestamp="2026-10-16T22:48:17Z"), _run("Q11", "x__baseline-naive")]))
+    by_qid = {r["run_qid"]: r for r in rows}
+    assert by_qid["Q10"]["date"] == "2026-10-16 22:48"
+    assert by_qid["Q10"]["baseline"] is False and by_qid["Q11"]["baseline"] is True
+
+
+def test_a_run_without_a_usable_timestamp_shows_a_dash():
+    assert table_rows(_board([_run("Q10", "m", timestamp="")]))[0]["date"] == "—"
+
+
+def test_filter_entries_by_search_text_matches_model_run_and_parameters():
+    entries = [_run("Q10", "timesfm"), _run("Q11", "chronos2-small", params={"history_length": 233})]
+    assert [e.run_qid for e in filter_entries(entries, text="CHRONOS")] == ["Q11"]
+    assert [e.run_qid for e in filter_entries(entries, text="q10")] == ["Q10"]
+    assert [e.run_qid for e in filter_entries(entries, text="history_length=233")] == ["Q11"]
+    assert len(filter_entries(entries, text="  ")) == 2
+    assert filter_entries(entries, text="nothing") == []

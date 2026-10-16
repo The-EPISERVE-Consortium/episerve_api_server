@@ -364,7 +364,7 @@ def register_benchmarks_page() -> None:
                 with ui.column().classes("w-full gap-1 border border-gray-200 rounded-xl px-4 py-3"):
                     with ui.row().classes("items-center gap-4"):
                         ui.link(b["name"], f"/ui/benchmarks/{b['id']}").classes("text-lg font-semibold")
-                        ui.link("Leaderboard", f"/ui/benchmarks/{b['id']}").classes("text-sm")
+                        ui.link("Leaderboard", f"/ui/benchmarks/{b['id']}?tab=leaderboard").classes("text-sm")
                         if logged_in:
                             ui.button("Copy as draft", on_click=lambda b=b: copy(b["id"])).props("flat")
                             ui.button("Retire", on_click=lambda b=b: guarded(lambda: _retire_dialog(b, reload))

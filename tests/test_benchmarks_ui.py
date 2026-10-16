@@ -87,8 +87,8 @@ def test_page_lists_final_benchmarks_from_the_database_only(monkeypatch):
     assert COMMIT not in " ".join(text)
     assert any(t.startswith("Input range: first date") for t in text)
     links = {e.props.get("href"): e.text for e in out["find"](ui.link)}
-    link_texts = [e.text for e in out["find"](ui.link) if e.props.get("href") == "/ui/benchmarks/5"]
-    assert link_texts == ["Flu 2022", "Leaderboard"]
+    hrefs = {e.text: e.props.get("href") for e in out["find"](ui.link) if "/ui/benchmarks/5" in (e.props.get("href") or "")}
+    assert hrefs == {"Flu 2022": "/ui/benchmarks/5", "Leaderboard": "/ui/benchmarks/5?tab=leaderboard"}
     assert "Best: timesfm (interval score 4.50)" in text
 
 

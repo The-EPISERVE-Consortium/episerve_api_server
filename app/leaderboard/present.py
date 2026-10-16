@@ -1,5 +1,6 @@
 """Format a leaderboard for display."""
 
+from app.leaderboard.about import is_baseline
 from app.leaderboard.metrics import METRICS
 from app.leaderboard.service import TARGET_COVERAGE, Entry, Leaderboard
 
@@ -19,15 +20,26 @@ def history_days(entry: Entry) -> int | None:
     return (entry.history_end - entry.history_start).days + 1
 
 
-def filter_entries(entries: list[Entry], model: str | None = None, min_history_days: int | float | None = 0) -> list[Entry]:
+def _searchable(entry: Entry) -> str:
+    params = " ".join(f"{k}={v}" for k, v in entry.params.items())
+    return f"{entry.model_name} {entry.run_qid} {params}".lower()
+
+
+def filter_entries(
+    entries: list[Entry], model: str | None = None, min_history_days: int | float | None = 0, text: str | None = None,
+) -> list[Entry]:
     """Entries of ``model`` (all if empty) with a history of at least ``min_history_days`` days.
 
+    ``text`` keeps entries whose model name, run QID or parameters contain it (case-insensitive).
     An unknown history start counts as unknown length and is dropped whenever a minimum above 0 is set.
     """
     minimum = min_history_days or 0
+    needle = (text or "").strip().lower()
     kept = []
     for entry in entries:
         if model and entry.model_name != model:
+            continue
+        if needle and needle not in _searchable(entry):
             continue
         if minimum > 0:
             days = history_days(entry)
@@ -35,6 +47,13 @@ def filter_entries(entries: list[Entry], model: str | None = None, min_history_d
                 continue
         kept.append(entry)
     return kept
+
+
+def _run_date(timestamp: str) -> str:
+    """'2026-10-16T22:48:17Z' -> '2026-10-16 22:48'; a dash when there is no usable timestamp."""
+    if not timestamp or len(timestamp) < 16 or timestamp[10] not in "T ":
+        return "—"
+    return f"{timestamp[:10]} {timestamp[11:16]}"
 
 
 def _distance(metric: str, value: float) -> float:
@@ -57,7 +76,9 @@ def table_rows(board: Leaderboard, entries: list[Entry] | None = None) -> list[d
         rows.append({
             "rank": rank,
             "model": f"{entry.model_name}",
+            "baseline": is_baseline(entry.model_name),
             "run_qid": entry.run_qid,
+            "date": _run_date(entry.run_timestamp),
             "params": ", ".join(f"{k}={v}" for k, v in entry.params.items()) or "—",
             "history": f"{start} → {entry.history_end.isoformat()}",
             "history_days": history_days(entry),
