@@ -74,6 +74,8 @@ def validate(benchmark: Benchmark, name: str) -> None:
             raise DefinitionError(f"A filter value of 1 to {MAX_FILTER_VALUE} characters is required with a filter column (filter value).")
     elif benchmark.filter_value:
         raise DefinitionError("A filter value needs a filter column.")
+    if benchmark.test_start is None or benchmark.test_end is None:
+        raise DefinitionError("The test start and end are required.")
     if benchmark.test_start > benchmark.test_end:
         raise DefinitionError("The test start must not be after the test end.")
     if benchmark.history_end is not None and benchmark.history_end >= benchmark.test_start:

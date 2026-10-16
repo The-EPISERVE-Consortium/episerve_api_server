@@ -128,3 +128,9 @@ def test_duplicate_dates_collapse():
 def test_unsorted_input_equals_sorted():
     dates = _weekly(date(2026, 4, 1), 5)
     assert derive_horizon(dates[::-1], date(2026, 3, 25)) == derive_horizon(dates, date(2026, 3, 25))
+
+
+@pytest.mark.parametrize("field", ["test_start", "test_end"])
+def test_validate_requires_both_test_dates(field):
+    with pytest.raises(DefinitionError, match="test start and end are required"):
+        validate(_b(**{field: None}), "Flu")

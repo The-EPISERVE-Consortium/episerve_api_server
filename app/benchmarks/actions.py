@@ -15,6 +15,8 @@ from app.benchmarks.definition import (
 from app.benchmarks.errors import Conflict, NotDraft, NotFound  # noqa: F401  (re-exported)
 from app.clients import ckan as ckan_client
 from app.clients import lakefs as lakefs_client
+from lakefs.exceptions import NotFoundException
+
 from app.config import settings
 from app.dataset_preview import MAX_DOWNLOAD_BYTES
 from app.leaderboard import loaders
@@ -112,6 +114,9 @@ def update_draft(benchmark_id: int, **fields) -> None:
     name = fields.get("name", row["name"])
     description = fields.get("description", row["description"])
     changes = {k: v for k, v in fields.items() if k not in ("name", "description")}
+    for key in ("target_column", "date_column"):
+        if isinstance(changes.get(key), str):
+            changes[key] = changes[key].strip()
     if "filter_column" in changes and not changes["filter_column"]:
         changes["filter_column"], changes["filter_value"] = None, None
     merged = replace(current, **changes)
@@ -132,6 +137,9 @@ def _evaluate(benchmark: Benchmark, dataset: dict, commit: str) -> CheckReport:
     report.component_name = components[0]["name"]
     try:
         data = lakefs_client.read_processed_component(commit, dataset["qid"], report.component_name, MAX_DOWNLOAD_BYTES)
+    except NotFoundException:
+        report.problems.append("The dataset file does not exist at the pinned commit.")
+        return report
     except ValueError as exc:
         report.problems.append(str(exc))
         return report
@@ -145,13 +153,21 @@ def _evaluate(benchmark: Benchmark, dataset: dict, commit: str) -> CheckReport:
     try:
         if history_end is None:
             history_end = loaders.last_observed_date(data, benchmark, benchmark.test_start - timedelta(days=1))
+            report.last_history_date = history_end
         elif history_end >= benchmark.test_start:
             raise LoadError("The history must end before the test start.")
         resolved = replace(benchmark, history_end=history_end)
         report.history_end = history_end
-        report.last_history_date = loaders.last_observed_date(data, resolved, history_end)
+        if benchmark.history_end is not None:
+            report.last_history_date = loaders.last_observed_date(data, resolved, history_end)
     except LoadError as exc:
         report.problems.append(str(exc))
+        return report
+    if benchmark.history_start is not None and benchmark.history_start > report.last_history_date:
+        report.problems.append(
+            "There are no observations in the input range (history start is after the last observation "
+            "on or before the history end)."
+        )
         return report
     try:
         horizon = derive_horizon([d.date() for d in truth["date"]], report.last_history_date)
@@ -202,6 +218,9 @@ def finalize(benchmark_id: int) -> None:
     report = _evaluate(benchmark, dataset, commit)
     if not report.ok:
         raise LoadError("; ".join(report.problems))
+    again = _row(benchmark_id)
+    if (again["name"], store.benchmark_from_row(again)) != (row["name"], benchmark):
+        raise Conflict("The draft changed while it was being finalized; check it again.")
     done = store.finalize(
         benchmark_id, data_commit=commit, component_name=report.component_name, truth_points=report.truth_points,
         prediction_length=report.prediction_length, history_end=report.history_end,
