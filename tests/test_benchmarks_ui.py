@@ -24,7 +24,15 @@ DRAFT = {
 DATASETS = [{"qid": "Q1", "name": "Wastewater"}]
 
 
-def _render(monkeypatch, *, finals=(FINAL,), drafts=(DRAFT,), logged_in=False, after=None, draft_log=None):
+best_log: list = []
+
+
+def default_best(ids):
+    best_log.append(ids)
+    return {5: {"model_name": "timesfm", "metric": "interval_score", "value": 4.5}} if 5 in ids else {}
+
+
+def _render(monkeypatch, *, finals=(FINAL,), drafts=(DRAFT,), logged_in=False, after=None, draft_log=None, best=None):
     def list_drafts():
         if draft_log is not None:
             draft_log.append(1)
@@ -33,6 +41,7 @@ def _render(monkeypatch, *, finals=(FINAL,), drafts=(DRAFT,), logged_in=False, a
     def setup():
         monkeypatch.setattr(benchmarks_page.bactions, "list_final", lambda: list(finals))
         monkeypatch.setattr(benchmarks_page.bactions, "list_drafts", list_drafts)
+        monkeypatch.setattr(benchmarks_page.lboard_actions, "best_entries", best or default_best)
 
     return render(monkeypatch, benchmarks_page, "/ui/benchmarks", logged_in=logged_in, setup=setup, after=after)
 
@@ -72,13 +81,15 @@ def test_page_lists_final_benchmarks_from_the_database_only(monkeypatch):
     out = _render(monkeypatch)
     assert out["status"] == 200
     text = out["labels"]
-    assert "Flu 2022" in text and "Dataset: Q1" in text and "Target: v" in text
+    assert "Dataset: Q1" in text and "Target: v" in text
     assert "Filter: region = DE" in text and "Test window: 2022-01-01 → 2022-01-31" in text
     assert "Entries: 3" in text and f"Data commit: {COMMIT[:12]}" in text
     assert COMMIT not in " ".join(text)
     assert any(t.startswith("Input range: first date") for t in text)
     links = {e.props.get("href"): e.text for e in out["find"](ui.link)}
-    assert links["/ui/leaderboard?benchmark=5"] == "Leaderboard"
+    link_texts = [e.text for e in out["find"](ui.link) if e.props.get("href") == "/ui/benchmarks/5"]
+    assert link_texts == ["Flu 2022", "Leaderboard"]
+    assert "Best: timesfm (interval score 4.50)" in text
 
 
 def test_anonymous_users_see_no_management_controls(monkeypatch):
@@ -574,3 +585,18 @@ def test_an_edit_during_the_save_of_a_check_keeps_finalize_disabled(monkeypatch)
     out = _render(monkeypatch, logged_in=True, after=scenario)
     assert out["enabled"] is False
     assert f"Data commit: {COMMIT}" not in out["labels"]
+
+
+def test_benchmark_without_entries_shows_no_best_and_skips_the_query(monkeypatch):
+    best_log.clear()
+    out = _render(monkeypatch, finals=({**FINAL, "entry_count": 0},))
+    assert "Best: —" in out["labels"] and best_log == [[]]
+
+
+def test_best_query_failure_does_not_break_the_list(monkeypatch):
+    def boom(ids):
+        raise RuntimeError("db")
+
+    out = _render(monkeypatch, best=boom)
+    assert out["status"] == 200 and "Best: —" in out["labels"]
+    assert "Flu 2022" in [e.text for e in out["find"](ui.link)]

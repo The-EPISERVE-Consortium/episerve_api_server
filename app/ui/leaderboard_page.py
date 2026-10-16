@@ -97,53 +97,72 @@ async def _add_run_dialog(benchmark_id: int) -> None:
                     ui.label(f"{c['model_name']} ({c['qid']}): {c['reason']}").classes("text-sm text-gray-600")
 
 
+def _definition_text(row: dict) -> list[tuple[str, str]]:
+    """Caption/value pairs describing what a benchmark scores."""
+    filter_text = f"{row['filter_column']} = {row['filter_value']}" if row.get("filter_column") else "none"
+    return [
+        ("Dataset", row["dataset_qid"]),
+        ("Target", row["target_column"]),
+        ("Filter", filter_text),
+        ("Test window", f"{row['test_start']} → {row['test_end']}"),
+        ("Forecast length", f"{row['prediction_length']} steps" if row.get("prediction_length") else "—"),
+        ("Data commit", (row.get("data_commit") or "")[:12] or "—"),
+    ]
+
+
 def register_leaderboard_page() -> None:
-    """Register ``/ui/leaderboard``. Reads the database only; never CKAN, DOIP or lakeFS."""
+    """Register ``/ui/benchmarks/{id}`` (and redirect ``/ui/leaderboard``). Reads the database only; never CKAN, DOIP or lakeFS."""
 
     @ui.page("/ui/leaderboard")
-    def leaderboard_page(request: Request, benchmark: str | None = None):
-        _header("/ui/leaderboard")
-        logged_in = _is_logged_in()
+    def leaderboard_redirect(benchmark: str | None = None):
         try:
-            boards = bactions.list_final()
-        except Exception:
-            logger.exception("could not load the benchmarks")
-            with ui.column().classes("px-8 py-6"):
-                _error_label("Could not load benchmarks.")
-            return
-        ids = [b["id"] for b in boards]
-        try:
-            requested = int(benchmark)
+            target = f"/ui/benchmarks/{int(benchmark)}"
         except (TypeError, ValueError):
-            requested = None
-        selected = requested if requested in ids else (ids[0] if ids else None)
+            target = "/ui/benchmarks"
+        ui.navigate.to(target)
+
+    @ui.page("/ui/benchmarks/{benchmark_id}")
+    def leaderboard_page(request: Request, benchmark_id: int):
+        _header("/ui/benchmarks")
+        logged_in = _is_logged_in()
+        selected = benchmark_id
+        try:
+            row = bactions.get(selected)
+        except bactions.NotFound:
+            row = None
+        except Exception:
+            logger.exception("could not load the benchmark")
+            with ui.column().classes("px-8 py-6"):
+                _error_label("Could not load the benchmark.")
+            return
+        if row is None:
+            with ui.column().classes("px-8 py-6 gap-2"):
+                ui.link("← All benchmarks", "/ui/benchmarks").classes("text-sm")
+                _error_label("Benchmark not found.")
+            return
         state = {"rank_by": "interval_score", "all_runs": False, "model": None, "min_days": 0}
 
         with ui.column().classes("px-8 py-6 w-full gap-4"):
+            ui.link("← All benchmarks", "/ui/benchmarks").classes("text-sm")
             with ui.row().classes("w-full items-start justify-between gap-6"):
                 with ui.column().classes("gap-0"):
-                    ui.label("Leaderboard").classes("text-3xl font-bold text-gray-900")
+                    ui.label(row["name"]).classes("text-3xl font-bold text-gray-900")
                     ui.label(
-                        "Which model predicted a chosen series best over a fixed test window? Scores are "
+                        "Which model predicted this series best over the fixed test window? Scores are "
                         "computed once, when a run is added, and stored with the data version they used."
                     ).classes("text-sm text-gray-500 mt-1")
-                _api_box(f"{request.base_url}benchmarks" + (f"/{selected}/leaderboard" if selected else ""))
-            if logged_in:
-                with ui.row().classes("items-center gap-3"):
-                    if selected is not None:
-                        ui.button("Add run", on_click=lambda: _add_run_dialog(selected))
-            ui.link("Benchmark definitions", "/ui/benchmarks").classes("text-sm")
-            if not boards:
-                ui.label("No benchmarks yet. Design one on the Benchmarks page.").classes("text-sm text-gray-500")
-                return
+                _api_box(f"{request.base_url}benchmarks/{selected}/leaderboard")
+            with ui.row().classes("gap-x-6 gap-y-0"):
+                for caption, value in _definition_text(row):
+                    ui.label(f"{caption}: {value}").classes("text-sm text-gray-700")
+            with ui.row().classes("items-center gap-3"):
+                ui.button("Start a run from this benchmark",
+                          on_click=lambda: ui.navigate.to(f"/ui/run_workflow/1?benchmark={selected}")
+                          ).props("no-caps outline")
+                if logged_in:
+                    ui.button("Add run", on_click=lambda: _add_run_dialog(selected))
 
             with ui.row().classes("items-end gap-3"):
-                ui.select(
-                    {b["id"]: f"{b['name']} ({b['entry_count']} entries)" for b in boards},
-                    value=selected, label="Benchmark",
-                    on_change=lambda e: ui.navigate.to(f"/ui/leaderboard?benchmark={e.value}"),
-                ).props("outlined dense").classes("min-w-[22rem]")
-
                 def set_rank(e):
                     state["rank_by"] = e.value
                     board_view.refresh()

@@ -108,6 +108,31 @@ def list_entries(benchmark_id: int) -> list[Entry]:
         conn.close()
 
 
+def list_scores(benchmark_ids: list[int]) -> dict[int, list[Entry]]:
+    """Active entries per benchmark with their metrics only (no per-date points), for summaries."""
+    if not benchmark_ids:
+        return {}
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT benchmark_id, model_name, mae, rmse, coverage, interval_score FROM entries "
+                f"WHERE removed_at IS NULL AND benchmark_id IN ({', '.join(['%s'] * len(benchmark_ids))})",
+                tuple(benchmark_ids),
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    result: dict[int, list[Entry]] = {}
+    for row in rows:
+        result.setdefault(row["benchmark_id"], []).append(Entry(
+            run_qid="", model_name=row["model_name"], docker_tag="", params={}, history_start=None,
+            history_end=None, run_timestamp="", n_scored=0, n_expected=0,
+            metrics={m: (None if row[m] is None else float(row[m])) for m in METRICS},
+        ))
+    return result
+
+
 def remove_entry(benchmark_id: int, entry_id: int) -> bool:
     """Soft-delete an entry; True if an active entry was removed."""
     conn = _connect()

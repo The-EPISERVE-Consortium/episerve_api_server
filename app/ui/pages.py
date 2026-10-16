@@ -34,7 +34,6 @@ NAV_ITEMS = [
     ("Models",          "/ui/models"),
     ("Model Runs",      "/ui/model-runs"),
     ("Benchmarks",      "/ui/benchmarks"),
-    ("Leaderboard",     "/ui/leaderboard"),
     ("AI Blackboard",   "/ui/blackboard"),
     ("Run Workflow",        "/ui/run_workflow/1"),
     ("Run Workflow Simple", "/ui/trigger"),
@@ -2309,7 +2308,7 @@ def register_pages():
     # Step 1 — Datasets ───────────────────────────────────────────────────────
 
     @ui.page("/ui/run_workflow/1")
-    def trigger_v2_step1():
+    def trigger_v2_step1(benchmark: int | None = None):
         if not _require_login():
             return
         state = _tv2_state()
@@ -2347,7 +2346,7 @@ def register_pages():
         except Exception:
             logger.exception("could not list the final benchmarks")
             finals = []
-        active = (state.get("benchmark") or {}).get("id")
+        active = (state.get("benchmark") or {}).get("id") or benchmark
         chosen_benchmark: dict = {"id": active if any(b["id"] == active for b in finals) else None}
 
         def use_benchmark():
@@ -2799,7 +2798,7 @@ def register_pages():
                 result_lbl.classes(remove="text-gray-500", add="text-green-600 font-medium")
                 if state.get("benchmark"):
                     with result_box:
-                        ui.link("Open the leaderboard", f"/ui/leaderboard?benchmark={state['benchmark']['id']}")
+                        ui.link("Open the leaderboard", f"/ui/benchmarks/{state['benchmark']['id']}")
                         ui.label("Add the run there once it has finished.").classes("text-sm text-gray-500")
                 ui.notify("Model run triggered", type="positive", position="top")
             except Exception as exc:

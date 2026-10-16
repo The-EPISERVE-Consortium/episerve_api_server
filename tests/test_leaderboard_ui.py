@@ -14,7 +14,9 @@ from tests.ui_harness import click, render
 
 BENCH = Benchmark("Q1", "v", "datum", date(2022, 1, 1), date(2022, 1, 31))
 COMMIT = "0123abcd" * 8
-BOARDS = [{"id": 2, "name": "COVID 2022", "entry_count": 1}, {"id": 3, "name": "Flu", "entry_count": 2}]
+ROW = {"id": 3, "name": "Flu", "dataset_qid": "Q1", "target_column": "v", "date_column": "datum",
+       "filter_column": "region", "filter_value": "DE", "test_start": date(2022, 1, 1),
+       "test_end": date(2022, 1, 31), "prediction_length": 5, "data_commit": COMMIT}
 
 
 def _entry(qid="Q10", model="timesfm", mae=1.0, **overrides):
@@ -33,63 +35,86 @@ def _board(entries, bid=3):
     return Leaderboard(BENCH, "interval_score", 2, "2026-10-14T00:00:00Z", entries, name="Flu", benchmark_id=bid)
 
 
-def _render(monkeypatch, *, boards=BOARDS, board=None, logged_in=False, query="", after=None, rank_log=None):
+def _render(monkeypatch, *, row=ROW, board=None, logged_in=False, bid=3, after=None, rank_log=None):
     """Render the page in memory and return what a test needs to inspect it."""
-    def read(bid, rank_by="interval_score", best_per_model=True):
+    def read(benchmark_id, rank_by="interval_score", best_per_model=True):
         if rank_log is not None:
-            rank_log.append((bid, rank_by, best_per_model))
-        return board(bid) if callable(board) else board
+            rank_log.append((benchmark_id, rank_by, best_per_model))
+        return board(benchmark_id) if callable(board) else board
+
+    def get(benchmark_id):
+        if row is None:
+            raise leaderboard_page.bactions.NotFound("no")
+        return row
 
     def setup():
-        monkeypatch.setattr(leaderboard_page.bactions, "list_final", lambda: boards)
+        monkeypatch.setattr(leaderboard_page.bactions, "get", get)
         monkeypatch.setattr(leaderboard_page.actions, "read_leaderboard", read)
 
-    return render(monkeypatch, leaderboard_page, "/ui/leaderboard" + query, logged_in=logged_in, setup=setup,
+    return render(monkeypatch, leaderboard_page, f"/ui/benchmarks/{bid}", logged_in=logged_in, setup=setup,
                   after=after, table_key="run_qid")
 
 
 _click = click
 
 
-def test_benchmark_definitions_link_is_present(monkeypatch):
-    for boards in (BOARDS, []):
-        out = _render(monkeypatch, boards=boards, board=_board([_entry()]))
-        hrefs = {e.props.get("href"): e.text for e in out["find"](ui.link)}
-        assert hrefs.get("/ui/benchmarks") == "Benchmark definitions"
+def test_back_link_and_definition_are_shown(monkeypatch):
+    out = _render(monkeypatch, board=_board([_entry()]))
+    hrefs = {e.props.get("href"): e.text for e in out["find"](ui.link)}
+    assert hrefs.get("/ui/benchmarks") == "← All benchmarks"
+    assert "Flu" in out["labels"]
+    for text in ("Dataset: Q1", "Target: v", "Filter: region = DE", "Test window: 2022-01-01 → 2022-01-31",
+                 "Forecast length: 5 steps", f"Data commit: {COMMIT[:12]}"):
+        assert text in out["labels"]
 
 
-def test_nav_has_benchmarks_before_leaderboard():
-    items = [p for _, p in pages.NAV_ITEMS]
-    assert items.index("/ui/benchmarks") + 1 == items.index("/ui/leaderboard")
+def test_nav_has_no_separate_leaderboard_item():
+    assert "/ui/leaderboard" not in [p for _, p in pages.NAV_ITEMS]
+    assert ("Benchmarks", "/ui/benchmarks") in pages.NAV_ITEMS
 
 
-def test_nav_has_leaderboard_item():
-    assert ("Leaderboard", "/ui/leaderboard") in pages.NAV_ITEMS
-
-
-def test_page_renders_the_first_benchmark_from_the_database_only(monkeypatch):
+def test_page_renders_the_requested_benchmark_from_the_database_only(monkeypatch):
     log = []
     out = _render(monkeypatch, board=_board([_entry(), _entry("Q11", "other", mae=2.0)]), rank_log=log)
     assert out["status"] == 200
     assert [r["model"] for r in out["table"].rows] == ["timesfm", "other"]
-    assert log[0][0] == 2          # the first benchmark in the list is selected by default
+    assert log[0][0] == 3
     assert any(t.startswith("Target v, test window 2022-01-01") for t in out["labels"])
 
 
-def test_query_parameter_selects_the_benchmark(monkeypatch):
+def test_unknown_benchmark_shows_not_found(monkeypatch):
     log = []
-    _render(monkeypatch, board=_board([_entry()]), query="?benchmark=3", rank_log=log)
-    assert log[0][0] == 3
-    log.clear()
-    _render(monkeypatch, board=_board([_entry()]), query="?benchmark=999", rank_log=log)
-    assert log[0][0] == 2          # unknown id falls back to the first benchmark
+    out = _render(monkeypatch, row=None, rank_log=log, bid=999)
+    assert out["status"] == 200 and log == []
+    assert "⚠ Benchmark not found." in out["labels"]
+
+
+def test_start_run_button_opens_the_workflow_with_the_benchmark(monkeypatch):
+    seen = []
+    monkeypatch.setattr(leaderboard_page.ui.navigate, "to", lambda target, *a, **k: seen.append(target))
+
+    async def scenario(out, client, find, drain):
+        await _click(next(b for b in find(ui.button) if b.props.get("label") == "Start a run from this benchmark"),
+                     client)
+
+    _render(monkeypatch, board=_board([_entry()]), after=scenario)
+    assert seen == ["/ui/run_workflow/1?benchmark=3"]
+
+
+def test_old_leaderboard_url_redirects(monkeypatch):
+    for query, target in (("?benchmark=3", "/ui/benchmarks/3"), ("", "/ui/benchmarks"), ("?benchmark=x", "/ui/benchmarks")):
+        seen = []
+        monkeypatch.setattr(leaderboard_page.ui.navigate, "to", lambda t, *a, **k: seen.append(t))
+
+        async def fetch():
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http:
+                return await http.get("/ui/leaderboard" + query)
+
+        assert asyncio.run(fetch()).status_code == 200
+        assert seen == [target]
 
 
 def test_empty_states_and_login_hint(monkeypatch):
-    out = _render(monkeypatch, boards=[], board=None)
-    assert "No benchmarks yet. Design one on the Benchmarks page." in out["labels"]
-    out = _render(monkeypatch, boards=[], board=None, logged_in=True)
-    assert "No benchmarks yet. Design one on the Benchmarks page." in out["labels"]
     out = _render(monkeypatch, board=_board([]))
     assert "No runs on this leaderboard yet. Log in to add runs." in out["labels"]
     out = _render(monkeypatch, board=_board([]), logged_in=True)
@@ -97,19 +122,19 @@ def test_empty_states_and_login_hint(monkeypatch):
 
 
 def test_database_errors_show_a_label_instead_of_crashing(monkeypatch):
-    def boom():
+    def boom(benchmark_id):
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(leaderboard_page.bactions, "list_final", boom)
+    monkeypatch.setattr(leaderboard_page.bactions, "get", boom)
     monkeypatch.setattr(leaderboard_page, "_is_logged_in", lambda: False)
 
     async def fetch():
         async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http:
-            return await http.get("/ui/leaderboard")
+            return await http.get("/ui/benchmarks/3")
 
     response = asyncio.run(fetch())
     assert response.status_code == 200
-    assert "Could not load benchmarks." in response.text and "db down" not in response.text
+    assert "Could not load the benchmark." in response.text and "db down" not in response.text
 
 
 def test_leaderboard_read_failure_shows_generic_text_and_logs(monkeypatch, caplog):
@@ -197,13 +222,6 @@ def test_detail_dialog_shows_link_window_params_pins_and_per_date_rows(monkeypat
     assert series["Observed"] == [10.0, 20.0] and series["q10–q90"] == [4.0, 4.0]
 
 
-def test_non_numeric_benchmark_parameter_falls_back_to_the_first_benchmark(monkeypatch):
-    log = []
-    out = _render(monkeypatch, board=_board([_entry()]), query="?benchmark=abc", rank_log=log)
-    assert out["status"] == 200
-    assert log[0][0] == 2
-
-
 def test_model_filter_survives_a_rank_by_change(monkeypatch):
     async def scenario(out, client, find, drain):
         next(e for e in find(ui.select) if e.props.get("label") == "Model").value = "other"
@@ -260,7 +278,7 @@ def test_add_run_dialog_lists_addable_runs_and_explains_the_others(monkeypatch):
 
     out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
     assert any("chronos (Q11): run status is failed" in t for t in out["labels_dialog"])
-    assert added == [(2, "Q10")]
+    assert added == [(3, "Q10")]
 
 
 def test_add_run_shows_the_reason_when_scoring_fails(monkeypatch):
@@ -302,7 +320,7 @@ def test_remove_button_in_the_detail_dialog_removes_the_entry(monkeypatch):
         await drain()
 
     _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
-    assert removed == [(2, 9)]
+    assert removed == [(3, 9)]
 
 
 def _capture_notify(monkeypatch):

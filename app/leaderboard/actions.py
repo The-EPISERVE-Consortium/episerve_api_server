@@ -116,6 +116,25 @@ def read_leaderboard(benchmark_id: int, rank_by: str = "interval_score", best_pe
     )
 
 
+def best_entries(benchmark_ids: list[int]) -> dict[int, dict]:
+    """The best entry of each benchmark that has entries (database only).
+
+    Ranked by interval score; if no entry has one, by MAE.
+
+    Returns:
+        ``{benchmark_id: {"model_name", "metric", "value"}}``; benchmarks without a usable entry are absent.
+    """
+    best = {}
+    for benchmark_id, entries in store.list_scores(benchmark_ids).items():
+        for metric in ("interval_score", "mae"):
+            ranked = [e for e in rank_entries(entries, metric, False) if e.metrics.get(metric) is not None]
+            if ranked:
+                best[benchmark_id] = {"model_name": ranked[0].model_name, "metric": metric,
+                                      "value": ranked[0].metrics[metric]}
+                break
+    return best
+
+
 def candidates(benchmark_id: int) -> list[dict]:
     """Runs on the benchmark's dataset with the reason each cannot be added (None if it can)."""
     row = _final_benchmark(benchmark_id)

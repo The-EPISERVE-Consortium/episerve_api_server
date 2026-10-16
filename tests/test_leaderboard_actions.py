@@ -289,3 +289,23 @@ def test_read_leaderboard_hides_a_retired_draft_but_not_a_retired_final(world, m
         actions.read_leaderboard(3)
     monkeypatch.setattr(actions.bstore, "get", lambda bid: {**FINAL_ROW, "retired_at": "t"})
     assert actions.read_leaderboard(3).benchmark_id == 3
+
+
+def test_best_entries_ranks_by_interval_score_and_falls_back_to_mae(monkeypatch):
+    from app.leaderboard import actions, store
+    from app.leaderboard.service import Entry
+
+    def entry(model, **metrics):
+        return Entry(run_qid="", model_name=model, docker_tag="", params={}, history_start=None,
+                     history_end=None, run_timestamp="", n_scored=0, n_expected=0,
+                     metrics={"mae": None, "rmse": None, "coverage": None, "interval_score": None, **metrics})
+
+    monkeypatch.setattr(store, "list_scores", lambda ids: {
+        1: [entry("a", mae=1.0, interval_score=5.0), entry("b", mae=9.0, interval_score=3.0)],
+        2: [entry("c", mae=2.0), entry("d", mae=1.5)],
+        3: [entry("e")],
+    })
+    best = actions.best_entries([1, 2, 3])
+    assert best[1] == {"model_name": "b", "metric": "interval_score", "value": 3.0}
+    assert best[2] == {"model_name": "d", "metric": "mae", "value": 1.5}
+    assert 3 not in best

@@ -160,7 +160,7 @@ def test_step5_warns_when_the_sql_leaks_and_the_run_can_still_be_triggered(monke
     assert any("test start" in t for t in seen["labels"])
     assert triggered and triggered[0]["input_data_files"][0][0] == URL
     assert "Add the run there once it has finished." in seen["after"]
-    assert ("/ui/leaderboard?benchmark=3", "Open the leaderboard") in seen["links"]
+    assert ("/ui/benchmarks/3", "Open the leaderboard") in seen["links"]
 
 
 def test_step5_without_benchmark_is_unchanged(monkeypatch):

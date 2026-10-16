@@ -68,7 +68,7 @@ A **benchmark** is one series: a processed dataset (`dataset_qid`), a target col
 
 **Run workflow**: on `/ui/run_workflow/1`, **Start from a benchmark** prefills the run from a final benchmark: the input URL `<DOIP>/doip/retrieve/<dataset>/<file>?version=<data_commit>`, the generated input SQL, the input file name and, for models that declare them, `prediction_length` (the benchmark's forecast length) and `prediction_offset` (`0`). Step 5 shows a warning when the current input no longer qualifies (input not read at the benchmark's commit, history window not before the test start, filter missing from the SQL).
 
-An **entry** is a model run added to a benchmark on `/ui/leaderboard` (logged-in users only). The run is qualified and scored once; the metrics (MAE, RMSE, 80% coverage, 80% interval score), parameters, history window and per-date points are stored in the MariaDB database `benchmarks`, and reading a leaderboard only queries that database. The reference data is read from lakeFS at the benchmark's `data_commit`, from the component file the benchmark pinned, so a later revision of the data never changes a score. Removing an entry hides it (soft delete); adding the run again recomputes it.
+An **entry** is a model run added to a benchmark on its leaderboard page `/ui/benchmarks/{id}` (logged-in users only). The run is qualified and scored once; the metrics (MAE, RMSE, 80% coverage, 80% interval score), parameters, history window and per-date points are stored in the MariaDB database `benchmarks`, and reading a leaderboard only queries that database. The reference data is read from lakeFS at the benchmark's `data_commit`, from the component file the benchmark pinned, so a later revision of the data never changes a score. Removing an entry hides it (soft delete); adding the run again recomputes it.
 
 A run can be added only if:
 
@@ -101,8 +101,8 @@ Error codes: `401`/`403` missing or invalid token on a Bearer endpoint; `404` un
 
 Pages:
 
-- `/ui/benchmarks`: the list of final benchmarks (with a link to each leaderboard) for everyone; logged-in users also get the draft list, the designer (create, edit, check, finalize) and **Copy as draft** and **Retire**.
-- `/ui/leaderboard`: a benchmark selector, rank-by, a show-all-runs switch and a sortable table with model and minimum-history filters. Clicking a row opens a detail dialog with the chart, the per-date table and the data pin. Logged-in users also get **Add run** and **Remove**.
+- `/ui/benchmarks`: the list of final benchmarks for everyone (each name links to its leaderboard; a row shows the entry count and the best entry, ranked by interval score, or by MAE if none has one); logged-in users also get the draft list, the designer (create, edit, check, finalize) and **Copy as draft** and **Retire**.
+- `/ui/benchmarks/{id}`: the leaderboard of one benchmark (the old `/ui/leaderboard[?benchmark=N]` redirects here). It shows the benchmark definition, a **Start a run from this benchmark** button (opens `/ui/run_workflow/1?benchmark=N`, which preselects the benchmark), rank-by, a show-all-runs switch and a sortable table with model and minimum-history filters. Clicking a row opens a detail dialog with the chart, the per-date table and the data pin. Logged-in users also get **Add run** and **Remove**.
 
 The tables `benchmarks` and `entries` are created by an administrator (no schema code). The columns of `benchmarks` that define a benchmark are `name`, `description`, `dataset_qid`, `target_column`, `date_column`, `filter_column`, `filter_value`, `test_start`, `test_end`, `history_start`, `history_end`, `input_filename`; finalizing sets `data_commit`, `component_name`, `prediction_length`, `truth_points` and `finalized_at`, retiring sets `retired_at`. Configuration: `BENCHMARKS_DB`, `BENCHMARKS_USER`, `BENCHMARKS_PASSWORD`; user and password default to the `BLACKBOARD_*` values. The database user needs SELECT, INSERT and UPDATE.
 
@@ -153,6 +153,6 @@ All configuration via environment variables. In K8s these come from sealed secre
 ## Known issues
 
 - **Authentication**: a single shared daily token (derived from `AUTH_MASTER_SECRET`) gates `POST /model-runs` and the blackboard/workflow UI pages; catalog reads are public. `AUTH_MASTER_SECRET` and `SESSION_SECRET` must be set to strong random values — the server now refuses to start on the shipped placeholder session secret.
-- **Tests**: only a `/health` smoke test exists.
+- **Tests**: `pytest tests/` runs the unit and in-memory UI tests (previews, SQL validation, secrets, benchmarks, leaderboard, workflow); no network needed.
 - **CKAN plugins**: `CKAN__PLUGINS` hot-patches to `wsgi.py` persist across container restarts within the same pod — a `kubectl rollout restart` is needed to clear them.
 - **WebSocket**: requires the `shared-gateway-websocket` HTTPListenerPolicy (already applied via `episerve-k8s`).

@@ -10,7 +10,9 @@ from app.auth import _daily_token
 from app.benchmarks import actions as bactions
 from app.benchmarks.definition import DefinitionError
 from app.clients import ckan as ckan_client
+from app.leaderboard import actions as lboard_actions
 from app.leaderboard.loaders import LoadError
+from app.leaderboard.present import LABELS
 from app.ui.pages import _error_label, _header
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,12 @@ def _is_logged_in() -> bool:
 
 def _fmt(value) -> str:
     return "" if value is None else str(value)
+
+
+def _best_text(best: dict | None) -> str:
+    if not best:
+        return "—"
+    return f"{best['model_name']} ({LABELS[best['metric']]} {best['value']:.2f})"
 
 
 def _input_range(row: dict) -> str:
@@ -320,6 +328,12 @@ def register_benchmarks_page() -> None:
                 logger.exception("could not load the drafts")
                 drafts_error = True
 
+        try:
+            best = lboard_actions.best_entries([b["id"] for b in finals if b.get("entry_count")])
+        except Exception:
+            logger.exception("could not load the best entries")
+            best = {}
+
         with ui.column().classes("px-8 py-6 w-full gap-4"):
             with ui.column().classes("gap-0"):
                 ui.label("Benchmarks").classes("text-3xl font-bold text-gray-900")
@@ -349,8 +363,8 @@ def register_benchmarks_page() -> None:
             for b in finals:
                 with ui.column().classes("w-full gap-1 border border-gray-200 rounded-xl px-4 py-3"):
                     with ui.row().classes("items-center gap-4"):
-                        ui.label(b["name"]).classes("text-lg font-semibold")
-                        ui.link("Leaderboard", f"/ui/leaderboard?benchmark={b['id']}").classes("text-sm")
+                        ui.link(b["name"], f"/ui/benchmarks/{b['id']}").classes("text-lg font-semibold")
+                        ui.link("Leaderboard", f"/ui/benchmarks/{b['id']}").classes("text-sm")
                         if logged_in:
                             ui.button("Copy as draft", on_click=lambda b=b: copy(b["id"])).props("flat")
                             ui.button("Retire", on_click=lambda b=b: guarded(lambda: _retire_dialog(b, reload))
@@ -363,6 +377,7 @@ def register_benchmarks_page() -> None:
                             ("Input range", _input_range(b)),
                             ("Test window", f"{b['test_start']} → {b['test_end']}"),
                             ("Entries", b.get("entry_count", 0)),
+                            ("Best", _best_text(best.get(b["id"]))),
                             ("Data commit", (b.get("data_commit") or "")[:12]),
                         ):
                             ui.label(f"{caption}: {value}").classes("text-sm text-gray-700")
