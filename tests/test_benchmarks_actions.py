@@ -148,6 +148,22 @@ def test_finalize_pins_the_commit_read_during_the_check(world):
                                "prediction_length": 27, "history_end": date(2026, 3, 25)}
 
 
+def test_finalize_with_a_matching_expected_commit_pins_it(world):
+    actions.finalize(3, expected_commit=COMMIT.upper())
+    assert world["log"]["finalized"][0][1]["data_commit"] == COMMIT
+
+
+def test_finalize_with_a_different_expected_commit_conflicts_and_stores_nothing(world):
+    with pytest.raises(actions.Conflict, match="checked deadbeefdead, now 0123abcd0123"):
+        actions.finalize(3, expected_commit="deadbeef" * 8)
+    assert world["log"]["finalized"] == [] and world["log"]["reads"] == []
+
+
+def test_finalize_without_an_expected_commit_pins_the_head(world):
+    actions.finalize(3, expected_commit=None)
+    assert world["log"]["finalized"][0][1]["data_commit"] == COMMIT
+
+
 def test_finalize_stores_nothing_when_the_check_finds_problems_or_lakefs_fails(world, monkeypatch):
     world["state"]["row"] = _row(test_start=date(2030, 1, 1), test_end=date(2030, 2, 1))
     with pytest.raises(LoadError, match="no observations"):

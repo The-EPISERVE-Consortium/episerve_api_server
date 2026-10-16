@@ -204,10 +204,14 @@ def check(benchmark_id: int) -> CheckReport:
     return _evaluate(benchmark, _dataset(benchmark.dataset_qid), lakefs_client.processed_head_commit())
 
 
-def finalize(benchmark_id: int) -> None:
-    """Freeze a draft and pin the lakeFS commit that was just checked.
+def finalize(benchmark_id: int, expected_commit: str | None = None) -> None:
+    """Freeze a draft and pin the lakeFS head commit.
+
+    With ``expected_commit`` (the commit of the last check) the finalization is refused when
+    the head moved since.
 
     Raises:
+        Conflict: ``expected_commit`` differs from the current head commit.
         NotFound / NotDraft: Unknown benchmark or not a draft.
         LoadError: The check found problems (all of them in the message).
     """
@@ -215,6 +219,10 @@ def finalize(benchmark_id: int) -> None:
     benchmark = store.benchmark_from_row(row)
     dataset = _dataset(benchmark.dataset_qid)
     commit = lakefs_client.processed_head_commit()
+    if expected_commit is not None and expected_commit.lower() != commit.lower():
+        raise Conflict(
+            f"The data changed since the check (checked {expected_commit[:12]}, now {commit[:12]}); check again."
+        )
     report = _evaluate(benchmark, dataset, commit)
     if not report.ok:
         raise LoadError("; ".join(report.problems))

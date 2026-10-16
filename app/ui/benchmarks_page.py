@@ -51,7 +51,7 @@ def _parse_date(text, label: str, *, required: bool) -> _date | None:
 
 def _designer_dialog(existing: dict | None, on_done) -> None:
     """Form to create or edit a draft; loads the dataset choices from CKAN when it opens."""
-    state = {"id": existing["id"] if existing else None, "report": None, "saved": False}
+    state = {"id": existing["id"] if existing else None, "report": None, "saved": False, "version": 0}
     row = existing or {}
     with ui.dialog() as dialog, ui.card().classes("w-[44rem] max-w-full gap-2"):
         ui.label("Edit benchmark" if existing else "New benchmark").classes("text-lg font-semibold")
@@ -66,6 +66,7 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
             options[row["dataset_qid"]] = row["dataset_qid"]
 
         def invalidate(_=None):
+            state["version"] += 1
             state["report"] = None
             finalize_btn.disable()
 
@@ -156,10 +157,16 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
             try:
                 if not await save():
                     return
+                state["report"] = None
+                finalize_btn.disable()
+                version = state["version"]
                 try:
                     report = await run.io_bound(lambda: bactions.check(state["id"]))
                 except Exception as exc:
                     fail(exc, "check the benchmark")
+                    return
+                if state["version"] != version:
+                    error.set_text("The form changed during the check; check again.")
                     return
                 state["report"] = report
                 result.clear()
@@ -190,8 +197,8 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
                 error.set_text("Check the benchmark against the data first.")
                 return
             with ui.dialog() as confirm, ui.card().classes("gap-2"):
-                ui.label(f"This freezes the benchmark and pins data commit {report.data_commit}. "
-                         "It cannot be changed afterwards.")
+                ui.label(f"Freeze this benchmark? It will be pinned to data commit {report.data_commit[:12]} "
+                         "(the commit just checked) and can no longer be changed.")
 
                 async def freeze():
                     if not _is_logged_in():
@@ -201,7 +208,7 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
                     freeze_btn.disable()
                     spinner.set_visibility(True)
                     try:
-                        await run.io_bound(lambda: bactions.finalize(state["id"]))
+                        await run.io_bound(lambda: bactions.finalize(state["id"], expected_commit=report.data_commit))
                     except Exception as exc:
                         fail(exc, "finalize the benchmark")
                         confirm.close()
@@ -210,6 +217,7 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
                         spinner.set_visibility(False)
                         freeze_btn.enable()
                     confirm.close()
+                    state["saved"] = False          # only the navigation below, not a reload
                     dialog.close()
                     ui.navigate.to("/ui/benchmarks")
 
