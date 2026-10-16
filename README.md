@@ -68,12 +68,12 @@ A **benchmark** is one series: a processed dataset (`dataset_qid`), a target col
 
 **Run workflow**: on `/ui/run_workflow/1`, **Start from a benchmark** prefills the run from a final benchmark: the input URL `<DOIP>/doip/retrieve/<dataset>/<file>?version=<data_commit>`, the generated input SQL, the input file name and, for models that declare them, `prediction_length` (the benchmark's forecast length) and `prediction_offset` (`0`). Step 5 shows a warning when the current input no longer qualifies (input not read at the benchmark's commit, history window not before the test start, filter missing from the SQL).
 
-An **entry** is a model run added to a benchmark on `/ui/leaderboard` (logged-in users only). The run is qualified and scored once; the metrics (MAE, RMSE, 80% coverage, 80% interval score), parameters, history window and per-date points are stored in the MariaDB database `benchmarks`, and reading a leaderboard only queries that database. The reference data is read from lakeFS at the benchmark's `data_commit`, so a later revision of the data never changes a score. Removing an entry hides it (soft delete); adding the run again recomputes it.
+An **entry** is a model run added to a benchmark on `/ui/leaderboard` (logged-in users only). The run is qualified and scored once; the metrics (MAE, RMSE, 80% coverage, 80% interval score), parameters, history window and per-date points are stored in the MariaDB database `benchmarks`, and reading a leaderboard only queries that database. The reference data is read from lakeFS at the benchmark's `data_commit`, from the component file the benchmark pinned, so a later revision of the data never changes a score. Removing an entry hides it (soft delete); adding the run again recomputes it.
 
 A run can be added only if:
 
 - its input dataset is the benchmark's dataset and its status is `success`;
-- it read its input at the benchmark's commit: the run's DOIP provenance (`prov:used`) must list the dataset's retrieve URL with `?version=<data_commit>`; a run without that version, with a different one or with unreadable provenance is refused;
+- it read its input at the benchmark's commit: the run's DOIP provenance (`prov:used`) must list the dataset's retrieve URL with `?version=<data_commit>`, and exactly one input of the benchmark's dataset; a run without that version, with a different one, with several inputs of that dataset or with unreadable provenance is refused;
 - its history window, read from the applied transformation SQL (also from the provenance), has a single upper date bound on the date column, written as `DATE 'YYYY-MM-DD'`, `'YYYY-MM-DD'` or with the column wrapped as `CAST(col AS DATE)`. SQL containing `OR`, `NOT`, `UNION`/`EXCEPT`/`INTERSECT` or `INTERVAL` is not scorable, also when those words appear inside string literals;
 - the history ends before `test_start`;
 - if the benchmark has a filter, the SQL contains it as an equality condition (`OR`, `NOT` or `CASE` anywhere in the SQL means it does not count);
@@ -85,7 +85,7 @@ Predictions are read from the run's `predictions.tsv` CKAN DataStore resource. C
 |---|---|---|---|
 | `GET /benchmarks` | open | 200 | Final benchmarks with entry counts |
 | `GET /benchmarks/drafts` | Bearer | 200 | Draft benchmarks |
-| `GET /benchmarks/{id}` | open (draft: Bearer) | 200 | One benchmark in any state |
+| `GET /benchmarks/{id}` | open (draft: Bearer) | 200 | One benchmark in any state; drafts, including retired drafts, are hidden from anonymous readers (`404`) |
 | `POST /benchmarks` | Bearer | 201 | Create a draft |
 | `PATCH /benchmarks/{id}` | Bearer | 200 | Change fields of a draft (only the fields sent; `null` clears an optional one) |
 | `POST /benchmarks/{id}/check` | Bearer | 200 | Check a draft against the current data; stores nothing |
@@ -97,7 +97,7 @@ Predictions are read from the run's `predictions.tsv` CKAN DataStore resource. C
 | `POST /benchmarks/{id}/entries` | Bearer | 201 | Score and add a run (`{"run_qid": ...}`) |
 | `DELETE /benchmarks/{id}/entries/{entry_id}` | Bearer | 204 | Remove an entry |
 
-Error codes: `401`/`403` missing or invalid token on a Bearer endpoint; `404` unknown benchmark, entry, run or dataset, a draft requested without a token, `run-spec` or adding an entry for a benchmark that is not final, or retiring a retired benchmark (`GET /benchmarks/{id}` and `/leaderboard` still return `200` for a retired benchmark); `409` changing, checking or finalizing a benchmark that is not a draft, a run that is already on the board; `422` invalid input, a check with problems on finalize, or a run that cannot be scored (reason in `detail`); `502` backend (database or data storage) unavailable.
+Error codes: `401`/`403` missing or invalid token on a Bearer endpoint; `404` unknown benchmark, entry, run or dataset, a draft (retired drafts included) requested without a token, `run-spec` or adding an entry for a benchmark that is not final, or retiring a retired benchmark (`GET /benchmarks/{id}` and `/leaderboard` still return `200` for a retired benchmark); `409` changing, checking or finalizing a benchmark that is not a draft, a run that is already on the board; `422` invalid input, a check with problems on finalize, or a run that cannot be scored (reason in `detail`); `502` backend (database or data storage) unavailable.
 
 Pages:
 

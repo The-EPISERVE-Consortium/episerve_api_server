@@ -37,6 +37,10 @@ def _render(monkeypatch, *, finals=(FINAL,), drafts=(DRAFT,), logged_in=False, a
     return render(monkeypatch, benchmarks_page, "/ui/benchmarks", logged_in=logged_in, setup=setup, after=after)
 
 
+def _retire_buttons(find):
+    return [b for b in find(ui.button) if b.props.get("label") == "Retire"]
+
+
 def _inputs(find):
     return {i.props.get("label"): i for i in find(ui.input)}
 
@@ -246,7 +250,7 @@ def test_finalize_and_retire_and_copy_call_the_actions_and_recheck_the_login(mon
         # copy and retire work while logged in
         await click(button(find, "Copy as draft"), client)
         await drain()
-        await click(button(find, "Retire"), client)
+        await click(_retire_buttons(find)[-1], client)           # the final benchmark's (drafts come first)
         await click(button(find, "Retire benchmark"), client)
         await drain()
         assert calls == [("copy", 5), ("retire", 5)]
@@ -491,7 +495,7 @@ def test_retire_and_copy_error_branches(monkeypatch, caplog):
     async def scenario(out, client, find, drain):
         # NotFound on retire shows its message in the dialog
         monkeypatch.setattr(benchmarks_page.bactions, "retire", lambda i: (_ for _ in ()).throw(NotFound("gone")))
-        await click(button(find, "Retire"), client)
+        await click(_retire_buttons(find)[-1], client)
         await click(button(find, "Retire benchmark"), client)
         await drain()
         steps["nf"] = labels(find)
@@ -519,3 +523,54 @@ def test_retire_and_copy_error_branches(monkeypatch, caplog):
     assert steps["copy_generic"] == [("Could not copy the benchmark.", {"type": "negative"})]
     assert not any("db.internal" in t for t in steps["generic"])
     assert sum("db.internal" in (r.exc_text or "") for r in caplog.records) == 2
+
+
+def test_a_draft_can_be_retired_after_a_confirmation_and_the_login_is_rechecked(monkeypatch):
+    calls = []
+    monkeypatch.setattr(benchmarks_page.bactions, "retire", lambda i: calls.append(i))
+    monkeypatch.setattr(benchmarks_page.ui.navigate, "reload", lambda: None)
+    notes = _notes(monkeypatch)
+
+    async def scenario(out, client, find, drain):
+        draft_retire = _retire_buttons(find)[0]                  # drafts are listed before final benchmarks
+        await click(draft_retire, client)
+        await drain()
+        out["confirm_text"] = labels(find)
+        assert calls == []
+        monkeypatch.setattr(benchmarks_page, "_is_logged_in", lambda: False)
+        await click(button(find, "Retire draft"), client)
+        await drain()
+        out["blocked"] = list(calls)
+        monkeypatch.setattr(benchmarks_page, "_is_logged_in", lambda: True)
+        await click(button(find, "Retire draft"), client)
+        await drain()
+
+    out = _render(monkeypatch, logged_in=True, after=scenario)
+    assert "Retire this draft? It disappears from the list." in out["confirm_text"]
+    assert out["blocked"] == [] and notes[-1][1]["type"] == "warning"
+    assert calls == [7]
+
+
+def test_an_edit_during_the_save_of_a_check_keeps_finalize_disabled(monkeypatch):
+    monkeypatch.setattr(benchmarks_page.bactions, "update_draft", lambda i, **kw: None)
+    monkeypatch.setattr(benchmarks_page.bactions, "check", lambda i: _report())
+
+    async def scenario(out, client, find, drain):
+        _datasets(monkeypatch)
+        await click(button(find, "Edit"), client)
+        calls = {"n": 0}
+
+        def edit_during_save():
+            calls["n"] += 1
+            if calls["n"] == 1:                      # the save is the first io_bound call
+                _inputs(find)["Name"].value = "typed while saving"
+
+        _io_hook(monkeypatch, edit_during_save)
+        await click(button(find, "Check against data"), client)
+        await drain()
+        out["enabled"] = button(find, "Finalize").enabled
+        out["labels"] = labels(find)
+
+    out = _render(monkeypatch, logged_in=True, after=scenario)
+    assert out["enabled"] is False
+    assert f"Data commit: {COMMIT}" not in out["labels"]

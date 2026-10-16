@@ -155,11 +155,11 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
         async def do_check():
             busy(True)
             try:
+                version = state["version"]          # before the save, so an edit typed during it is caught
                 if not await save():
                     return
                 state["report"] = None
                 finalize_btn.disable()
-                version = state["version"]
                 try:
                     report = await run.io_bound(lambda: bactions.check(state["id"]))
                 except Exception as exc:
@@ -243,9 +243,12 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
     dialog.open()
 
 
-def _retire_dialog(benchmark: dict, on_done) -> None:
+def _retire_dialog(benchmark: dict, on_done, *, draft: bool = False) -> None:
     with ui.dialog() as dialog, ui.card().classes("gap-2"):
-        ui.label(f"Retire {benchmark['name']}? It disappears from the lists; its entries stay stored.")
+        ui.label(
+            "Retire this draft? It disappears from the list." if draft
+            else f"Retire {benchmark['name']}? It disappears from the lists; its entries stay stored."
+        )
         error = ui.label("").classes("text-red-600 text-sm")
 
         async def retire():
@@ -266,7 +269,7 @@ def _retire_dialog(benchmark: dict, on_done) -> None:
 
         with ui.row().classes("justify-end w-full"):
             ui.button("Cancel", on_click=dialog.close).props("flat")
-            ui.button("Retire benchmark", on_click=retire).props("color=negative")
+            ui.button("Retire draft" if draft else "Retire benchmark", on_click=retire).props("color=negative")
     dialog.on("hide", dialog.delete)
     dialog.open()
 
@@ -338,6 +341,8 @@ def register_benchmarks_page() -> None:
                                  f"{d['test_start']} → {d['test_end']}").classes("text-sm text-gray-600")
                         ui.button("Edit", on_click=lambda d=d: guarded(lambda: _designer_dialog(d, reload))
                                   ).props("flat")
+                        ui.button("Retire", on_click=lambda d=d: guarded(
+                            lambda: _retire_dialog(d, reload, draft=True))).props("flat color=negative")
             ui.label("Final benchmarks").classes("text-xl font-semibold text-gray-900")
             if not finals:
                 ui.label("No benchmarks yet.").classes("text-sm text-gray-500")
