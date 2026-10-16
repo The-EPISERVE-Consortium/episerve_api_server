@@ -85,10 +85,10 @@ def test_the_logo_files_are_part_of_the_package():
         assert (footer_module.STATIC_DIR / "img" / name).is_file()
 
 
-def test_ui_page_footer_has_no_background_of_its_own(monkeypatch):
+def test_ui_page_footer_has_a_light_grey_shade(monkeypatch):
     out = _render(monkeypatch)
-    assert ".q-footer .site-footer" in out["text"] and "background: transparent" in out["text"]
-    assert "transparent" in footer_module.UI_FOOTER_CSS and "#ede8da" not in footer_module.UI_FOOTER_CSS
+    assert ".q-footer .site-footer" in out["text"] and "background: #f3f4f6" in out["text"]
+    assert "#f3f4f6" in footer_module.UI_FOOTER_CSS and "#ede8da" not in footer_module.UI_FOOTER_CSS
 
 
 def test_landing_page_footer_keeps_its_background():

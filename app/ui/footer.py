@@ -92,8 +92,8 @@ FOOTER_CSS = """
 }
 """
 
-# On the UI pages the footer takes the page's own background; only the landing page has a beige one.
-UI_FOOTER_CSS = ".q-footer .site-footer { background: transparent; }\n"
+# On the UI pages the footer has a light grey shade; only the landing page, which is beige itself, uses the beige.
+UI_FOOTER_CSS = ".q-footer .site-footer { background: #f3f4f6; }\n"
 
 _FOOTER_HTML = """<footer class="site-footer">
   <div class="footer-main">

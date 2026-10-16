@@ -514,12 +514,29 @@ def test_the_tab_query_selects_the_open_tab(monkeypatch, query, expected):
     assert _tabs(out)[0] == expected
 
 
-def test_overview_has_description_how_it_works_and_the_start_button(monkeypatch):
+def _panel_of(element):
+    node = element
+    while node is not None:
+        if isinstance(node, ui.tab_panel):
+            return node.props.get("name")
+        slot = getattr(node, "parent_slot", None)
+        node = slot.parent if slot else None
+    return None
+
+
+def test_overview_has_description_and_how_it_works_but_no_actions(monkeypatch):
     row = {**ROW, "description": "Weekly wastewater viral load."}
-    out = _render(monkeypatch, row=row, board=_board([_entry()]))
+
+    def grab(out, client, find, drain):
+        out["buttons"] = [(b.props.get("label"), _panel_of(b)) for b in find(ui.button)]
+        out["links"] = [(l.text, _panel_of(l)) for l in find(ui.link)]
+
+    out = _render(monkeypatch, row=row, board=_board([_entry()]), after=grab)
     assert "Weekly wastewater viral load." in out["labels"]
     assert "How it works" in out["labels"]
-    assert any(b.props.get("label") == "Start a run from this benchmark" for b in out["find"](ui.button))
+    assert [b for b, panel in out["buttons"] if panel == "overview"] == []
+    assert not any(text == "Go to the leaderboard" for text, _ in out["links"])
+    assert ("Start a run from this benchmark", "leaderboard") in out["buttons"]      # it lives on the leaderboard tab
 
 
 def test_overview_without_a_description_keeps_the_standard_sentence(monkeypatch):

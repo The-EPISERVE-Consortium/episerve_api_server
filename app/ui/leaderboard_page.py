@@ -165,7 +165,7 @@ def _entry_detail(entry, benchmark_id: int, logged_in: bool) -> None:
         ui.button("Remove from leaderboard", on_click=remove).props("flat color=negative")
 
 
-def _overview_tab(row: dict, benchmark_id: int, logged_in: bool) -> None:
+def _overview_tab(row: dict) -> None:
     ui.label(
         row.get("description")
         or "Which model predicted this series best over the fixed test window? Scores are computed once, when a "
@@ -183,11 +183,6 @@ def _overview_tab(row: dict, benchmark_id: int, logged_in: bool) -> None:
                  "against the test window and the scores are stored with the data version.")
         ui.label("3. Compare the runs on the Leaderboard tab; the Evaluation tab explains the metrics and the "
                  "rules a run must meet.")
-    with ui.row().classes("items-center gap-3"):
-        ui.button("Start a run from this benchmark",
-                  on_click=lambda: ui.navigate.to(f"/ui/run_workflow/1?benchmark={benchmark_id}")
-                  ).props("no-caps outline")
-        ui.link("Go to the leaderboard", f"/ui/benchmarks/{benchmark_id}?tab=leaderboard").classes("text-sm")
 
 
 def _data_tab(row: dict, benchmark_id: int) -> None:
@@ -322,7 +317,7 @@ def register_leaderboard_page() -> None:
                     ui.tab(key, label=label)
             with ui.tab_panels(tabs, value=open_tab).classes("w-full"):
                 with ui.tab_panel("overview").classes("gap-4"):
-                    _overview_tab(row, selected, logged_in)
+                    _overview_tab(row)
                 with ui.tab_panel("data").classes("gap-3"):
                     _data_tab(row, selected)
                 with ui.tab_panel("evaluation").classes("gap-3"):
