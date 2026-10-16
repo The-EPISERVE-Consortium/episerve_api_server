@@ -4,18 +4,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-
-@dataclass(frozen=True)
-class Benchmark:
-    """What is predicted: the series and the window the forecasts are scored on."""
-
-    dataset_qid: str
-    target_column: str
-    date_column: str
-    test_start: date
-    test_end: date
-    filter_column: str | None = None
-    filter_value: str | None = None
+from app.benchmarks.definition import Benchmark
 
 
 @dataclass(frozen=True)
