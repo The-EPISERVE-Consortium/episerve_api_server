@@ -57,29 +57,37 @@ it. Changing **Max rows** uses the same validated component list and input prefe
 
 ## Leaderboard
 
-A **benchmark** fixes one prediction task: a processed dataset (`dataset_qid`), a target column, a date column, an optional single equality filter (`filter_column` = `filter_value`), and a test window (`test_start`..`test_end`). Model runs on that dataset are scored against the observed values in the window.
+A **benchmark** is a fixed prediction task: a processed dataset (`dataset_qid`), a target column, a date column, an optional single equality filter (`filter_column` = `filter_value`), a test window (`test_start`..`test_end`) and a name. A logged-in user creates it; it cannot be edited. To change it, retire it and create a new one.
 
-`GET /leaderboard` is unauthenticated, like the other GET endpoints. Parameters:
+An **entry** is a model run added to a benchmark (logged-in users only). When the run is added it is qualified and scored once against the observed data. The metrics (MAE, RMSE, 80% coverage, 80% interval score), parameters, history window and per-date points are stored in the MariaDB database `benchmarks`; reading a leaderboard only queries that database. Removing an entry hides it (soft delete); adding the run again recomputes it.
 
-- `dataset_qid`, `target`, `date_column`, `test_start`, `test_end` (`YYYY-MM-DD`): required
-- `filter_column`, `filter_value`: optional filter
-- `rank_by`: `mae`, `rmse`, `coverage` (distance from the 80% target) or `interval_score` (default); lower is better
-- `all_runs`: `false` (default) shows each model's best run; `true` shows every run
+**Data pin**: every entry records the lakeFS commit of the `data-processed` repository its observed data was read from (the observed values are read from lakeFS at that commit) and the dataset's CKAN `last_modified`. A later revision of the data never changes a stored score.
 
-Status codes: `400` if `test_start` is after `test_end`; `404` if the dataset is unknown; `422` if the benchmark cannot be scored (no observations in the window, several observations per date, or a missing column); `502` if CKAN or the scoring backend fails.
+A run can be added only if:
 
-A run is ranked only if:
+- its input dataset is the benchmark's dataset and its status is `success`;
+- its history window, read from the transformation SQL, has a single upper date bound on the date column, written as `DATE 'YYYY-MM-DD'`, `'YYYY-MM-DD'` or with the column wrapped as `CAST(col AS DATE)`. SQL containing `OR`, `NOT`, `UNION`/`EXCEPT`/`INTERSECT` or `INTERVAL` is not scorable, also when those words appear inside string literals;
+- the history ends before `test_start`;
+- if the benchmark has a filter, the SQL contains it as an equality condition (`OR`, `NOT` or `CASE` anywhere in the SQL means it does not count);
+- it forecasts every observed date in the window.
 
-- it is on the benchmark's dataset and its status is `success`;
-- its history window, read from the transformation SQL, ends before `test_start`. Bounds on the date column are accepted as plain `'YYYY-MM-DD'` or `DATE 'YYYY-MM-DD'` literals, with the column bare, qualified, quoted or wrapped as `CAST(col AS DATE)`. A run without a single recognisable upper bound, with a start after the end, or whose SQL contains `OR`, `NOT`, `UNION`/`EXCEPT`/`INTERSECT`, `INTERVAL` arithmetic or arithmetic on the date literal is listed as not scorable;
-- if a filter is set, the SQL contains it as an equality condition (any `OR`, `NOT` or `CASE` in the SQL means it does not count);
-- its forecast covers every observed date in the window.
+Predictions are read from the run's `predictions.tsv` CKAN DataStore resource. Coverage and interval score need the `<target>_q10` and `<target>_q90` columns; they are shown only when every scored date has both.
 
-Runs that fail these checks are returned in `not_scorable` with the reason.
+| Endpoint | Auth | Purpose |
+|---|---|---|
+| `GET /benchmarks` | open | Active benchmarks with entry counts |
+| `GET /benchmarks/{id}` | open | One benchmark |
+| `GET /benchmarks/{id}/leaderboard?rank_by=&all_runs=` | open | Stored ranking. `rank_by`: `mae`, `rmse`, `coverage`, `interval_score` (default); `all_runs=false` (default) shows each model's best entry, `true` every entry |
+| `POST /benchmarks` | Bearer | Create a benchmark |
+| `POST /benchmarks/{id}/entries` | Bearer | Score and add a run (`{"run_qid": ...}`) |
+| `DELETE /benchmarks/{id}/entries/{entry_id}` | Bearer | Remove an entry |
+| `POST /benchmarks/{id}/retire` | Bearer | Retire a benchmark |
 
-Forecasts are read from the run's `predictions.tsv` DataStore resource in CKAN; coverage and interval score need the `<target>_q10` and `<target>_q90` columns. Observations are read from the dataset's Parquet file via DOIP. Metrics are MAE, RMSE, 80% coverage and the 80% interval score (alpha 0.2). Coverage and interval score are shown only when every scored date has both q10 and q90. Non-finite forecast or observed values count as missing. A forecast beyond the last observed date is scored on the observed dates only.
+Status codes: `404` unknown (or retired) benchmark, entry, run or dataset; `409` run already on the board; `422` invalid input or the run cannot be scored (reason in `detail`); `502` upstream failure.
 
-The web view is at `/ui/leaderboard`. Table columns sort on click (metrics by their numeric values, missing ones last when ascending), a model select and a minimum history length filter the displayed entries in the browser (ranks and best-value highlighting then refer to the displayed entries; entries with an unknown history start are hidden once a minimum above 0 is set), and clicking a row opens a dialog with the run's ModelHub link, history window, parameters, a chart with a shaded q10–q90 band and a per-date table of observed, forecast, quantiles and error. Ties for the best value in a column are all highlighted.
+The web view is at `/ui/leaderboard`: a benchmark selector, rank-by, a show-all-runs switch and a sortable table with model and minimum-history filters. Clicking a row opens a detail dialog with the chart, the per-date table and the data pin. Logged-in users also get New benchmark, Add run, Remove and Retire.
+
+The tables `benchmarks` and `entries` are created by an administrator (no schema code). Configuration: `BENCHMARKS_DB`, `BENCHMARKS_USER`, `BENCHMARKS_PASSWORD`; user and password default to the `BLACKBOARD_*` values. The database user needs SELECT, INSERT and UPDATE.
 
 ## Running locally
 
