@@ -77,3 +77,8 @@ def test_read_component_rejects_oversized_objects():
 def test_read_component_rejects_unsafe_arguments(commit, qid, filename):
     with pytest.raises(ValueError):
         lakefs_client.read_processed_component(commit, qid, filename, 1024)
+
+
+def test_read_component_rejects_short_hex_commit_that_could_alias_a_branch():
+    with pytest.raises(ValueError):
+        lakefs_client.read_processed_component("deadbeef", "Q9493814122238", "curve.parquet", 1024)

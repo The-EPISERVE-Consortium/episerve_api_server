@@ -9,6 +9,7 @@ import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from app.clients import lakefs as lakefs_client
 from app.dataset_preview import (
     MAX_DOWNLOAD_BYTES, _column_sql, download_preview_bytes, resolve_component,
 )
@@ -57,13 +58,12 @@ def load_predictions(records: list[dict], benchmark: Benchmark) -> pd.DataFrame:
     return clipped.reset_index(drop=True)
 
 
-def load_truth(dataset: dict, benchmark: Benchmark, doip_base: str) -> pd.DataFrame:
-    """Read the observed series for the test window from the CKAN dataset.
+def parse_truth(data: bytes, benchmark: Benchmark) -> pd.DataFrame:
+    """Read the observed series for the test window from a dataset Parquet file.
 
     Args:
-        dataset: Catalog record from ``ckan_client.list_processed_datasets()``.
+        data: Parquet bytes of the dataset component.
         benchmark: Series and window to read.
-        doip_base: Trusted DOIP service base URL.
 
     Returns:
         Columns ``date`` and ``truth`` sorted by date.
@@ -71,11 +71,7 @@ def load_truth(dataset: dict, benchmark: Benchmark, doip_base: str) -> pd.DataFr
     Raises:
         LoadError: If a column is missing, the data is unreadable, the window is
             empty, or several observations share a date.
-        ValueError: If the dataset has no component, the URL is not trusted or
-            the download exceeds the size limit.
     """
-    component = resolve_component([dataset], dataset.get("qid", ""))
-    data = download_preview_bytes(component["url"], doip_base, MAX_DOWNLOAD_BYTES)
     if benchmark.filter_column and benchmark.filter_value is None:
         raise LoadError("filter value is required with a filter column")
     needed = [benchmark.date_column, benchmark.target_column]
@@ -122,6 +118,51 @@ def load_truth(dataset: dict, benchmark: Benchmark, doip_base: str) -> pd.DataFr
         )
     truth["date"] = pd.to_datetime(truth["date"]).dt.normalize()
     return truth
+
+
+def load_truth(dataset: dict, benchmark: Benchmark, doip_base: str) -> pd.DataFrame:
+    """Read the observed series for the test window from the CKAN dataset.
+
+    Args:
+        dataset: Catalog record from ``ckan_client.list_processed_datasets()``.
+        benchmark: Series and window to read.
+        doip_base: Trusted DOIP service base URL.
+
+    Returns:
+        Columns ``date`` and ``truth`` sorted by date.
+
+    Raises:
+        LoadError: If a column is missing, the data is unreadable, the window is
+            empty, or several observations share a date.
+        ValueError: If the dataset has no component, the URL is not trusted or
+            the download exceeds the size limit.
+    """
+    component = resolve_component([dataset], dataset.get("qid", ""))
+    data = download_preview_bytes(component["url"], doip_base, MAX_DOWNLOAD_BYTES)
+    return parse_truth(data, benchmark)
+
+
+def truth_at_commit(dataset: dict, benchmark: Benchmark, commit: str) -> pd.DataFrame:
+    """Read the observed series from lakeFS at a pinned commit.
+
+    Args:
+        dataset: Catalog record from ``ckan_client.list_processed_datasets()``.
+        benchmark: Series and window to read.
+        commit: lakeFS commit id of the processed-data repository.
+
+    Returns:
+        Columns ``date`` and ``truth`` sorted by date.
+
+    Raises:
+        LoadError: As ``parse_truth``.
+        ValueError: If the dataset has no component, an argument is unsafe, or the
+            file exceeds the size limit.
+    """
+    component = resolve_component([dataset], dataset.get("qid", ""))
+    data = lakefs_client.read_processed_component(
+        commit, dataset["qid"], component["name"], MAX_DOWNLOAD_BYTES,
+    )
+    return parse_truth(data, benchmark)
 
 
 def fetch_run_params(qid: str, doip_base: str) -> dict:

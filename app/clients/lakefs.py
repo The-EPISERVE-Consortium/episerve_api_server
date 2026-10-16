@@ -166,7 +166,7 @@ def get_model_run(run_id: str) -> dict | None:
 
 _QID = re.compile(r"Q[0-9]+")
 _FILENAME = re.compile(r"[A-Za-z0-9_.\-]+")
-_COMMIT = re.compile(r"[0-9a-f]{8,64}")
+_COMMIT = re.compile(r"[0-9a-f]{40,64}")
 
 
 def processed_head_commit() -> str:
