@@ -3,6 +3,7 @@ from fastapi.responses import HTMLResponse
 from nicegui import ui
 from app.routers import auth, datasets, models, model_runs, benchmarks
 from app.secrets import require_secret
+from app.ui.footer import FOOTER_CSS, footer_html
 from app.ui.pages import register_pages
 
 app = FastAPI(
@@ -20,7 +21,10 @@ app.include_router(benchmarks.router)
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 def root():
-    return HTMLResponse(content="""<!DOCTYPE html>
+    return HTMLResponse(content=_ROOT_HTML.replace("/*FOOTER_CSS*/", FOOTER_CSS).replace("<!--FOOTER_HTML-->", footer_html()))
+
+
+_ROOT_HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -110,90 +114,13 @@ def root():
       display: block;
     }
 
-    /* Footer */
-    .site-footer {
-      background: #ede8da;
-      font-size: 0.85rem;
-      color: #555;
-    }
-    .footer-main {
-      display: flex;
-      gap: 0;
-      padding: 2rem 3rem;
-      flex-wrap: wrap;
-    }
-    .footer-col {
-      flex: 1 1 220px;
-      padding: 0 2rem;
-    }
-    .footer-col:not(:last-child) {
-      border-right: 1px solid rgba(0,0,0,0.15);
-    }
-    .footer-col:first-child { padding-left: 0; }
-    .footer-col:last-child { padding-right: 0; }
-    .footer-brand-row {
-      display: flex;
-      align-items: flex-start;
-      gap: 1rem;
-    }
-    .footer-logo-img {
-      width: 120px;
-      flex-shrink: 0;
-    }
-    .footer-desc {
-      font-size: 0.82rem;
-      line-height: 1.55;
-      color: #206b82;
-      margin: 0;
-    }
-    .footer-links {
-      list-style: none;
-      padding: 0;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      height: 100%;
-      gap: 0.75rem;
-      text-align: center;
-    }
-    .footer-links a {
-      color: #206b82;
-      text-decoration: none;
-      font-size: 0.88rem;
-    }
-    .footer-links a:hover { text-decoration: underline; }
-    .footer-funding {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      height: 100%;
-      gap: 0.5rem;
-      text-align: center;
-    }
-    .footer-funding-label {
-      font-size: 0.8rem;
-      color: #777;
-    }
-    .footer-funding-img {
-      max-width: 160px;
-    }
-    .footer-bottom {
-      border-top: 1px solid rgba(0,0,0,0.12);
-      text-align: center;
-      padding: 0.75rem 2rem;
-      font-size: 0.8rem;
-      color: #888;
-    }
+    /*FOOTER_CSS*/
 
     @media (max-width: 600px) {
       .hero { padding: 2.5rem 1.5rem 2rem; }
       .hero h1 { font-size: 1.8rem; }
       .hero-image { height: 240px; }
       .option-card { width: 100%; max-width: 340px; }
-      .footer-main { flex-direction: column; padding: 1.5rem; }
-      .footer-col { border-right: none !important; border-bottom: 1px solid rgba(0,0,0,0.12); padding: 1rem 0; }
-      .footer-col:last-child { border-bottom: none; }
     }
   </style>
 </head>
@@ -217,31 +144,9 @@ def root():
 
   <img class="hero-image" src="https://episerve.zib.de/img/hero.png" alt="">
 
-  <footer class="site-footer">
-    <div class="footer-main">
-      <div class="footer-col">
-        <div class="footer-brand-row">
-          <img src="https://episerve.zib.de/img/logo_episerve_bw.png" alt="EPISERVE" class="footer-logo-img">
-          <p class="footer-desc">Open simulation platform and data service for infectious disease research and pandemic preparedness in Germany. Provided by the EPISERVE Consortium and hosted at Zuse Institute Berlin.</p>
-        </div>
-      </div>
-      <div class="footer-col">
-        <ul class="footer-links">
-          <li><a href="https://zib.de/impressum">Legal Notice and Data Protection</a></li>
-        </ul>
-      </div>
-      <div class="footer-col">
-        <div class="footer-funding">
-          <img src="https://episerve.zib.de/img/logo-bmftr.png" alt="Federal Ministry of Research, Technology and Space" class="footer-funding-img">
-        </div>
-      </div>
-    </div>
-    <div class="footer-bottom">
-      &copy; 2026 EPISERVE Consortium. All rights reserved.
-    </div>
-  </footer>
+  <!--FOOTER_HTML-->
 </body>
-</html>""")
+</html>"""
 
 
 @app.get("/health")

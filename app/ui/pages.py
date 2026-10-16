@@ -25,6 +25,7 @@ from app.model_run_preview import (
     find_run_components, resolve_model_run,
 )
 from app.sql_validation import validate_transformation_sql
+from app.ui.footer import footer as _footer
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +81,8 @@ def _header(current: str = ""):
                             _napp.storage.user.clear(),
                             ui.navigate.to("/login"),
                         ))
+
+    _footer()
 
 
 def _error_label(msg: str):
@@ -276,6 +279,7 @@ def register_pages():
                 password_inp = ui.input("Password").props('outlined dense type=password prefix-icon="lock"').classes("w-full mb-2")
                 error = ui.label("").classes("text-red-400 text-sm mb-1").style("min-height:1.25rem")
                 ui.button("LOGIN", on_click=do_login).classes("w-full login-btn mt-3")
+        _footer()
 
     @ui.page("/ui")
     def _root():
