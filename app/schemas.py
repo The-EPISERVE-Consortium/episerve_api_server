@@ -53,43 +53,6 @@ class ModelRunStatus(BaseModel):
     doip_url: str
 
 
-class LeaderboardEntry(BaseModel):
-    rank: int
-    run_qid: str
-    model_name: str
-    docker_tag: str
-    params: dict[str, Any]
-    history_start: str | None
-    history_end: str
-    run_timestamp: str
-    n_scored: int
-    n_expected: int
-    metrics: dict[str, float | None]
-    points: list[dict[str, Any]]
-
-
-class SkippedRunOut(BaseModel):
-    run_qid: str
-    model_name: str
-    reason: str
-
-
-class LeaderboardResponse(BaseModel):
-    dataset_qid: str
-    target: str
-    date_column: str
-    test_start: str
-    test_end: str
-    filter_column: str | None
-    filter_value: str | None
-    rank_by: str
-    truth_points: int
-    truth_as_of: str
-    best: str | None
-    entries: list[LeaderboardEntry]
-    not_scorable: list[SkippedRunOut]
-
-
 class BenchmarkOut(BaseModel):
     id: int
     name: str

@@ -30,7 +30,7 @@ def _board():
                   [{"date": "2022-01-05", "forecast": 11.0, "q10": None, "q90": None, "truth": 10.0}],
                   entry_id=9, truth_commit="0123abcd" * 8, truth_as_of="2026-10-14", scored_at="2026-10-16 10:00:00")
     return Leaderboard(Benchmark("Q1", "v", "datum", date(2022, 1, 1), date(2022, 1, 31)), "mae", 2,
-                       "2026-10-14", [entry], [], name="Flu", benchmark_id=3)
+                       "2026-10-14", [entry], name="Flu", benchmark_id=3)
 
 
 @pytest.fixture(autouse=True)

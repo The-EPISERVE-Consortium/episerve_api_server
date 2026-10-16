@@ -46,6 +46,7 @@ def test_scores_a_run_and_records_pins_params_and_points():
 def test_non_finite_metrics_are_stored_as_none():
     forecast = pd.DataFrame({"date": DATES, "forecast": [11.0, float("inf")]})
     entry = _score(_run(), forecast)
+    assert entry.points[1]["forecast"] is None
     assert entry.metrics["mae"] is None and entry.metrics["rmse"] is None
     assert all(v is None or abs(v) != float("inf") for v in entry.metrics.values())
 
@@ -55,23 +56,23 @@ def test_non_finite_metrics_are_stored_as_none():
     (_run(input_dataset_qids=["Q9"]), "dataset"),
     (_run(data_transformation_sql=["SELECT 1"]), "history window"),
 ])
-def test_unqualified_runs_are_not_scorable_with_a_reason(run, fragment):
+def test_unqualified_runs_are_cannot_be_scored_with_a_reason(run, fragment):
     with pytest.raises(NotScorable, match=fragment):
         _score(run, pd.DataFrame({"date": DATES, "forecast": [1.0, 2.0]}))
 
 
-def test_leakage_is_not_scorable():
+def test_leakage_is_cannot_be_scored():
     leaky = _run(data_transformation_sql=["SELECT * FROM df WHERE CAST(datum AS DATE) <= DATE '2022-01-10'"])
     with pytest.raises(NotScorable, match="test start"):
         _score(leaky, pd.DataFrame({"date": DATES, "forecast": [1.0, 2.0]}))
 
 
-def test_partial_forecast_is_not_scorable():
+def test_partial_forecast_is_cannot_be_scored():
     with pytest.raises(NotScorable, match="covers 1 of 2"):
         _score(_run(), pd.DataFrame({"date": DATES[:1], "forecast": [1.0]}))
 
 
-def test_unreadable_predictions_are_not_scorable():
+def test_unreadable_predictions_are_cannot_be_scored():
     def boom(run, benchmark):
         raise LoadError("predictions have no column 'v'")
 

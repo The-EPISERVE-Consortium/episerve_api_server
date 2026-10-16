@@ -164,7 +164,7 @@ def read_leaderboard(benchmark_id: int, rank_by: str = "interval_score", best_pe
     ranked = rank_entries(entries, rank_by, best_per_model)
     return Leaderboard(
         benchmark=store.benchmark_from_row(row), rank_by=rank_by, truth_points=row["truth_points"],
-        truth_as_of=max((e.truth_as_of for e in entries), default=""), entries=ranked, not_scorable=[],
+        truth_as_of=max((e.truth_as_of for e in entries), default=""), entries=ranked,
         name=row["name"], benchmark_id=row["id"],
     )
 

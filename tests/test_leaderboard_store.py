@@ -73,7 +73,7 @@ def _entry(**overrides):
 def test_dataclass_extensions_have_defaults():
     entry = Entry("Q1", "m", "t", {}, None, date(2021, 12, 31), "", 1, 1, {}, [])
     assert (entry.entry_id, entry.truth_commit, entry.truth_as_of, entry.scored_at) == (None, "", "", "")
-    board = Leaderboard(BENCH, "mae", 1, "", [], [])
+    board = Leaderboard(BENCH, "mae", 1, "", [])
     assert (board.name, board.benchmark_id) == ("", 0)
 
 

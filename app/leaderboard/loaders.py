@@ -120,28 +120,6 @@ def parse_truth(data: bytes, benchmark: Benchmark) -> pd.DataFrame:
     return truth
 
 
-def load_truth(dataset: dict, benchmark: Benchmark, doip_base: str) -> pd.DataFrame:
-    """Read the observed series for the test window from the CKAN dataset.
-
-    Args:
-        dataset: Catalog record from ``ckan_client.list_processed_datasets()``.
-        benchmark: Series and window to read.
-        doip_base: Trusted DOIP service base URL.
-
-    Returns:
-        Columns ``date`` and ``truth`` sorted by date.
-
-    Raises:
-        LoadError: If a column is missing, the data is unreadable, the window is
-            empty, or several observations share a date.
-        ValueError: If the dataset has no component, the URL is not trusted or
-            the download exceeds the size limit.
-    """
-    component = resolve_component([dataset], dataset.get("qid", ""))
-    data = download_preview_bytes(component["url"], doip_base, MAX_DOWNLOAD_BYTES)
-    return parse_truth(data, benchmark)
-
-
 def truth_at_commit(dataset: dict, benchmark: Benchmark, commit: str) -> pd.DataFrame:
     """Read the observed series from lakeFS at a pinned commit.
 

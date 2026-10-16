@@ -30,7 +30,7 @@ def _entry(qid="Q10", model="timesfm", mae=1.0, **overrides):
 
 
 def _board(entries, bid=3):
-    return Leaderboard(BENCH, "interval_score", 2, "2026-10-14T00:00:00Z", entries, [], name="Flu", benchmark_id=bid)
+    return Leaderboard(BENCH, "interval_score", 2, "2026-10-14T00:00:00Z", entries, name="Flu", benchmark_id=bid)
 
 
 def _render(monkeypatch, *, boards=BOARDS, board=None, logged_in=False, query="", after=None, rank_log=None):

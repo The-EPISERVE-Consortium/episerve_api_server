@@ -143,14 +143,14 @@ def test_add_run_stores_nothing_when_lakefs_fails(world, monkeypatch):
     assert world["stored"] == []
 
 
-def test_add_run_not_scorable_propagates_and_stores_nothing(world, monkeypatch):
+def test_add_run_cannot_be_scored_propagates_and_stores_nothing(world, monkeypatch):
     monkeypatch.setattr(actions.ckan_client, "list_model_runs", lambda: [{**RUN, "status": "failed"}])
     with pytest.raises(NotScorable, match="failed"):
         actions.add_run(3, "Q10")
     assert world["stored"] == []
 
 
-def test_datastore_failure_is_not_scorable_not_a_crash(world, monkeypatch):
+def test_datastore_failure_is_cannot_be_scored_not_a_crash(world, monkeypatch):
     def boom(rid):
         raise requests.HTTPError("404")
 

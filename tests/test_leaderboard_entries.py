@@ -74,12 +74,12 @@ def test_history_reaching_test_window_is_leakage():
     assert result.relevant and "test" in result.reason
 
 
-def test_unparseable_sql_is_not_scorable():
+def test_unparseable_sql_is_cannot_be_scored():
     result = qualify_run(_run(data_transformation_sql=["SELECT * FROM df"]), _benchmark())
     assert result.relevant and "history window" in result.reason
 
 
-def test_missing_filter_in_sql_is_not_scorable():
+def test_missing_filter_in_sql_is_cannot_be_scored():
     result = qualify_run(_run(), _benchmark(filter_column="typ", filter_value="RSV A"))
     assert result.relevant and "filter" in result.reason
 
@@ -89,7 +89,7 @@ def test_matching_filter_passes():
     assert result.reason is None
 
 
-def test_sql_list_not_aligned_with_datasets_is_not_scorable():
+def test_sql_list_not_aligned_with_datasets_is_cannot_be_scored():
     run = _run(input_dataset_qids=["Q9493814122238", "Q2"], data_transformation_sql=[SQL])
     assert "history window" in qualify_run(run, _benchmark()).reason
 

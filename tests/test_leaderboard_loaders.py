@@ -55,35 +55,16 @@ def _parquet_bytes(frame: pd.DataFrame) -> bytes:
     return buffer.getvalue()
 
 
-def _dataset():
-    return {"qid": "Q1", "components": [{"name": "d.parquet", "url": "https://doip.example/doip/retrieve/Q1/d.parquet"}]}
-
-
-def test_load_truth_filters_window_and_series(monkeypatch):
-    source = pd.DataFrame({
-        "datum": ["2021-12-29", "2022-01-05", "2022-01-12", "2022-01-12"],
-        "value": [1.0, 10.0, 20.0, 99.0],
-        "typ": ["a", "a", "a", "b"],
-    })
-    monkeypatch.setattr(loaders, "download_preview_bytes", lambda url, base, limit: _parquet_bytes(source))
-    bench = Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": "a"})
-    truth = loaders.load_truth(_dataset(), bench, "https://doip.example")
-    assert truth["date"].tolist() == [pd.Timestamp("2022-01-05"), pd.Timestamp("2022-01-12")]
-    assert truth["truth"].tolist() == [10.0, 20.0]
-
-
-def test_load_truth_unknown_column_raises(monkeypatch):
+def test_parse_truth_unknown_column_raises():
     source = pd.DataFrame({"datum": ["2022-01-05"], "other": [1.0]})
-    monkeypatch.setattr(loaders, "download_preview_bytes", lambda url, base, limit: _parquet_bytes(source))
     with pytest.raises(loaders.LoadError, match="value"):
-        loaders.load_truth(_dataset(), BENCH, "https://doip.example")
+        loaders.parse_truth(_parquet_bytes(source), BENCH)
 
 
-def test_load_truth_empty_window_raises(monkeypatch):
+def test_parse_truth_empty_window_raises():
     source = pd.DataFrame({"datum": ["2020-01-01"], "value": [1.0]})
-    monkeypatch.setattr(loaders, "download_preview_bytes", lambda url, base, limit: _parquet_bytes(source))
     with pytest.raises(loaders.LoadError, match="no observations"):
-        loaders.load_truth(_dataset(), BENCH, "https://doip.example")
+        loaders.parse_truth(_parquet_bytes(source), BENCH)
 
 
 def test_fetch_run_params_returns_empty_dict_on_failure(monkeypatch):
@@ -111,40 +92,27 @@ def test_load_predictions_duplicate_dates_keep_last():
     assert frame["forecast"].tolist() == [2.0]
 
 
-def _patch(monkeypatch, data):
-    monkeypatch.setattr(loaders, "download_preview_bytes", lambda url, base, limit: data)
-
-
-def test_load_truth_skips_non_numeric_and_bad_dates(monkeypatch):
+def test_parse_truth_skips_non_numeric_and_bad_dates():
     source = pd.DataFrame({
         "datum": ["2022-01-05", "2022-01-12", "2022-01-19", "garbage"],
         "value": ["1.5", "abc", "", "7"],
     })
-    _patch(monkeypatch, _parquet_bytes(source))
-    truth = loaders.load_truth(_dataset(), BENCH, "https://doip.example")
+    truth = loaders.parse_truth(_parquet_bytes(source), BENCH)
     assert truth["date"].tolist() == [pd.Timestamp("2022-01-05")]
     assert truth["truth"].tolist() == [1.5]
 
 
-def test_load_truth_corrupt_parquet_raises_load_error(monkeypatch):
-    _patch(monkeypatch, b"not a parquet file")
-    with pytest.raises(loaders.LoadError):
-        loaders.load_truth(_dataset(), BENCH, "https://doip.example")
-
-
-def test_load_truth_duplicate_dates_raise(monkeypatch):
+def test_parse_truth_duplicate_dates_raise():
     source = pd.DataFrame({"datum": ["2022-01-05", "2022-01-05"], "value": [1.0, 2.0]})
-    _patch(monkeypatch, _parquet_bytes(source))
     with pytest.raises(loaders.LoadError, match="several observations"):
-        loaders.load_truth(_dataset(), BENCH, "https://doip.example")
+        loaders.parse_truth(_parquet_bytes(source), BENCH)
 
 
-def test_load_truth_filter_column_without_value_raises(monkeypatch):
+def test_parse_truth_filter_column_without_value_raises():
     source = pd.DataFrame({"datum": ["2022-01-05"], "value": [1.0], "typ": ["a"]})
-    _patch(monkeypatch, _parquet_bytes(source))
     bench = Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": None})
     with pytest.raises(loaders.LoadError, match="filter value"):
-        loaders.load_truth(_dataset(), bench, "https://doip.example")
+        loaders.parse_truth(_parquet_bytes(source), bench)
 
 
 def test_fetch_run_params_non_finite_constants_become_null(monkeypatch):
@@ -157,13 +125,12 @@ def test_fetch_run_params_non_finite_constants_become_null(monkeypatch):
     }
 
 
-def test_load_truth_drops_non_finite_values(monkeypatch):
+def test_parse_truth_drops_non_finite_values():
     source = pd.DataFrame({
         "datum": ["2022-01-05", "2022-01-12", "2022-01-19"],
         "value": [float("nan"), float("inf"), 2.5],
     })
-    _patch(monkeypatch, _parquet_bytes(source))
-    truth = loaders.load_truth(_dataset(), BENCH, "https://doip.example")
+    truth = loaders.parse_truth(_parquet_bytes(source), BENCH)
     assert truth["date"].tolist() == [pd.Timestamp("2022-01-19")]
     assert truth["truth"].tolist() == [2.5]
 

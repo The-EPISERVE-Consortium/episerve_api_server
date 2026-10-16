@@ -18,7 +18,7 @@ def _entry(qid, name, **metrics):
 
 
 def _board(entries):
-    return Leaderboard(BENCH, "mae", 52, "2026-10-14", entries, [])
+    return Leaderboard(BENCH, "mae", 52, "2026-10-14", entries)
 
 
 def test_rows_format_values_and_mark_best_per_column():

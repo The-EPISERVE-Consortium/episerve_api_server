@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from nicegui import ui
-from app.routers import auth, datasets, models, model_runs, leaderboard, benchmarks
+from app.routers import auth, datasets, models, model_runs, benchmarks
 from app.secrets import require_secret
 from app.ui.pages import register_pages
 
@@ -15,7 +15,6 @@ app.include_router(auth.router)
 app.include_router(datasets.router)
 app.include_router(models.router)
 app.include_router(model_runs.router)
-app.include_router(leaderboard.router)
 app.include_router(benchmarks.router)
 
 
