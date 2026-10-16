@@ -26,6 +26,14 @@ def _filter_text(row: dict) -> str:
     return f"{row['filter_column']} = {row.get('filter_value') or ''}" if row.get("filter_column") else "none"
 
 
+def description_text(row: dict) -> str:
+    """The benchmark's own description, or a sentence generated from its definition."""
+    if row.get("description"):
+        return row["description"]
+    subject = f"{row['target_column']} for {_filter_text(row)}" if row.get("filter_column") else row["target_column"]
+    return f"Forecast of {subject} over a test window of {row['test_start']} → {row['test_end']}."
+
+
 def data_facts(row: dict) -> list[tuple[str, str]]:
     """Caption/value pairs describing the series and the data version of a benchmark."""
     start = row.get("history_start") or "first date"

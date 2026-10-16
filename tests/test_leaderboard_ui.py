@@ -78,9 +78,10 @@ def test_back_link_and_definition_are_shown(monkeypatch):
     hrefs = {e.props.get("href"): e.text for e in out["find"](ui.link)}
     assert hrefs.get("/ui/benchmarks") == "← All benchmarks"
     assert "Flu" in out["labels"]
+    # the facts live in the Data tab only; the overview does not repeat them
     for text in ("Dataset: Q1", "Target: v", "Filter: region = DE", "Test window: 2022-01-01 → 2022-01-31",
                  "Forecast length: 5 steps", f"Data commit: {COMMIT[:12]}"):
-        assert text in out["labels"]
+        assert text not in out["labels"]
 
 
 def test_nav_has_no_separate_leaderboard_item():
@@ -94,7 +95,7 @@ def test_page_renders_the_requested_benchmark_from_the_database_only(monkeypatch
     assert out["status"] == 200
     assert [r["model"] for r in out["table"].rows] == ["timesfm", "other"]
     assert log[0][0] == 3
-    assert any(t.startswith("Target v, test window 2022-01-01") for t in out["labels"])
+    assert "Best entry: timesfm, ranked by interval score." in out["labels"]
 
 
 def test_unknown_benchmark_shows_not_found(monkeypatch):
@@ -534,14 +535,15 @@ def test_overview_has_description_and_how_it_works_but_no_actions(monkeypatch):
     out = _render(monkeypatch, row=row, board=_board([_entry()]), after=grab)
     assert "Weekly wastewater viral load." in out["labels"]
     assert "How it works" in out["labels"]
-    assert [b for b, panel in out["buttons"] if panel == "overview"] == []
+    # no action buttons; the copy icon of the code block has no label
+    assert [b for b, panel in out["buttons"] if panel == "overview" and b] == []
     assert not any(text == "Go to the leaderboard" for text, _ in out["links"])
     assert ("Start a run from this benchmark", "leaderboard") in out["buttons"]      # it lives on the leaderboard tab
 
 
-def test_overview_without_a_description_keeps_the_standard_sentence(monkeypatch):
+def test_overview_without_a_description_uses_the_sentence_generated_from_the_definition(monkeypatch):
     out = _render(monkeypatch, board=_board([_entry()]))
-    assert any(t.startswith("Which model predicted this series best") for t in out["labels"])
+    assert "Forecast of v for region = DE over a test window of 2022-01-01 → 2022-01-31." in out["labels"]
 
 
 def test_data_tab_lists_the_facts_the_pin_the_input_link_and_the_sql(monkeypatch):
@@ -570,10 +572,10 @@ def test_data_tab_survives_a_missing_run_spec(monkeypatch):
     assert "The input URL and SQL are not available right now." in out["labels"]
 
 
-def test_evaluation_tab_documents_metrics_ranking_rules_and_how_to_run(monkeypatch):
+def test_evaluation_tab_documents_metrics_ranking_and_rules_without_repeating_how_to_run(monkeypatch):
     def grab(out, client, find, drain):
         out["metrics"] = [t.rows for t in find(ui.table) if t.props.get("row-key") == "metric"]
-        out["code"] = [e.content for e in find(ui.code)]
+        out["code"] = [(e.content, _panel_of(e)) for e in find(ui.code)]
 
     out = _render(monkeypatch, board=_board([_entry()]), after=grab)
     names = [r["metric"] for r in out["metrics"][0]]
@@ -582,7 +584,9 @@ def test_evaluation_tab_documents_metrics_ranking_rules_and_how_to_run(monkeypat
     labels = out["labels"]
     assert any("Ranking" in t for t in labels) and any("Which runs are accepted" in t for t in labels)
     assert any("filter region = DE" in t for t in labels)
-    assert any("episerve benchmark run-spec 3" in c for c in out["code"])
+    cli = [panel for content, panel in out["code"] if "episerve benchmark run-spec 3" in content]
+    assert cli == ["overview"]                                  # the CLI steps are shown once, in "How it works"
+    assert "scored once" not in " ".join(t for t in labels if t.startswith("2. "))   # step 2 does not repeat Evaluation
 
 
 def test_leaderboard_table_has_date_and_run_columns_and_a_baseline_badge(monkeypatch):

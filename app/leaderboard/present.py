@@ -160,19 +160,11 @@ def _json(values: list) -> str:
 
 
 def summary(board: Leaderboard) -> str:
-    """The sentence stating the setup and the best entry."""
-    b = board.benchmark
-    setup = (
-        f"Target {b.target_column}, test window {b.test_start} → {b.test_end}, "
-        f"{board.truth_points} observations (data as of {board.truth_as_of or 'unknown'})."
-    )
+    """The best entry and the ranking; what the benchmark scores is on the Data tab."""
     if not board.entries:
-        return f"{setup} No scorable runs for this task."
-    best = board.entries[0]
-    text = f"{setup} Best entry: {best.model_name}, ranked by {LABELS[board.rank_by]}."
+        return "No scorable runs for this task."
+    text = f"Best entry: {board.entries[0].model_name}, ranked by {LABELS[board.rank_by]}."
     commits = {e.truth_commit for e in board.entries if e.truth_commit}
-    if len(commits) == 1:
-        text += f" Scored against lakeFS commit {next(iter(commits))[:12]}."
-    elif len(commits) > 1:
+    if len(commits) > 1:
         text += f" Entries were scored against {len(commits)} different data versions."
     return text

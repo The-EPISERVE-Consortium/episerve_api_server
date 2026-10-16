@@ -36,13 +36,18 @@ def test_rows_format_values_and_mark_best_per_column():
     assert rows[0]["params"] == "history_length=91"
 
 
-def test_summary_names_best_entry_and_setup():
+def test_summary_names_the_best_entry_and_the_ranking_only():
     text = summary(_board([_entry("Q1", "a", mae=1.0)]))
-    assert "v" in text and "2022-01-01 → 2022-12-31" in text and "a" in text and "52" in text
+    assert text == "Best entry: a, ranked by MAE."
+
+
+def test_summary_does_not_repeat_what_the_data_tab_shows():
+    text = summary(_board([_entry("Q1", "a", mae=1.0)]))
+    assert "Target" not in text and "test window" not in text and "observations" not in text and "as of" not in text
 
 
 def test_summary_without_entries_says_so():
-    assert "No scorable runs" in summary(_board([]))
+    assert summary(_board([])) == "No scorable runs for this task."
 
 
 def _hist(qid, name, start, end=date(2021, 12, 31), **metrics):
@@ -131,12 +136,12 @@ def test_chart_band_is_stacked_with_gaps_for_missing_quantiles():
     assert "q10" in option["tooltip"][":formatter"]
 
 
-def test_summary_names_the_shared_data_commit():
+def test_summary_stays_silent_about_a_single_shared_data_commit():
     import dataclasses
 
     entries = [dataclasses.replace(_entry("Q1", "a", mae=1.0), truth_commit="0123abcd" * 8),
                dataclasses.replace(_entry("Q2", "b", mae=2.0), truth_commit="0123abcd" * 8)]
-    assert "Scored against lakeFS commit 0123abcd0123." in summary(_board(entries))
+    assert "0123abcd" not in summary(_board(entries)) and "data version" not in summary(_board(entries))
 
 
 def test_summary_flags_mixed_data_versions():

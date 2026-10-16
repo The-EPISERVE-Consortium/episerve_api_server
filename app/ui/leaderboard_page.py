@@ -8,7 +8,7 @@ from starlette.requests import Request
 from app.auth import _daily_token
 from app.benchmarks import actions as bactions
 from app.leaderboard import actions
-from app.leaderboard.about import METRIC_DOCS, data_facts, entry_rules
+from app.leaderboard.about import METRIC_DOCS, data_facts, description_text, entry_rules
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
 from app.leaderboard.present import (
@@ -165,24 +165,23 @@ def _entry_detail(entry, benchmark_id: int, logged_in: bool) -> None:
         ui.button("Remove from leaderboard", on_click=remove).props("flat color=negative")
 
 
-def _overview_tab(row: dict) -> None:
-    ui.label(
-        row.get("description")
-        or "Which model predicted this series best over the fixed test window? Scores are computed once, when a "
-           "run is added, and stored with the data version they used."
-    ).classes("text-sm text-gray-600")
-    with ui.row().classes("gap-x-6 gap-y-0"):
-        for caption, value in _definition_text(row):
-            ui.label(f"{caption}: {value}").classes("text-sm text-gray-700")
+def _overview_tab(row: dict, benchmark_id: int) -> None:
+    ui.label(description_text(row)).classes("text-sm text-gray-600")
     ui.label("How it works").classes("text-xl font-semibold text-gray-900")
     with ui.column().classes("gap-1 text-sm text-gray-700"):
-        ui.label(f"1. Start a run from this benchmark: the run reads the input pinned at data commit "
-                 f"{(row.get('data_commit') or '')[:12] or '—'} and forecasts "
-                 f"{row['prediction_length'] if row.get('prediction_length') else 'the'} steps.")
-        ui.label("2. When it has finished, add the run to the leaderboard (logged-in users). It is scored once "
-                 "against the test window and the scores are stored with the data version.")
+        ui.label("1. Start a run on the Leaderboard tab, or from the command line (below). The run reads the "
+                 "input described on the Data tab.")
+        ui.label("2. When it has finished, add the run to the leaderboard (logged-in users).")
         ui.label("3. Compare the runs on the Leaderboard tab; the Evaluation tab explains the metrics and the "
                  "rules a run must meet.")
+    ui.code(
+        f"episerve benchmark run-spec {benchmark_id} > spec.json\n"
+        "# add model_image and the model's own config keys (e.g. history_length), keep input and SQL as they are\n"
+        "episerve trigger-model-run spec.json\n"
+        f"episerve benchmark add-entry {benchmark_id} <run-QID>      # after the run has finished (needs a login)\n"
+        f"episerve benchmark leaderboard {benchmark_id}",
+        language="bash",
+    ).classes("w-full max-w-4xl")
 
 
 def _data_tab(row: dict, benchmark_id: int) -> None:
@@ -228,28 +227,6 @@ def _evaluation_tab(row: dict, benchmark_id: int) -> None:
     with ui.column().classes("gap-1 text-sm text-gray-700"):
         for rule in entry_rules(row):
             ui.label("• " + rule)
-    ui.label("How to run a model on this benchmark").classes("text-lg font-semibold text-gray-900")
-    ui.code(
-        f"episerve benchmark run-spec {benchmark_id} > spec.json\n"
-        "# add model_image and the model's own config keys (e.g. history_length), keep input and SQL as they are\n"
-        "episerve trigger-model-run spec.json\n"
-        f"episerve benchmark add-entry {benchmark_id} <run-QID>      # after the run has finished (needs a login)\n"
-        f"episerve benchmark leaderboard {benchmark_id}",
-        language="bash",
-    ).classes("w-full max-w-4xl")
-
-
-def _definition_text(row: dict) -> list[tuple[str, str]]:
-    """Caption/value pairs describing what a benchmark scores."""
-    filter_text = f"{row['filter_column']} = {row['filter_value']}" if row.get("filter_column") else "none"
-    return [
-        ("Dataset", row["dataset_qid"]),
-        ("Target", row["target_column"]),
-        ("Filter", filter_text),
-        ("Test window", f"{row['test_start']} → {row['test_end']}"),
-        ("Forecast length", f"{row['prediction_length']} steps" if row.get("prediction_length") else "—"),
-        ("Data commit", (row.get("data_commit") or "")[:12] or "—"),
-    ]
 
 
 def register_leaderboard_page() -> None:
@@ -317,7 +294,7 @@ def register_leaderboard_page() -> None:
                     ui.tab(key, label=label)
             with ui.tab_panels(tabs, value=open_tab).classes("w-full"):
                 with ui.tab_panel("overview").classes("gap-4"):
-                    _overview_tab(row)
+                    _overview_tab(row, selected)
                 with ui.tab_panel("data").classes("gap-3"):
                     _data_tab(row, selected)
                 with ui.tab_panel("evaluation").classes("gap-3"):

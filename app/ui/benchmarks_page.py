@@ -11,6 +11,7 @@ from app.benchmarks import actions as bactions
 from app.benchmarks.definition import DefinitionError
 from app.clients import ckan as ckan_client
 from app.leaderboard import actions as lboard_actions
+from app.leaderboard.about import description_text
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.present import LABELS
 from app.ui.pages import _error_label, _header
@@ -57,14 +58,6 @@ def _pretty_date(value) -> str:
 def _runs_text(count) -> str:
     count = count or 0
     return "No runs yet" if count == 0 else f"{count} run" + ("" if count == 1 else "s")
-
-
-def _card_description(b: dict) -> str:
-    """The benchmark's own description, or a sentence generated from its definition."""
-    if b.get("description"):
-        return b["description"]
-    subject = f"{b['target_column']} for {_filter_text(b)}" if b.get("filter_column") else b["target_column"]
-    return f"Forecast of {subject} over a test window of {b['test_start']} → {b['test_end']}."
 
 
 def _parse_date(text, label: str, *, required: bool) -> _date | None:
@@ -392,7 +385,7 @@ def register_benchmarks_page() -> None:
                                 ui.icon("insights", size="2.5rem").classes("text-blue-grey-5")
                             with ui.column().classes("flex-1 gap-0 py-3 pr-4"):
                                 ui.label(b["name"]).classes("text-lg font-semibold text-gray-900")
-                                ui.label(_card_description(b)).classes("text-sm text-gray-600 line-clamp-2")
+                                ui.label(description_text(b)).classes("text-sm text-gray-600 line-clamp-2")
                                 meta = [f"Dataset {b['dataset_qid']}", b["target_column"]]
                                 if b.get("filter_column"):
                                     meta.append(_filter_text(b))
