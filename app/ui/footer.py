@@ -92,6 +92,9 @@ FOOTER_CSS = """
 }
 """
 
+# On the UI pages the footer takes the page's own background; only the landing page has a beige one.
+UI_FOOTER_CSS = ".q-footer .site-footer { background: transparent; }\n"
+
 _FOOTER_HTML = """<footer class="site-footer">
   <div class="footer-main">
     <div class="footer-col">
@@ -125,6 +128,6 @@ def footer_html() -> str:
 
 def footer() -> None:
     """Add the footer at the end of a UI page; it scrolls with the content. Call it once per page."""
-    ui.add_css(FOOTER_CSS)
+    ui.add_css(FOOTER_CSS + UI_FOOTER_CSS)
     with ui.footer(fixed=False).classes("p-0 bg-transparent"):
         ui.html(footer_html(), sanitize=False).classes("w-full")

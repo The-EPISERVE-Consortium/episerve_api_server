@@ -83,3 +83,14 @@ def test_the_logos_are_served_by_the_app(name):
 def test_the_logo_files_are_part_of_the_package():
     for name in ("logo_episerve_bw.png", "logo-bmftr.png"):
         assert (footer_module.STATIC_DIR / "img" / name).is_file()
+
+
+def test_ui_page_footer_has_no_background_of_its_own(monkeypatch):
+    out = _render(monkeypatch)
+    assert ".q-footer .site-footer" in out["text"] and "background: transparent" in out["text"]
+    assert "transparent" in footer_module.UI_FOOTER_CSS and "#ede8da" not in footer_module.UI_FOOTER_CSS
+
+
+def test_landing_page_footer_keeps_its_background():
+    response = _get("/")
+    assert "#ede8da" in response.text and ".q-footer" not in response.text
