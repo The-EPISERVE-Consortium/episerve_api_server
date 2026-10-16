@@ -34,6 +34,11 @@ def state(row: dict) -> str:
     return "final" if row.get("finalized_at") else "draft"
 
 
+def is_public(row: dict) -> bool:
+    """True once the benchmark was finalized (retired or not); anything never finalized is not public."""
+    return bool(row.get("finalized_at"))
+
+
 def benchmark_from_row(row: dict) -> Benchmark:
     """The definition stored in a benchmark row."""
     return Benchmark(

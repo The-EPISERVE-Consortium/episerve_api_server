@@ -161,7 +161,7 @@ def test_parse_truth_rejects_garbage_bytes():
         loaders.parse_truth(b"not a parquet file", BENCH)
 
 
-def test_truth_at_commit_reads_the_first_component_at_the_pinned_commit(monkeypatch):
+def test_truth_from_pin_reads_the_named_component_at_the_pinned_commit(monkeypatch):
     source = pd.DataFrame({"datum": ["2022-01-05"], "value": [10.0]})
     calls = []
 
@@ -170,36 +170,41 @@ def test_truth_at_commit_reads_the_first_component_at_the_pinned_commit(monkeypa
         return _parquet_bytes(source)
 
     monkeypatch.setattr(loaders.lakefs_client, "read_processed_component", fake_read)
-    dataset = {"qid": "Q1", "components": [{"name": "d.parquet", "url": "https://doip.example/doip/retrieve/Q1/d.parquet"}]}
-    truth = loaders.truth_at_commit(dataset, BENCH, "abc12345")
+    truth = loaders.truth_from_pin("Q1", "d.parquet", "abc12345", BENCH)
     assert truth["truth"].tolist() == [10.0]
     assert calls == [("abc12345", "Q1", "d.parquet", loaders.MAX_DOWNLOAD_BYTES)]
 
 
-def test_truth_at_commit_wraps_value_errors_as_load_errors(monkeypatch):
+def test_truth_from_pin_wraps_value_errors_as_load_errors(monkeypatch):
     def too_big(commit, qid, filename, max_bytes):
         raise ValueError("The dataset file exceeds the size limit.")
 
     monkeypatch.setattr(loaders.lakefs_client, "read_processed_component", too_big)
-    dataset = {"qid": "Q1", "components": [{"name": "d.parquet", "url": "u"}]}
     with pytest.raises(loaders.LoadError, match="size limit"):
-        loaders.truth_at_commit(dataset, BENCH, "abc12345")
-    with pytest.raises(loaders.LoadError, match="components"):
-        loaders.truth_at_commit({"qid": "Q1", "components": []}, BENCH, "abc12345")
+        loaders.truth_from_pin("Q1", "d.parquet", "abc12345", BENCH)
 
 
-def test_truth_at_commit_unsafe_commit_is_a_load_error(monkeypatch):
+def test_truth_from_pin_missing_file_is_a_load_error(monkeypatch):
+    from lakefs.exceptions import NotFoundException
+
+    def missing(commit, qid, filename, max_bytes):
+        raise NotFoundException(404, "nf", "")
+
+    monkeypatch.setattr(loaders.lakefs_client, "read_processed_component", missing)
+    with pytest.raises(loaders.LoadError, match="does not exist at the pinned commit"):
+        loaders.truth_from_pin("Q1", "d.parquet", "abc12345", BENCH)
+
+
+def test_truth_from_pin_unsafe_commit_is_a_load_error(monkeypatch):
     monkeypatch.setattr(loaders.lakefs_client, "_client", lambda: None)
-    dataset = {"qid": "Q1", "components": [{"name": "d.parquet", "url": "u"}]}
     with pytest.raises(loaders.LoadError, match="Invalid"):
-        loaders.truth_at_commit(dataset, BENCH, "../evil")
+        loaders.truth_from_pin("Q1", "d.parquet", "../evil", BENCH)
 
 
-def test_truth_at_commit_keeps_load_errors_unchanged(monkeypatch):
+def test_truth_from_pin_keeps_load_errors_unchanged(monkeypatch):
     monkeypatch.setattr(loaders.lakefs_client, "read_processed_component", lambda *a: b"not a parquet file")
-    dataset = {"qid": "Q1", "components": [{"name": "d.parquet", "url": "u"}]}
     with pytest.raises(loaders.LoadError, match="could not be read"):
-        loaders.truth_at_commit(dataset, BENCH, "abc12345")
+        loaders.truth_from_pin("Q1", "d.parquet", "abc12345", BENCH)
 
 
 def test_last_observed_date_returns_the_latest_on_or_before():

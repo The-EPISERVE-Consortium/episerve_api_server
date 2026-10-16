@@ -12,6 +12,7 @@ from app.leaderboard.scoring import NotScorable
 from app.leaderboard.service import Entry
 
 COMMIT = "0123abcd" * 8
+_real_truth_from_pin = actions.loaders.truth_from_pin
 DATES = pd.to_datetime(["2022-01-05", "2022-01-12"])
 ROW = {"id": 3, "name": "Flu", "dataset_qid": "Q1", "target_column": "v", "date_column": "datum",
        "filter_column": None, "filter_value": None, "test_start": date(2022, 1, 1),
@@ -30,19 +31,20 @@ RUN = {"qid": "Q10", "model_name": "timesfm", "docker_tag": "latest", "status": 
 def world(monkeypatch):
     """Fake CKAN, loaders and store; record what is written."""
     log = {"stored": [], "removed": [], "truth_calls": []}
-    monkeypatch.setattr(actions.ckan_client, "list_processed_datasets",
-                        lambda: [{"qid": "Q1", "name": "Wastewater", "last_modified": "2026-10-14",
-                                  "components": [{"name": "d.parquet", "url": "u"}]}])
     monkeypatch.setattr(actions.ckan_client, "list_model_runs", lambda: [RUN])
     monkeypatch.setattr(actions.ckan_client, "get_datastore_records",
                         lambda rid: [{"datum": "2022-01-05", "v": "11"}, {"datum": "2022-01-12", "v": "21"}])
     monkeypatch.setattr(actions, "_load_inputs", lambda qid: [RunInput("Q1", "d.parquet", COMMIT, SQL)])
     monkeypatch.setattr(actions.bstore, "get", lambda bid: dict(FINAL_ROW) if bid == 3 else None)
-    def truth_at_commit(dataset, bench, commit):
-        log["truth_calls"].append((dataset["qid"], commit))
+    def truth_from_pin(qid, component_name, commit, bench):
+        log["truth_calls"].append((qid, component_name, commit))
         return pd.DataFrame({"date": DATES, "truth": [10.0, 20.0]})
 
-    monkeypatch.setattr(actions.loaders, "truth_at_commit", truth_at_commit)
+    def no_ckan(*args, **kwargs):
+        raise AssertionError("scoring must not read the live CKAN dataset record")
+
+    monkeypatch.setattr(actions.ckan_client, "list_processed_datasets", no_ckan)
+    monkeypatch.setattr(actions.loaders, "truth_from_pin", truth_from_pin)
     monkeypatch.setattr(actions.loaders, "fetch_run_params", lambda qid, base: {"history_length": 91})
     monkeypatch.setattr(actions.store, "list_entries", lambda bid: list(log["stored"]))
 
@@ -58,7 +60,7 @@ def world(monkeypatch):
 def test_add_run_scores_against_the_pinned_commit_and_stores(world):
     assert actions.add_run(3, "Q10") == 42
     entry = world["stored"][0]
-    assert world["truth_calls"] == [("Q1", COMMIT)]
+    assert world["truth_calls"] == [("Q1", "d.parquet", COMMIT)]
     assert entry.run_qid == "Q10" and entry.truth_commit == COMMIT and entry.truth_as_of == "2026-10-16 11:00:00"
     assert entry.params == {"history_length": 91} and entry.metrics["mae"] == pytest.approx(1.0)
 
@@ -82,7 +84,7 @@ def test_add_run_duplicate_is_a_conflict_before_any_heavy_work(world, monkeypatc
 
     monkeypatch.setattr(actions.ckan_client, "list_model_runs", must_not_run)
     monkeypatch.setattr(actions.ckan_client, "list_processed_datasets", must_not_run)
-    monkeypatch.setattr(actions.loaders, "truth_at_commit", must_not_run)
+    monkeypatch.setattr(actions.loaders, "truth_from_pin", must_not_run)
     monkeypatch.setattr(actions, "_load_inputs", must_not_run)
     with pytest.raises(actions.Conflict):
         actions.add_run(3, "Q10")
@@ -98,10 +100,10 @@ def test_add_run_race_is_a_conflict(world, monkeypatch):
 
 
 def test_add_run_stores_nothing_when_the_truth_cannot_be_read(world, monkeypatch):
-    def boom(dataset, bench, commit):
+    def boom(qid, component_name, commit, bench):
         raise RuntimeError("lakeFS down")
 
-    monkeypatch.setattr(actions.loaders, "truth_at_commit", boom)
+    monkeypatch.setattr(actions.loaders, "truth_from_pin", boom)
     with pytest.raises(RuntimeError):
         actions.add_run(3, "Q10")
     assert world["stored"] == []
@@ -238,3 +240,52 @@ def test_read_leaderboard_hides_drafts_but_shows_retired_boards(world, monkeypat
         actions.read_leaderboard(3)
     monkeypatch.setattr(actions.bstore, "get", lambda bid: {**FINAL_ROW, "retired_at": "t"})
     assert actions.read_leaderboard(3).name == FINAL_ROW["name"]
+
+
+def test_add_run_reads_the_pinned_file_bytes_from_lakefs_not_the_catalog(world, monkeypatch):
+    import io
+
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    reads = []
+    buffer = io.BytesIO()
+    pq.write_table(pa.table({"datum": ["2022-01-05", "2022-01-12"], "v": [10.0, 20.0]}), buffer)
+
+    def read(commit, qid, filename, max_bytes):
+        reads.append((commit, qid, filename, max_bytes))
+        return buffer.getvalue()
+
+    monkeypatch.setattr(actions.loaders, "truth_from_pin", _real_truth_from_pin)
+    monkeypatch.setattr(actions.bstore, "get", lambda bid: dict(FINAL_ROW, component_name="pinned.parquet"))
+    monkeypatch.setattr(actions.ckan_client, "list_model_runs", lambda: [RUN])
+    monkeypatch.setattr(actions.ckan_client, "list_processed_datasets", lambda: (_ for _ in ()).throw(AssertionError))
+    monkeypatch.setattr(actions.ckan_client, "get_datastore_records",
+                        lambda rid: [{"datum": "2022-01-05", "v": "11"}, {"datum": "2022-01-12", "v": "21"}])
+    monkeypatch.setattr(actions, "_load_inputs", lambda qid: [RunInput("Q1", "pinned.parquet", COMMIT, SQL)])
+    monkeypatch.setattr(actions.store, "list_entries", lambda bid: [])
+    monkeypatch.setattr(actions.store, "add_entry", lambda bid, entry: 1)
+    monkeypatch.setattr(actions.loaders, "fetch_run_params", lambda qid, base: {})
+    monkeypatch.setattr(actions.loaders.lakefs_client, "read_processed_component", read)
+    assert actions.add_run(3, "Q10") == 1
+    assert reads == [(COMMIT, "Q1", "pinned.parquet", actions.loaders.MAX_DOWNLOAD_BYTES)]
+
+
+def test_add_run_with_the_pinned_file_missing_is_a_load_error(world, monkeypatch):
+    def missing(*args):
+        raise actions.loaders.NotFoundException(404, "nf", "")
+
+    monkeypatch.setattr(actions.loaders, "truth_from_pin", _real_truth_from_pin)
+    monkeypatch.setattr(actions.loaders.lakefs_client, "read_processed_component", missing)
+    with pytest.raises(actions.LoadError, match="does not exist at the pinned commit"):
+        actions.add_run(3, "Q10")
+    assert world["stored"] == []
+
+
+def test_read_leaderboard_hides_a_retired_draft_but_not_a_retired_final(world, monkeypatch):
+    monkeypatch.setattr(actions.bstore, "get",
+                        lambda bid: {**FINAL_ROW, "finalized_at": None, "data_commit": None, "retired_at": "t"})
+    with pytest.raises(actions.NotFound):
+        actions.read_leaderboard(3)
+    monkeypatch.setattr(actions.bstore, "get", lambda bid: {**FINAL_ROW, "retired_at": "t"})
+    assert actions.read_leaderboard(3).benchmark_id == 3

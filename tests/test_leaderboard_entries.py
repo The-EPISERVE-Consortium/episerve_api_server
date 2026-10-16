@@ -253,3 +253,20 @@ def test_strict_run_still_applies_status_leakage_and_filter_rules():
 
 def test_without_a_pinned_commit_the_previous_behaviour_is_unchanged():
     assert qualify_run(_run(), _benchmark()).reason is None
+
+
+def test_strict_run_listing_the_dataset_twice_is_refused_even_if_one_is_pinned():
+    pinned, unpinned = _input(), _input(commit="cd" * 32, sql="SELECT * FROM df")
+    for inputs in ([pinned, unpinned], [unpinned, pinned], [pinned, _input()]):
+        reason = qualify_run(_run(), _strict(), inputs=inputs).reason
+        assert "several inputs from this benchmark's dataset" in reason and "exactly one" in reason
+
+
+def test_strict_run_with_one_input_and_an_unrelated_dataset_input_qualifies():
+    result = qualify_run(_run(), _strict(), inputs=[_input(dataset_qid="Q5", commit=None), _input()])
+    assert result.reason is None
+
+
+def test_strict_benchmark_commit_stored_in_upper_case_still_matches():
+    result = qualify_run(_run(), replace(_benchmark(), data_commit=PIN.upper()), inputs=[_input()])
+    assert result.reason is None

@@ -9,10 +9,11 @@ import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.parquet as pq
+from lakefs.exceptions import NotFoundException
 
 from app.clients import lakefs as lakefs_client
 from app.dataset_preview import (
-    MAX_DOWNLOAD_BYTES, _column_sql, download_preview_bytes, resolve_component,
+    MAX_DOWNLOAD_BYTES, _column_sql, download_preview_bytes,
 )
 from app.leaderboard.entries import Benchmark
 
@@ -153,28 +154,26 @@ def last_observed_date(data: bytes, benchmark: Benchmark, on_or_before: date) ->
     return series["date"].max().date()
 
 
-def truth_at_commit(dataset: dict, benchmark: Benchmark, commit: str) -> pd.DataFrame:
-    """Read the observed series from lakeFS at a pinned commit.
+def truth_from_pin(qid: str, component_name: str, commit: str, benchmark: Benchmark) -> pd.DataFrame:
+    """Read the observed series from the component a benchmark pinned.
 
     Args:
-        dataset: Catalog record from ``ckan_client.list_processed_datasets()``.
-        benchmark: Series and window to read.
+        qid: Dataset QID.
+        component_name: File name of the pinned component.
         commit: lakeFS commit id of the processed-data repository.
+        benchmark: Series and window to read.
 
     Returns:
         Columns ``date`` and ``truth`` sorted by date.
 
     Raises:
-        LoadError: As ``parse_truth``, and when the dataset has no component, an
-            argument is unsafe, or the file exceeds the size limit.
+        LoadError: As ``parse_truth``, and when an argument is unsafe, the file exceeds the
+            size limit or does not exist at the commit.
     """
     try:
-        component = resolve_component([dataset], dataset.get("qid", ""))
-        data = lakefs_client.read_processed_component(
-            commit, dataset["qid"], component["name"], MAX_DOWNLOAD_BYTES,
-        )
-    except LoadError:
-        raise
+        data = lakefs_client.read_processed_component(commit, qid, component_name, MAX_DOWNLOAD_BYTES)
+    except NotFoundException as exc:
+        raise LoadError("The dataset file does not exist at the pinned commit.") from exc
     except ValueError as exc:
         raise LoadError(str(exc)) from exc
     return parse_truth(data, benchmark)

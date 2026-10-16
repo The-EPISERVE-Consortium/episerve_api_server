@@ -22,13 +22,6 @@ from app.leaderboard.service import Leaderboard, rank_entries
 logger = logging.getLogger(__name__)
 
 
-def _dataset(qid: str) -> dict:
-    dataset = next((d for d in ckan_client.list_processed_datasets() if d["qid"] == qid), None)
-    if dataset is None:
-        raise NotFound(f"Dataset {qid!r} not found")
-    return dataset
-
-
 def _final_benchmark(benchmark_id: int) -> dict:
     row = bstore.get(benchmark_id)
     if row is None or bstore.state(row) != "final":
@@ -59,8 +52,8 @@ def _load_predictions(run: dict, benchmark: Benchmark) -> pd.DataFrame:
 def add_run(benchmark_id: int, run_qid: str) -> int:
     """Score a model run against a final benchmark and store the entry.
 
-    The truth is read at the benchmark's pinned ``data_commit`` (the lakeFS head is not
-    consulted), and the run is accepted only if its provenance shows its input at exactly
+    The truth is read from the benchmark's pinned component at its ``data_commit`` (neither the
+    lakeFS head nor the current CKAN record is consulted), and the run is accepted only if its provenance shows its input at exactly
     that commit.
 
     Returns:
@@ -79,9 +72,8 @@ def add_run(benchmark_id: int, run_qid: str) -> int:
     run = next((r for r in ckan_client.list_model_runs() if r["qid"] == run_qid), None)
     if run is None:
         raise NotFound(f"Model run {run_qid!r} not found")
-    dataset = _dataset(benchmark.dataset_qid)
     commit = row["data_commit"]
-    truth = loaders.truth_at_commit(dataset, benchmark, commit)
+    truth = loaders.truth_from_pin(benchmark.dataset_qid, row["component_name"], commit, benchmark)
     inputs = _load_inputs(run_qid)
     entry = scoring.score_run(
         benchmark, run, truth, truth_commit=commit, truth_as_of=row["finalized_at"],
@@ -109,11 +101,11 @@ def read_leaderboard(benchmark_id: int, rank_by: str = "interval_score", best_pe
     """The stored, ranked board; database only.
 
     Raises:
-        NotFound: Unknown or draft benchmark.
+        NotFound: Unknown benchmark or one that was never finalized (retired drafts included).
         ValueError: Unknown ``rank_by``.
     """
     row = bstore.get(benchmark_id)
-    if row is None or bstore.state(row) == "draft":
+    if row is None or not bstore.is_public(row):
         raise NotFound(f"Benchmark {benchmark_id} not found")
     entries = store.list_entries(benchmark_id)
     ranked = rank_entries(entries, rank_by, best_per_model)

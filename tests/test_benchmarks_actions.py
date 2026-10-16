@@ -310,3 +310,12 @@ def test_update_draft_rechecks_a_changed_dataset(world):
     with pytest.raises(actions.NotFound):
         actions.update_draft(3, dataset_qid="Q404")
     actions.update_draft(3, dataset_qid="Q1")
+
+
+def test_get_hides_a_retired_draft_from_anonymous_readers(world):
+    world["state"]["row"] = _row(retired_at="2026-10-17 00:00:00")        # finalized_at stays NULL
+    with pytest.raises(actions.NotFound):
+        actions.get(3)
+    assert actions.get(3, include_draft=True)["id"] == 3
+    world["state"]["row"] = _final(retired_at="2026-10-17 00:00:00")
+    assert actions.get(3)["id"] == 3                                      # retired finals stay readable

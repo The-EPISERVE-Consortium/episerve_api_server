@@ -120,3 +120,10 @@ def test_no_function_ever_issues_a_delete(monkeypatch):
     store.get(1)
     store.retire(1)
     assert conn.executed and all("DELETE" not in sql.upper() for sql, _ in conn.executed)
+
+
+def test_is_public_means_finalized_whatever_retired_at_says():
+    assert store.is_public({"finalized_at": "t", "retired_at": None})
+    assert store.is_public({"finalized_at": "t", "retired_at": "t"})
+    assert not store.is_public({"finalized_at": None, "retired_at": None})
+    assert not store.is_public({"finalized_at": None, "retired_at": "t"})

@@ -169,6 +169,13 @@ def test_a_draft_is_hidden_from_anonymous_readers(monkeypatch):
     assert client.get("/benchmarks/4", headers=AUTH).json()["state"] == "draft"
 
 
+def test_a_retired_draft_is_hidden_from_anonymous_readers(monkeypatch):
+    retired_draft = {**DRAFT, "retired_at": "2026-10-17 00:00:00"}
+    monkeypatch.setattr(router.bactions, "_row", lambda bid: retired_draft)
+    assert client.get("/benchmarks/4").status_code == 404
+    assert client.get("/benchmarks/4", headers=AUTH).json()["state"] == "retired"
+
+
 def test_create_patch_check_finalize_copy_and_retire(monkeypatch):
     calls = []
     monkeypatch.setattr(router.bactions, "create_draft", lambda **kw: calls.append(("create", kw)) or 4)

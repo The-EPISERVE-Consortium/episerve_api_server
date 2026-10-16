@@ -249,13 +249,13 @@ def retire(benchmark_id: int) -> None:
 
 
 def get(benchmark_id: int, *, include_draft: bool = False) -> dict:
-    """One benchmark row; drafts only with ``include_draft`` (they are not public).
+    """One benchmark row; never-finalized ones (drafts, retired drafts) only with ``include_draft``.
 
     Raises:
-        NotFound: Unknown, or a draft without ``include_draft``.
+        NotFound: Unknown, or never finalized without ``include_draft``.
     """
     row = _row(benchmark_id)
-    if store.state(row) == "draft" and not include_draft:
+    if not store.is_public(row) and not include_draft:
         raise NotFound(f"Benchmark {benchmark_id} not found")
     return row
 

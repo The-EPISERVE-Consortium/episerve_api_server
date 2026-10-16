@@ -159,9 +159,16 @@ def qualify_run(run: dict, benchmark: Benchmark, inputs: list[RunInput] | None =
         return _check_sql(statements[index] if len(statements) == len(qids) else None, benchmark)
     if inputs is None:
         return Qualification(True, "the run's provenance could not be read")
-    match = next((i for i in inputs if i.dataset_qid == benchmark.dataset_qid), None)
-    if match is None:
+    matches = [i for i in inputs if i.dataset_qid == benchmark.dataset_qid]
+    if not matches:
         return Qualification(True, "the run's provenance lists no input from this benchmark's dataset")
+    if len(matches) > 1:
+        return Qualification(
+            True,
+            "the run's provenance lists several inputs from this benchmark's dataset; "
+            "a benchmark run must use exactly one",
+        )
+    match = matches[0]
     if match.commit != benchmark.data_commit.lower():
         return Qualification(
             True,
