@@ -200,3 +200,30 @@ def test_truth_at_commit_keeps_load_errors_unchanged(monkeypatch):
     dataset = {"qid": "Q1", "components": [{"name": "d.parquet", "url": "u"}]}
     with pytest.raises(loaders.LoadError, match="could not be read"):
         loaders.truth_at_commit(dataset, BENCH, "abc12345")
+
+
+def test_last_observed_date_returns_the_latest_on_or_before():
+    source = pd.DataFrame({"datum": ["2026-03-18", "2026-03-25", "2026-04-01"], "value": [1.0, 2.0, 3.0]})
+    assert loaders.last_observed_date(_parquet_bytes(source), BENCH, date(2026, 3, 31)) == date(2026, 3, 25)
+
+
+def test_last_observed_date_tolerates_duplicate_dates_and_applies_the_filter():
+    source = pd.DataFrame({
+        "datum": ["2026-03-25", "2026-03-25", "2026-03-18"], "value": [1.0, 2.0, 3.0], "typ": ["a", "b", "b"],
+    })
+    bench = Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": "b"})
+    assert loaders.last_observed_date(_parquet_bytes(source), bench, date(2026, 3, 31)) == date(2026, 3, 25)
+    bench_a = Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": "a"})
+    with pytest.raises(loaders.LoadError):                      # filter 'a' only has the 2026-03-25 row
+        loaders.last_observed_date(_parquet_bytes(source), bench_a, date(2026, 3, 20))
+
+
+def test_last_observed_date_without_observations_raises():
+    source = pd.DataFrame({"datum": ["2026-05-01"], "value": [1.0]})
+    with pytest.raises(loaders.LoadError, match="no observations on or before"):
+        loaders.last_observed_date(_parquet_bytes(source), BENCH, date(2026, 3, 31))
+
+
+def test_last_observed_date_ignores_non_numeric_values():
+    source = pd.DataFrame({"datum": ["2026-03-18", "2026-03-25"], "value": ["1.5", "abc"]})
+    assert loaders.last_observed_date(_parquet_bytes(source), BENCH, date(2026, 3, 31)) == date(2026, 3, 18)

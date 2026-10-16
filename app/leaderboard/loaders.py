@@ -1,6 +1,7 @@
 """Load predictions, observations and run parameters for the leaderboard."""
 
 import json
+from datetime import date
 from io import BytesIO
 
 import duckdb
@@ -58,20 +59,11 @@ def load_predictions(records: list[dict], benchmark: Benchmark) -> pd.DataFrame:
     return clipped.reset_index(drop=True)
 
 
-def parse_truth(data: bytes, benchmark: Benchmark) -> pd.DataFrame:
-    """Read the observed series for the test window from a dataset Parquet file.
-
-    Args:
-        data: Parquet bytes of the dataset component.
-        benchmark: Series and window to read.
-
-    Returns:
-        Columns ``date`` and ``truth`` sorted by date.
-
-    Raises:
-        LoadError: If a column is missing, the data is unreadable, the window is
-            empty, or several observations share a date.
-    """
+def _read_series(
+    data: bytes, benchmark: Benchmark, start: date, end: date, *,
+    require_unique: bool, empty_message: str,
+) -> pd.DataFrame:
+    """Read ``date``/``truth`` rows between ``start`` and ``end`` (inclusive), sorted by date."""
     if benchmark.filter_column and benchmark.filter_value is None:
         raise LoadError("filter value is required with a filter column")
     needed = [benchmark.date_column, benchmark.target_column]
@@ -88,7 +80,7 @@ def parse_truth(data: bytes, benchmark: Benchmark) -> pd.DataFrame:
     date_sql = _column_sql(benchmark.date_column, names)
     target_sql = _column_sql(benchmark.target_column, names)
     where = f"TRY_CAST({date_sql} AS DATE) BETWEEN ? AND ?"
-    values: list = [benchmark.test_start, benchmark.test_end]
+    values: list = [start, end]
     if benchmark.filter_column:
         where += f" AND CAST({_column_sql(benchmark.filter_column, names)} AS VARCHAR) = ?"
         values.append(benchmark.filter_value)
@@ -110,14 +102,55 @@ def parse_truth(data: bytes, benchmark: Benchmark) -> pd.DataFrame:
     except (duckdb.Error, pa.ArrowException) as exc:
         raise LoadError("the dataset could not be queried") from exc
     if truth.empty:
-        raise LoadError("the dataset has no observations in the test window")
-    if truth["date"].duplicated().any():
+        raise LoadError(empty_message)
+    if require_unique and truth["date"].duplicated().any():
         raise LoadError(
             "the dataset has several observations per date in the test window; "
             "add a filter to select one series"
         )
     truth["date"] = pd.to_datetime(truth["date"]).dt.normalize()
     return truth
+
+
+def parse_truth(data: bytes, benchmark: Benchmark) -> pd.DataFrame:
+    """Read the observed series for the test window from a dataset Parquet file.
+
+    Args:
+        data: Parquet bytes of the dataset component.
+        benchmark: Series and window to read.
+
+    Returns:
+        Columns ``date`` and ``truth`` sorted by date.
+
+    Raises:
+        LoadError: If a column is missing, the data is unreadable, the window is
+            empty, or several observations share a date.
+    """
+    return _read_series(
+        data, benchmark, benchmark.test_start, benchmark.test_end,
+        require_unique=True, empty_message="the dataset has no observations in the test window",
+    )
+
+
+def last_observed_date(data: bytes, benchmark: Benchmark, on_or_before: date) -> date:
+    """Latest date with a usable target value on or before ``on_or_before``.
+
+    Args:
+        data: Parquet bytes of the dataset component.
+        benchmark: Supplies the series (date, target and filter columns).
+        on_or_before: Inclusive upper bound.
+
+    Returns:
+        The latest observed date.
+
+    Raises:
+        LoadError: If a column is missing, the data is unreadable, or nothing was observed.
+    """
+    series = _read_series(
+        data, benchmark, date(1900, 1, 1), on_or_before, require_unique=False,
+        empty_message=f"the dataset has no observations on or before {on_or_before.isoformat()}",
+    )
+    return series["date"].max().date()
 
 
 def truth_at_commit(dataset: dict, benchmark: Benchmark, commit: str) -> pd.DataFrame:
