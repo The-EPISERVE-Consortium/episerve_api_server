@@ -36,6 +36,10 @@ class Entry:
     n_expected: int
     metrics: dict[str, float | None]
     points: list[dict] = field(default_factory=list)
+    entry_id: int | None = None
+    truth_commit: str = ""
+    truth_as_of: str = ""
+    scored_at: str = ""
 
 
 @dataclass
@@ -57,6 +61,8 @@ class Leaderboard:
     truth_as_of: str
     entries: list[Entry]
     not_scorable: list[SkippedRun]
+    name: str = ""
+    benchmark_id: int = 0
 
 
 def sort_key(metric: str) -> Callable[[Entry], tuple]:
