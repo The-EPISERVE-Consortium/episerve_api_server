@@ -7,9 +7,9 @@ import pytest
 import requests
 
 from app.leaderboard import actions
-from app.leaderboard.run_inputs import RunInput
 from app.leaderboard.entries import Benchmark
 from app.leaderboard.loaders import LoadError
+from app.leaderboard.run_inputs import RunInput
 from app.leaderboard.scoring import NotScorable
 from app.leaderboard.service import Entry
 
@@ -31,7 +31,7 @@ RUN = {"qid": "Q10", "model_name": "timesfm", "docker_tag": "latest", "status": 
 @pytest.fixture
 def world(monkeypatch):
     """Fake CKAN, lakeFS, loaders and store; record what is written."""
-    log = {"stored": [], "created": [], "removed": [], "retired": []}
+    log = {"stored": [], "created": [], "removed": [], "retired": [], "truth_calls": []}
     monkeypatch.setattr(actions.ckan_client, "list_processed_datasets",
                         lambda: [{"qid": "Q1", "name": "Wastewater", "last_modified": "2026-10-14",
                                   "components": [{"name": "d.parquet", "url": "u"}]}])
@@ -44,8 +44,11 @@ def world(monkeypatch):
     monkeypatch.setattr(actions.lakefs_client, "processed_head_commit", no_head)
     monkeypatch.setattr(actions, "_load_inputs", lambda qid: [RunInput("Q1", "d.parquet", COMMIT, SQL)])
     monkeypatch.setattr(actions.bstore, "get", lambda bid: dict(FINAL_ROW) if bid == 3 else None)
-    monkeypatch.setattr(actions.loaders, "truth_at_commit",
-                        lambda dataset, bench, commit: pd.DataFrame({"date": DATES, "truth": [10.0, 20.0]}))
+    def truth_at_commit(dataset, bench, commit):
+        log["truth_calls"].append((dataset["qid"], commit))
+        return pd.DataFrame({"date": DATES, "truth": [10.0, 20.0]})
+
+    monkeypatch.setattr(actions.loaders, "truth_at_commit", truth_at_commit)
     monkeypatch.setattr(actions.loaders, "fetch_run_params", lambda qid, base: {"history_length": 91})
     monkeypatch.setattr(actions.store, "get_benchmark", lambda bid: dict(ROW) if bid == 3 else None)
     monkeypatch.setattr(actions.store, "list_entries", lambda bid: list(log["stored"]))
@@ -114,6 +117,7 @@ def test_create_benchmark_stores_nothing_when_lakefs_fails(creating, monkeypatch
 def test_add_run_scores_against_the_pinned_commit_and_stores(world):
     assert actions.add_run(3, "Q10") == 42
     entry = world["stored"][0]
+    assert world["truth_calls"] == [("Q1", COMMIT)]
     assert entry.run_qid == "Q10" and entry.truth_commit == COMMIT and entry.truth_as_of == "2026-10-16 11:00:00"
     assert entry.params == {"history_length": 91} and entry.metrics["mae"] == pytest.approx(1.0)
 
@@ -133,9 +137,12 @@ def test_add_run_duplicate_is_a_conflict_before_any_heavy_work(world, monkeypatc
     world["stored"].append(Entry("Q10", "timesfm", "", {}, None, date(2021, 12, 31), "", 2, 2, {}, []))
 
     def must_not_run(*args, **kwargs):
-        raise AssertionError("no lakeFS call expected")
+        raise AssertionError("no external call expected before the duplicate check")
 
-    monkeypatch.setattr(actions.lakefs_client, "processed_head_commit", must_not_run)
+    monkeypatch.setattr(actions.ckan_client, "list_model_runs", must_not_run)
+    monkeypatch.setattr(actions.ckan_client, "list_processed_datasets", must_not_run)
+    monkeypatch.setattr(actions.loaders, "truth_at_commit", must_not_run)
+    monkeypatch.setattr(actions, "_load_inputs", must_not_run)
     with pytest.raises(actions.Conflict):
         actions.add_run(3, "Q10")
 

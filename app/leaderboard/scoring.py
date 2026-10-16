@@ -33,7 +33,7 @@ def score_run(
         run: Catalog record from ``ckan_client.list_model_runs()``.
         truth: Observed series for the test window (columns ``date``, ``truth``).
         truth_commit: lakeFS commit id the truth was read at.
-        truth_as_of: The dataset's CKAN ``last_modified``, for display.
+        truth_as_of: When the data was pinned (the benchmark's finalization time), for display.
         load_predictions: ``(run, benchmark) -> DataFrame``; may raise ``LoadError``.
         load_params: ``(run_qid) -> dict`` of run parameters.
         inputs: The run's provenance inputs; required for a benchmark pinned to a data commit.

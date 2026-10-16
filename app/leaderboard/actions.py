@@ -10,10 +10,10 @@ from datetime import date
 import pandas as pd
 import requests
 
-from app.clients import ckan as ckan_client
-from app.clients import lakefs as lakefs_client
 from app.benchmarks import store as bstore
 from app.benchmarks.errors import Conflict, NotFound
+from app.clients import ckan as ckan_client
+from app.clients import lakefs as lakefs_client
 from app.config import settings
 from app.leaderboard import loaders, run_inputs, scoring, store
 from app.leaderboard.entries import Benchmark
@@ -112,7 +112,11 @@ def _load_predictions(run: dict, benchmark: Benchmark) -> pd.DataFrame:
 
 
 def add_run(benchmark_id: int, run_qid: str) -> int:
-    """Score a model run against a benchmark and store the entry.
+    """Score a model run against a final benchmark and store the entry.
+
+    The truth is read at the benchmark's pinned ``data_commit`` (the lakeFS head is not
+    consulted), and the run is accepted only if its provenance shows its input at exactly
+    that commit.
 
     Returns:
         The new entry id.
