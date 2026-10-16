@@ -129,3 +129,23 @@ def test_chart_band_is_stacked_with_gaps_for_missing_quantiles():
     assert series["q10 base"]["areaStyle"]["opacity"] == 0
     assert "q10 base" not in option["legend"]["data"]
     assert "q10" in option["tooltip"][":formatter"]
+
+
+def test_summary_names_the_shared_data_commit():
+    import dataclasses
+
+    entries = [dataclasses.replace(_entry("Q1", "a", mae=1.0), truth_commit="0123abcd" * 8),
+               dataclasses.replace(_entry("Q2", "b", mae=2.0), truth_commit="0123abcd" * 8)]
+    assert "Scored against lakeFS commit 0123abcd0123." in summary(_board(entries))
+
+
+def test_summary_flags_mixed_data_versions():
+    import dataclasses
+
+    entries = [dataclasses.replace(_entry("Q1", "a", mae=1.0), truth_commit="aaaaaaaa"),
+               dataclasses.replace(_entry("Q2", "b", mae=2.0), truth_commit="bbbbbbbb")]
+    assert "2 different data versions" in summary(_board(entries))
+
+
+def test_summary_without_commits_adds_nothing():
+    assert "lakeFS" not in summary(_board([_entry("Q1", "a", mae=1.0)]))
