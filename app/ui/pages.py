@@ -2780,9 +2780,14 @@ def register_pages():
                 ui.notify("All target filenames must be unique", type="negative", position="top")
                 return
             try:
-                json.loads(state.get("config", "{}"))
+                config = json.loads(state.get("config", "{}"))
             except json.JSONDecodeError as e:
                 ui.notify(f"Invalid config JSON: {e}", type="negative", position="top")
+                return
+            from app.model_config import config_problems
+            problems = config_problems(config, model.get("additional_properties") or [])
+            if problems:
+                ui.notify("Invalid model config: " + "; ".join(problems), type="negative", position="top")
                 return
             from app.clients import prefect as prefect_client
             try:

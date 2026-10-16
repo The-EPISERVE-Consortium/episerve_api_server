@@ -10,13 +10,21 @@ Interactive API docs: `https://api.episerve.zib.de/docs`
 
 All GET endpoints read from CKAN. `POST /model-runs` triggers a Prefect flow run.
 
+`POST /model-runs` first checks `config` against the parameters the model declares in the catalog
+(`additionalProperty` of the model's FDO: `valueRequired`, `minValue`, `maxValue`; a `null` value counts as
+missing) and answers `422` with every violation, before any Prefect flow run is created. A model the catalog
+does not know, or an unavailable catalog, is not blocked: the model container validates the same rules itself.
+The UI run workflow (step 5) applies the same check. A run is registered in the catalog when it ends, so a
+run that failed inside the model container (for example on its own config check) is listed with status `failed`;
+only `success` runs can be added to a benchmark.
+
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Health check → `{"status": "ok"}` |
 | `GET` | `/datasets` | List processed FDO datasets from CKAN (`type-raw-data` group) |
 | `GET` | `/models` | List forecast models from CKAN (`type-model` group) |
 | `POST` | `/model-runs` | Trigger a model run via Prefect (returns `202`) |
-| `GET` | `/model-runs` | List all model runs from CKAN (`type-model-run` group) |
+| `GET` | `/model-runs` | List all model runs from CKAN (`type-model-run` group), including runs that ended `failed` |
 | `GET` | `/model-runs/{run_id}` | Get a single run by QID (fetched from CKAN) |
 | `GET` | `/ui` | NiceGUI web interface |
 

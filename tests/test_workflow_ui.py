@@ -276,3 +276,23 @@ def test_legacy_session_state_gets_a_benchmark_key(monkeypatch):
     legacy = {"datasets": [], "model": None, "sql": {}, "config": None, "filenames": {}}
     monkeypatch.setattr(pages, "_napp", SimpleNamespace(storage=SimpleNamespace(user={"tv2": legacy})))
     assert pages._tv2_state()["benchmark"] is None
+
+
+def test_step5_blocks_a_config_without_a_required_parameter(monkeypatch):
+    triggered = []
+    from app.clients import prefect as prefect_client
+    monkeypatch.setattr(prefect_client, "trigger_model_run", lambda **kw: triggered.append(kw) or {"prefect_flow_run_id": "r1", "status": "ok"})
+    monkeypatch.setattr(pages.settings, "prefect_api_url", "http://prefect")
+    notes = _notes(monkeypatch)
+    state = _benchmark_state()
+    state["model"] = {**MODEL, "additional_properties": [
+        {"name": "history_length", "valueRequired": True, "minValue": 3},
+        {"name": "prediction_length", "valueRequired": True, "minValue": 1}]}
+    state["config"] = json.dumps({"prediction_length": 27})
+
+    async def after(out, client, find, drain):
+        await click(button(find, "Trigger Run"), client)
+
+    _step5(monkeypatch, state, after)
+    assert triggered == []
+    assert any("missing required parameter 'history_length'" in n for n in notes)
