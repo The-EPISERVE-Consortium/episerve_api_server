@@ -45,6 +45,28 @@ def _filter_text(row: dict) -> str:
     return f"{row['filter_column']} = {row.get('filter_value') or ''}" if row.get("filter_column") else "none"
 
 
+def _pretty_date(value) -> str:
+    """'2026-10-16 22:46:17' or a date -> 'October 16, 2026'; a dash when there is no usable date."""
+    try:
+        day = value if isinstance(value, _date) else _date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return "—"
+    return f"{day:%B} {day.day}, {day.year}"
+
+
+def _runs_text(count) -> str:
+    count = count or 0
+    return "No runs yet" if count == 0 else f"{count} run" + ("" if count == 1 else "s")
+
+
+def _card_description(b: dict) -> str:
+    """The benchmark's own description, or a sentence generated from its definition."""
+    if b.get("description"):
+        return b["description"]
+    subject = f"{b['target_column']} for {_filter_text(b)}" if b.get("filter_column") else b["target_column"]
+    return f"Forecast of {subject} over a test window of {b['test_start']} → {b['test_end']}."
+
+
 def _parse_date(text, label: str, *, required: bool) -> _date | None:
     text = (text or "").strip()
     if not text:
@@ -335,14 +357,16 @@ def register_benchmarks_page() -> None:
             best = {}
 
         with ui.column().classes("px-8 py-6 w-full gap-4"):
-            with ui.column().classes("gap-0"):
-                ui.label("Benchmarks").classes("text-3xl font-bold text-gray-900")
-                ui.label(
-                    "A benchmark fixes the series, the test window and the data version that forecasts "
-                    "are scored against. Design it as a draft, check it against the data, then finalize it."
-                ).classes("text-sm text-gray-500 mt-1")
+            with ui.row().classes("w-full items-start justify-between"):
+                with ui.column().classes("gap-0"):
+                    ui.label("Benchmarks").classes("text-3xl font-bold text-gray-900")
+                    ui.label(
+                        "A benchmark fixes the series, the test window and the data version that forecasts "
+                        "are scored against. Design it as a draft, check it against the data, then finalize it."
+                    ).classes("text-sm text-gray-500 mt-1")
+                if logged_in:
+                    ui.button("New benchmark", on_click=lambda: guarded(lambda: _designer_dialog(None, reload)))
             if logged_in:
-                ui.button("New benchmark", on_click=lambda: guarded(lambda: _designer_dialog(None, reload)))
                 ui.label("Drafts").classes("text-xl font-semibold text-gray-900")
                 if drafts_error:
                     _error_label("Could not load drafts.")
@@ -361,23 +385,30 @@ def register_benchmarks_page() -> None:
             if not finals:
                 ui.label("No benchmarks yet.").classes("text-sm text-gray-500")
             for b in finals:
-                with ui.column().classes("w-full gap-1 border border-gray-200 rounded-xl px-4 py-3"):
-                    with ui.row().classes("items-center gap-4"):
-                        ui.link(b["name"], f"/ui/benchmarks/{b['id']}").classes("text-lg font-semibold")
-                        ui.link("Leaderboard", f"/ui/benchmarks/{b['id']}?tab=leaderboard").classes("text-sm")
+                with ui.column().classes("w-full gap-0 border border-gray-200 rounded-xl overflow-hidden"):
+                    with ui.link(target=f"/ui/benchmarks/{b['id']}").classes("w-full no-underline text-inherit"):
+                        with ui.row().classes("w-full no-wrap items-stretch gap-0"):
+                            with ui.column().classes("items-center justify-center w-20 shrink-0"):
+                                ui.icon("insights", size="2.5rem").classes("text-blue-grey-5")
+                            with ui.column().classes("flex-1 gap-0 py-3 pr-4"):
+                                ui.label(b["name"]).classes("text-lg font-semibold text-gray-900")
+                                ui.label(_card_description(b)).classes("text-sm text-gray-600 line-clamp-2")
+                                meta = [f"Dataset {b['dataset_qid']}", b["target_column"]]
+                                if b.get("filter_column"):
+                                    meta.append(_filter_text(b))
+                                ui.label(" · ".join(meta)).classes("text-xs text-gray-500 italic")
+                            with ui.column().classes("w-44 shrink-0 items-center justify-center gap-2 text-white"
+                                                     ).style("background: #3d566e"):
+                                ui.label(_pretty_date(b.get("finalized_at"))).classes("text-sm")
+                                ui.label(_runs_text(b.get("entry_count"))).classes("text-sm font-semibold")
+                    with ui.row().classes("w-full items-center gap-x-5 gap-y-0 px-4 py-1 bg-gray-50 border-t border-gray-200"):
+                        ui.label(f"Test window {b['test_start']} → {b['test_end']} · input {_input_range(b)}"
+                                 ).classes("text-xs text-gray-600")
+                        ui.label(f"Best: {_best_text(best.get(b['id']))}"
+                                 ).classes("text-xs text-gray-600")
+                        ui.label(f"Data commit {(b.get('data_commit') or '')[:12]}").classes("text-xs text-gray-600")
+                        ui.link("Leaderboard", f"/ui/benchmarks/{b['id']}?tab=leaderboard").classes("text-xs")
                         if logged_in:
-                            ui.button("Copy as draft", on_click=lambda b=b: copy(b["id"])).props("flat")
+                            ui.button("Copy as draft", on_click=lambda b=b: copy(b["id"])).props("flat dense size=sm")
                             ui.button("Retire", on_click=lambda b=b: guarded(lambda: _retire_dialog(b, reload))
-                                      ).props("flat color=negative")
-                    with ui.row().classes("gap-x-6 gap-y-0"):
-                        for caption, value in (
-                            ("Dataset", b["dataset_qid"]),
-                            ("Target", b["target_column"]),
-                            ("Filter", _filter_text(b)),
-                            ("Input range", _input_range(b)),
-                            ("Test window", f"{b['test_start']} → {b['test_end']}"),
-                            ("Entries", b.get("entry_count", 0)),
-                            ("Best", _best_text(best.get(b["id"]))),
-                            ("Data commit", (b.get("data_commit") or "")[:12]),
-                        ):
-                            ui.label(f"{caption}: {value}").classes("text-sm text-gray-700")
+                                      ).props("flat dense size=sm color=negative")

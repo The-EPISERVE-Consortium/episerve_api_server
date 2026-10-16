@@ -2,6 +2,7 @@
 
 from datetime import date
 
+import pytest
 from nicegui import ui
 
 from app.benchmarks.actions import CheckReport
@@ -81,15 +82,65 @@ def test_page_lists_final_benchmarks_from_the_database_only(monkeypatch):
     out = _render(monkeypatch)
     assert out["status"] == 200
     text = out["labels"]
-    assert "Dataset: Q1" in text and "Target: v" in text
-    assert "Filter: region = DE" in text and "Test window: 2022-01-01 → 2022-01-31" in text
-    assert "Entries: 3" in text and f"Data commit: {COMMIT[:12]}" in text
-    assert COMMIT not in " ".join(text)
-    assert any(t.startswith("Input range: first date") for t in text)
-    links = {e.props.get("href"): e.text for e in out["find"](ui.link)}
-    hrefs = {e.text: e.props.get("href") for e in out["find"](ui.link) if "/ui/benchmarks/5" in (e.props.get("href") or "")}
-    assert hrefs == {"Flu 2022": "/ui/benchmarks/5", "Leaderboard": "/ui/benchmarks/5?tab=leaderboard"}
+    assert "Flu 2022" in text
+    assert "Dataset Q1 · v · region = DE" in text
+    assert "Test window 2022-01-01 → 2022-01-31 · input first date → last date before the test start" in text
+    assert f"Data commit {COMMIT[:12]}" in text
     assert "Best: timesfm (interval score 4.50)" in text
+    assert COMMIT not in " ".join(text)
+    hrefs = {e.text: e.props.get("href") for e in out["find"](ui.link) if "/ui/benchmarks/5" in (e.props.get("href") or "")}
+    assert hrefs == {"": "/ui/benchmarks/5", "Leaderboard": "/ui/benchmarks/5?tab=leaderboard"}
+
+
+def test_card_shows_the_description_the_pin_date_and_the_run_count(monkeypatch):
+    final = {**FINAL, "description": "Weekly wastewater viral load.", "finalized_at": "2026-10-16 22:46:17"}
+    text = _render(monkeypatch, finals=(final,))["labels"]
+    assert "Weekly wastewater viral load." in text
+    assert "October 16, 2026" in text and "3 runs" in text
+
+
+def test_card_without_a_description_describes_the_series_instead(monkeypatch):
+    text = _render(monkeypatch)["labels"]
+    assert "Forecast of v for region = DE over a test window of 2022-01-01 → 2022-01-31." in text
+    assert "—" in text                                     # no finalization date known
+
+
+@pytest.mark.parametrize("count,expected", [(0, "No runs yet"), (1, "1 run"), (3, "3 runs")])
+def test_run_count_wording(monkeypatch, count, expected):
+    text = _render(monkeypatch, finals=({**FINAL, "entry_count": count},))["labels"]
+    assert expected in text
+
+
+@pytest.mark.parametrize("value,expected", [
+    ("2026-10-16 22:46:17", "October 16, 2026"), (date(2026, 3, 5), "March 5, 2026"),
+    (None, "—"), ("", "—"), ("not a date", "—"),
+])
+def test_pretty_date(value, expected):
+    assert benchmarks_page._pretty_date(value) == expected
+
+
+def test_the_whole_card_is_one_link_and_the_actions_sit_outside_it(monkeypatch):
+    def grab(out, client, find, drain):
+        def inside_link(element):
+            node = element
+            while node is not None:
+                if isinstance(node, ui.link):
+                    return True
+                slot = getattr(node, "parent_slot", None)
+                node = slot.parent if slot else None
+            return False
+        out["card_link_children"] = [e.text for e in find(ui.label) if inside_link(e)]
+        out["buttons_in_link"] = [b.props.get("label") for b in find(ui.button) if inside_link(b)]
+
+    out = _render(monkeypatch, logged_in=True, after=grab)
+    assert "Flu 2022" in out["card_link_children"] and "3 runs" in out["card_link_children"]
+    assert out["buttons_in_link"] == []
+
+
+def test_header_has_the_new_benchmark_button_next_to_the_title(monkeypatch):
+    out = _render(monkeypatch, logged_in=True)
+    assert "Benchmarks" in out["labels"]
+    assert any(b.props.get("label") == "New benchmark" for b in out["find"](ui.button))
 
 
 def test_anonymous_users_see_no_management_controls(monkeypatch):
@@ -599,4 +650,4 @@ def test_best_query_failure_does_not_break_the_list(monkeypatch):
 
     out = _render(monkeypatch, best=boom)
     assert out["status"] == 200 and "Best: —" in out["labels"]
-    assert "Flu 2022" in [e.text for e in out["find"](ui.link)]
+    assert "Flu 2022" in out["labels"]
