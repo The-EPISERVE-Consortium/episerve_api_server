@@ -1,11 +1,10 @@
-"""Create benchmarks, add and remove entries, read stored boards.
+"""Add and remove leaderboard entries on final benchmarks, read stored boards.
 
 This is the only place that writes the leaderboard. Scores are computed here, once,
 when a run is added; reading a board only queries the database.
 """
 
 import logging
-from datetime import date
 
 import pandas as pd
 import requests
@@ -13,7 +12,6 @@ import requests
 from app.benchmarks import store as bstore
 from app.benchmarks.errors import Conflict, NotFound
 from app.clients import ckan as ckan_client
-from app.clients import lakefs as lakefs_client
 from app.config import settings
 from app.leaderboard import loaders, run_inputs, scoring, store
 from app.leaderboard.entries import Benchmark
@@ -45,59 +43,6 @@ def _load_inputs(run_qid: str) -> list[RunInput] | None:
     except Exception:
         logger.exception("could not read the provenance of run %s", run_qid)
         return None
-
-
-def get_benchmark(benchmark_id: int) -> dict:
-    """One benchmark row (retired ones included).
-
-    Raises:
-        NotFound: If the id is unknown.
-    """
-    row = store.get_benchmark(benchmark_id)
-    if row is None:
-        raise NotFound(f"Benchmark {benchmark_id} not found")
-    return row
-
-
-def create_benchmark(
-    name: str,
-    dataset_qid: str,
-    target_column: str,
-    date_column: str,
-    test_start: date,
-    test_end: date,
-    filter_column: str | None = None,
-    filter_value: str | None = None,
-) -> int:
-    """Validate a prediction task against the current data and store it.
-
-    Raises:
-        LoadError: Invalid input, or the truth window cannot be read / has no observations.
-        NotFound: Unknown dataset.
-    """
-    if not (name or "").strip():
-        raise LoadError("A name is required.")
-    if not (target_column or "").strip() or not (date_column or "").strip():
-        raise LoadError("Target column and date column are required.")
-    for label, value, limit in (
-        ("Name", name, 200), ("Target column", target_column, 200), ("Date column", date_column, 200),
-        ("Filter column", filter_column, 200), ("Filter value", filter_value, 500),
-    ):
-        if value and len(value.strip() if label != "Filter value" else value) > limit:
-            raise LoadError(f"{label} must be at most {limit} characters.")
-    if test_start > test_end:
-        raise LoadError("The test start must not be after the test end.")
-    if filter_column and not filter_value:
-        raise LoadError("A filter value is required with a filter column.")
-    benchmark = Benchmark(
-        dataset_qid=dataset_qid, target_column=target_column.strip(), date_column=date_column.strip(),
-        test_start=test_start, test_end=test_end,
-        filter_column=filter_column or None, filter_value=filter_value if filter_column else None,
-    )
-    dataset = _dataset(dataset_qid)
-    commit = lakefs_client.processed_head_commit()
-    truth = loaders.truth_at_commit(dataset, benchmark, commit)
-    return store.create_benchmark(name.strip(), benchmark, truth_points=len(truth))
 
 
 def _load_predictions(run: dict, benchmark: Benchmark) -> pd.DataFrame:
@@ -158,17 +103,6 @@ def remove_entry(benchmark_id: int, entry_id: int) -> None:
     """
     if not store.remove_entry(benchmark_id, entry_id):
         raise NotFound(f"Entry {entry_id} not found on benchmark {benchmark_id}")
-
-
-def retire_benchmark(benchmark_id: int) -> None:
-    """Hide a benchmark from the list.
-
-    Raises:
-        NotFound: Unknown or already retired.
-    """
-    get_benchmark(benchmark_id)
-    if not store.retire_benchmark(benchmark_id):
-        raise NotFound(f"Benchmark {benchmark_id} not found or already retired")
 
 
 def read_leaderboard(benchmark_id: int, rank_by: str = "interval_score", best_per_model: bool = True) -> Leaderboard:

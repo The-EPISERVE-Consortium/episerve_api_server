@@ -1,7 +1,6 @@
-"""MariaDB storage for benchmarks and their scored entries (database ``benchmarks``).
+"""MariaDB storage for the scored leaderboard entries (database ``benchmarks``).
 
-The database user has no DELETE right: entries and benchmarks are retired by
-setting ``removed_at`` / ``retired_at``.
+The database user has no DELETE right: entries are removed by setting ``removed_at``.
 """
 
 import json
@@ -10,7 +9,6 @@ import pymysql
 import pymysql.err
 
 from app import db
-from app.leaderboard.entries import Benchmark
 from app.leaderboard.metrics import METRICS
 from app.leaderboard.service import Entry
 
@@ -21,84 +19,6 @@ class DuplicateEntry(Exception):
 
 def _connect() -> pymysql.connections.Connection:
     return db.connect()
-
-
-_BENCHMARK_SELECT = (
-    "SELECT b.id, b.name, b.dataset_qid, b.target_column, b.date_column, b.filter_column, "
-    "b.filter_value, b.test_start, b.test_end, b.truth_points, "
-    "CAST(b.created_at AS CHAR) AS created_at, CAST(b.retired_at AS CHAR) AS retired_at, "
-    "(SELECT COUNT(*) FROM entries e WHERE e.benchmark_id = b.id AND e.removed_at IS NULL) AS entry_count "
-    "FROM benchmarks b"
-)
-
-
-def create_benchmark(name: str, benchmark: Benchmark, truth_points: int) -> int:
-    """Insert a benchmark and return its id.
-
-    Args:
-        name: Display name.
-        benchmark: The prediction task.
-        truth_points: Number of observations in the test window at creation time.
-    """
-    conn = _connect()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "INSERT INTO benchmarks (name, dataset_qid, target_column, date_column, filter_column, "
-                "filter_value, test_start, test_end, truth_points) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (name, benchmark.dataset_qid, benchmark.target_column, benchmark.date_column,
-                 benchmark.filter_column, benchmark.filter_value, benchmark.test_start,
-                 benchmark.test_end, truth_points),
-            )
-            conn.commit()
-            return cur.lastrowid
-    finally:
-        conn.close()
-
-
-def list_benchmarks() -> list[dict]:
-    """Active (not retired) benchmarks, newest first, with their active-entry counts."""
-    conn = _connect()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(_BENCHMARK_SELECT + " WHERE b.retired_at IS NULL ORDER BY b.created_at DESC, b.id DESC")
-            return list(cur.fetchall())
-    finally:
-        conn.close()
-
-
-def get_benchmark(benchmark_id: int) -> dict | None:
-    """One benchmark by id (retired ones included), or None."""
-    conn = _connect()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(_BENCHMARK_SELECT + " WHERE b.id = %s", (benchmark_id,))
-            return cur.fetchone()
-    finally:
-        conn.close()
-
-
-def benchmark_from_row(row: dict) -> Benchmark:
-    """The task definition stored in a benchmark row."""
-    return Benchmark(
-        dataset_qid=row["dataset_qid"], target_column=row["target_column"], date_column=row["date_column"],
-        test_start=row["test_start"], test_end=row["test_end"],
-        filter_column=row.get("filter_column"), filter_value=row.get("filter_value"),
-    )
-
-
-def retire_benchmark(benchmark_id: int) -> bool:
-    """Hide a benchmark from the list; True if it was active."""
-    conn = _connect()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "UPDATE benchmarks SET retired_at = NOW() WHERE id = %s AND retired_at IS NULL", (benchmark_id,),
-            )
-            conn.commit()
-            return cur.rowcount > 0
-    finally:
-        conn.close()
 
 
 _RETRYABLE = (1213, 1205)  # deadlock, lock wait timeout

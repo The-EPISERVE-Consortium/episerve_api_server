@@ -7,8 +7,6 @@ import pytest
 import requests
 
 from app.leaderboard import actions
-from app.leaderboard.entries import Benchmark
-from app.leaderboard.loaders import LoadError
 from app.leaderboard.run_inputs import RunInput
 from app.leaderboard.scoring import NotScorable
 from app.leaderboard.service import Entry
@@ -30,18 +28,14 @@ RUN = {"qid": "Q10", "model_name": "timesfm", "docker_tag": "latest", "status": 
 
 @pytest.fixture
 def world(monkeypatch):
-    """Fake CKAN, lakeFS, loaders and store; record what is written."""
-    log = {"stored": [], "created": [], "removed": [], "retired": [], "truth_calls": []}
+    """Fake CKAN, loaders and store; record what is written."""
+    log = {"stored": [], "removed": [], "truth_calls": []}
     monkeypatch.setattr(actions.ckan_client, "list_processed_datasets",
                         lambda: [{"qid": "Q1", "name": "Wastewater", "last_modified": "2026-10-14",
                                   "components": [{"name": "d.parquet", "url": "u"}]}])
     monkeypatch.setattr(actions.ckan_client, "list_model_runs", lambda: [RUN])
     monkeypatch.setattr(actions.ckan_client, "get_datastore_records",
                         lambda rid: [{"datum": "2022-01-05", "v": "11"}, {"datum": "2022-01-12", "v": "21"}])
-    def no_head():
-        raise AssertionError("add_run must not read the lakeFS head")
-
-    monkeypatch.setattr(actions.lakefs_client, "processed_head_commit", no_head)
     monkeypatch.setattr(actions, "_load_inputs", lambda qid: [RunInput("Q1", "d.parquet", COMMIT, SQL)])
     monkeypatch.setattr(actions.bstore, "get", lambda bid: dict(FINAL_ROW) if bid == 3 else None)
     def truth_at_commit(dataset, bench, commit):
@@ -50,68 +44,15 @@ def world(monkeypatch):
 
     monkeypatch.setattr(actions.loaders, "truth_at_commit", truth_at_commit)
     monkeypatch.setattr(actions.loaders, "fetch_run_params", lambda qid, base: {"history_length": 91})
-    monkeypatch.setattr(actions.store, "get_benchmark", lambda bid: dict(ROW) if bid == 3 else None)
     monkeypatch.setattr(actions.store, "list_entries", lambda bid: list(log["stored"]))
-
-    def create(name, benchmark, truth_points):
-        log["created"].append((name, benchmark, truth_points))
-        return 8
 
     def add(bid, entry):
         log["stored"].append(entry)
         return 42
 
-    monkeypatch.setattr(actions.store, "create_benchmark", create)
     monkeypatch.setattr(actions.store, "add_entry", add)
     monkeypatch.setattr(actions.store, "remove_entry", lambda bid, eid: log["removed"].append(eid) or eid == 9)
-    monkeypatch.setattr(actions.store, "retire_benchmark", lambda bid: log["retired"].append(bid) or True)
     return log
-
-
-@pytest.fixture
-def creating(world, monkeypatch):
-    """The world, with the lakeFS head readable (only create_benchmark still reads it)."""
-    monkeypatch.setattr(actions.lakefs_client, "processed_head_commit", lambda: COMMIT)
-    return world
-
-
-def _create(**kw):
-    args = dict(name=" Flu 2022 ", dataset_qid="Q1", target_column="v", date_column="datum",
-                test_start=date(2022, 1, 1), test_end=date(2022, 1, 31))
-    return actions.create_benchmark(**{**args, **kw})
-
-
-def test_create_benchmark_stores_the_task_with_the_observation_count(creating):
-    assert _create() == 8
-    name, benchmark, points = creating["created"][0]
-    assert name == "Flu 2022" and points == 2
-    assert benchmark == Benchmark("Q1", "v", "datum", date(2022, 1, 1), date(2022, 1, 31))
-
-
-@pytest.mark.parametrize("kw,message", [
-    ({"name": "  "}, "name"),
-    ({"test_start": date(2022, 2, 1)}, "test start"),
-    ({"filter_column": "typ"}, "filter value"),
-])
-def test_create_benchmark_rejects_invalid_input(creating, kw, message):
-    with pytest.raises(LoadError, match=message):
-        _create(**kw)
-    assert creating["created"] == []
-
-
-def test_create_benchmark_unknown_dataset(creating):
-    with pytest.raises(actions.NotFound):
-        _create(dataset_qid="Q404")
-
-
-def test_create_benchmark_stores_nothing_when_lakefs_fails(creating, monkeypatch):
-    def boom():
-        raise RuntimeError("lakeFS down")
-
-    monkeypatch.setattr(actions.lakefs_client, "processed_head_commit", boom)
-    with pytest.raises(RuntimeError):
-        _create()
-    assert creating["created"] == []
 
 
 def test_add_run_scores_against_the_pinned_commit_and_stores(world):
@@ -182,17 +123,11 @@ def test_datastore_failure_is_cannot_be_scored_not_a_crash(world, monkeypatch):
         actions.add_run(3, "Q10")
 
 
-def test_remove_entry_and_retire(world):
+def test_remove_entry(world):
     actions.remove_entry(3, 9)
     with pytest.raises(actions.NotFound):
         actions.remove_entry(3, 10)
-    actions.retire_benchmark(3)
-    assert world["retired"] == [3]
-
-
-def test_retire_unknown_benchmark(world):
-    with pytest.raises(actions.NotFound):
-        actions.retire_benchmark(99)
+    assert world["removed"] == [9, 10]
 
 
 def test_read_leaderboard_uses_only_the_database(world, monkeypatch):
@@ -201,7 +136,6 @@ def test_read_leaderboard_uses_only_the_database(world, monkeypatch):
 
     monkeypatch.setattr(actions.ckan_client, "list_model_runs", external)
     monkeypatch.setattr(actions.ckan_client, "list_processed_datasets", external)
-    monkeypatch.setattr(actions.lakefs_client, "processed_head_commit", external)
     low = Entry("Q10", "a", "", {}, None, date(2021, 12, 31), "", 2, 2,
                 {"mae": 1.0, "rmse": None, "coverage": None, "interval_score": None}, [],
                 truth_as_of="2026-10-14", truth_commit=COMMIT)
@@ -224,23 +158,6 @@ def test_candidates_mark_runs_already_on_the_board(world):
     assert candidate["qid"] == "Q10" and candidate["reason"] == "already on this leaderboard"
 
 
-@pytest.mark.parametrize("kw,limit", [
-    ({"name": "n" * 201}, "200"), ({"target_column": "t" * 201}, "200"), ({"date_column": "d" * 201}, "200"),
-    ({"filter_column": "f" * 201, "filter_value": "x"}, "200"),
-    ({"filter_column": "f", "filter_value": "x" * 501}, "500"),
-])
-def test_create_benchmark_rejects_values_longer_than_the_columns(creating, kw, limit):
-    with pytest.raises(LoadError, match=limit):
-        _create(**kw)
-    assert creating["created"] == []
-
-
-def test_create_benchmark_accepts_values_at_the_limits(creating):
-    _create(name="n" * 200, target_column="t" * 200, date_column="d" * 200,
-            filter_column="f" * 200, filter_value="x" * 500)
-    assert len(creating["created"]) == 1
-
-
 def test_read_leaderboard_works_for_a_retired_benchmark(world, monkeypatch):
     monkeypatch.setattr(actions.bstore, "get", lambda bid: {**FINAL_ROW, "retired_at": "2026-10-01 00:00:00"})
     world["stored"].append(Entry("Q10", "a", "", {}, None, date(2021, 12, 31), "", 2, 2,
@@ -248,12 +165,6 @@ def test_read_leaderboard_works_for_a_retired_benchmark(world, monkeypatch):
                                  truth_as_of="2026-10-14"))
     board = actions.read_leaderboard(3, "mae")
     assert [e.run_qid for e in board.entries] == ["Q10"]
-
-
-def test_retire_benchmark_not_found_when_the_store_reports_it_was_not_active(world, monkeypatch):
-    monkeypatch.setattr(actions.store, "retire_benchmark", lambda bid: False)
-    with pytest.raises(actions.NotFound):
-        actions.retire_benchmark(3)
 
 
 def test_a_removed_run_can_be_added_again(world, monkeypatch):

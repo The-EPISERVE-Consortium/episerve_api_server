@@ -55,39 +55,56 @@ inputs exist, original inputs are explicitly labelled as untransformed data.
 Recorded transformation SQL is available as provenance only; previews never execute
 it. Changing **Max rows** uses the same validated component list and input preference.
 
-## Leaderboard
+## Benchmarks and leaderboard
 
-A **benchmark** is a fixed prediction task: a processed dataset (`dataset_qid`), a target column, a date column, an optional single equality filter (`filter_column` = `filter_value`), a test window (`test_start`..`test_end`) and a name. A logged-in user creates it; it cannot be edited. To change it, retire it and create a new one.
+A **benchmark** is one series: a processed dataset (`dataset_qid`), a target column, a date column and an optional single equality filter (`filter_column` = `filter_value`). The series is cut into two ranges, both generated from lakeFS: the **input range** (`history_start`..`history_end`, what a model run may see; the start is optional and, if the end is left empty, the last observation before the test start is used) and the **reference range** (`test_start`..`test_end`, what forecasts are scored against). A benchmark also has a name, an optional description and the name of the input file (default `input.parquet`).
 
-An **entry** is a model run added to a benchmark (logged-in users only). When the run is added it is qualified and scored once against the observed data. The metrics (MAE, RMSE, 80% coverage, 80% interval score), parameters, history window and per-date points are stored in the MariaDB database `benchmarks`; reading a leaderboard only queries that database. Removing an entry hides it (soft delete); adding the run again recomputes it.
+**Lifecycle**: `draft` -> `final` -> `retired`.
 
-**Data pin**: every entry records the lakeFS commit of the `data-processed` repository its observed data was read from (the observed values are read from lakeFS at that commit) and the dataset's CKAN `last_modified`. A later revision of the data never changes a stored score.
+- A **draft** can be edited by logged-in users and is invisible to anonymous readers. **Check** reads the data at the current lakeFS head and reports problems (which block finalizing), warnings, the number of reference observations, the derived forecast length and the generated input SQL.
+- **Finalize** re-checks the data and, if there are no problems, pins one lakeFS commit of the `data-processed` repository (`data_commit`, used for input and reference alike) and stores the forecast length (`prediction_length`, the number of steps of the data's frequency from the last input observation to the last reference observation) and the dataset file name (`component_name`). In the designer, finalizing is refused when the data changed since the check.
+- A **final** benchmark is immutable. **Copy as draft** creates a new draft with the same definition; that is the way to change one.
+- **Retire** hides a benchmark from the lists; its leaderboard stays readable.
+
+**Run workflow**: on `/ui/run_workflow/1`, **Start from a benchmark** prefills the run from a final benchmark: the input URL `<DOIP>/doip/retrieve/<dataset>/<file>?version=<data_commit>`, the generated input SQL, the input file name and, for models that declare them, `prediction_length` (the benchmark's forecast length) and `prediction_offset` (`0`). Step 5 shows a warning when the current input no longer qualifies (input not read at the benchmark's commit, history window not before the test start, filter missing from the SQL).
+
+An **entry** is a model run added to a benchmark on `/ui/leaderboard` (logged-in users only). The run is qualified and scored once; the metrics (MAE, RMSE, 80% coverage, 80% interval score), parameters, history window and per-date points are stored in the MariaDB database `benchmarks`, and reading a leaderboard only queries that database. The reference data is read from lakeFS at the benchmark's `data_commit`, so a later revision of the data never changes a score. Removing an entry hides it (soft delete); adding the run again recomputes it.
 
 A run can be added only if:
 
 - its input dataset is the benchmark's dataset and its status is `success`;
-- its history window, read from the transformation SQL, has a single upper date bound on the date column, written as `DATE 'YYYY-MM-DD'`, `'YYYY-MM-DD'` or with the column wrapped as `CAST(col AS DATE)`. SQL containing `OR`, `NOT`, `UNION`/`EXCEPT`/`INTERSECT` or `INTERVAL` is not scorable, also when those words appear inside string literals;
+- it read its input at the benchmark's commit: the run's DOIP provenance (`prov:used`) must list the dataset's retrieve URL with `?version=<data_commit>`; a run without that version, with a different one or with unreadable provenance is refused;
+- its history window, read from the applied transformation SQL (also from the provenance), has a single upper date bound on the date column, written as `DATE 'YYYY-MM-DD'`, `'YYYY-MM-DD'` or with the column wrapped as `CAST(col AS DATE)`. SQL containing `OR`, `NOT`, `UNION`/`EXCEPT`/`INTERSECT` or `INTERVAL` is not scorable, also when those words appear inside string literals;
 - the history ends before `test_start`;
 - if the benchmark has a filter, the SQL contains it as an equality condition (`OR`, `NOT` or `CASE` anywhere in the SQL means it does not count);
-- it forecasts every observed date in the window.
+- it forecasts every observed date in the reference range.
 
 Predictions are read from the run's `predictions.tsv` CKAN DataStore resource. Coverage and interval score need the `<target>_q10` and `<target>_q90` columns; they are shown only when every scored date has both.
 
-| Endpoint | Auth | Purpose |
-|---|---|---|
-| `GET /benchmarks` | open | Active benchmarks with entry counts |
-| `GET /benchmarks/{id}` | open | One benchmark |
-| `GET /benchmarks/{id}/leaderboard?rank_by=&all_runs=` | open | Stored ranking. `rank_by`: `mae`, `rmse`, `coverage`, `interval_score` (default); `all_runs=false` (default) shows each model's best entry, `true` every entry |
-| `POST /benchmarks` | Bearer | Create a benchmark |
-| `POST /benchmarks/{id}/entries` | Bearer | Score and add a run (`{"run_qid": ...}`) |
-| `DELETE /benchmarks/{id}/entries/{entry_id}` | Bearer | Remove an entry |
-| `POST /benchmarks/{id}/retire` | Bearer | Retire a benchmark |
+| Endpoint | Auth | Status | Purpose |
+|---|---|---|---|
+| `GET /benchmarks` | open | 200 | Final benchmarks with entry counts |
+| `GET /benchmarks/drafts` | Bearer | 200 | Draft benchmarks |
+| `GET /benchmarks/{id}` | open (draft: Bearer) | 200 | One benchmark in any state |
+| `POST /benchmarks` | Bearer | 201 | Create a draft |
+| `PATCH /benchmarks/{id}` | Bearer | 200 | Change fields of a draft (only the fields sent; `null` clears an optional one) |
+| `POST /benchmarks/{id}/check` | Bearer | 200 | Check a draft against the current data; stores nothing |
+| `POST /benchmarks/{id}/finalize` | Bearer | 200 | Pin the current lakeFS commit and make the draft final |
+| `POST /benchmarks/{id}/copy` | Bearer | 201 | Copy a benchmark as a new draft |
+| `POST /benchmarks/{id}/retire` | Bearer | 204 | Retire a benchmark |
+| `GET /benchmarks/{id}/run-spec` | open | 200 | Input URL with `?version=`, SQL, file name and `prediction_length`/`prediction_offset` of a final benchmark |
+| `GET /benchmarks/{id}/leaderboard?rank_by=&all_runs=` | open | 200 | Stored ranking. `rank_by`: `mae`, `rmse`, `coverage`, `interval_score` (default); `all_runs=false` (default) shows each model's best entry, `true` every entry |
+| `POST /benchmarks/{id}/entries` | Bearer | 201 | Score and add a run (`{"run_qid": ...}`) |
+| `DELETE /benchmarks/{id}/entries/{entry_id}` | Bearer | 204 | Remove an entry |
 
-Status codes: `401`/`403` missing or invalid token on writes; `404` unknown benchmark, entry, run or dataset, or adding a run to / retiring a retired benchmark (`GET /benchmarks/{id}` and `/leaderboard` still return `200` for a retired benchmark); `409` run already on the board; `422` invalid input or the run cannot be scored (reason in `detail`); `502` backend (database or data storage) unavailable.
+Error codes: `401`/`403` missing or invalid token on a Bearer endpoint; `404` unknown benchmark, entry, run or dataset, a draft requested without a token, `run-spec` or adding an entry for a benchmark that is not final, or retiring a retired benchmark (`GET /benchmarks/{id}` and `/leaderboard` still return `200` for a retired benchmark); `409` changing, checking or finalizing a benchmark that is not a draft, a run that is already on the board; `422` invalid input, a check with problems on finalize, or a run that cannot be scored (reason in `detail`); `502` backend (database or data storage) unavailable.
 
-The web view is at `/ui/leaderboard`: a benchmark selector, rank-by, a show-all-runs switch and a sortable table with model and minimum-history filters. Clicking a row opens a detail dialog with the chart, the per-date table and the data pin. Logged-in users also get New benchmark, Add run, Remove and Retire.
+Pages:
 
-The tables `benchmarks` and `entries` are created by an administrator (no schema code). Configuration: `BENCHMARKS_DB`, `BENCHMARKS_USER`, `BENCHMARKS_PASSWORD`; user and password default to the `BLACKBOARD_*` values. The database user needs SELECT, INSERT and UPDATE.
+- `/ui/benchmarks`: the list of final benchmarks (with a link to each leaderboard) for everyone; logged-in users also get the draft list, the designer (create, edit, check, finalize) and **Copy as draft** and **Retire**.
+- `/ui/leaderboard`: a benchmark selector, rank-by, a show-all-runs switch and a sortable table with model and minimum-history filters. Clicking a row opens a detail dialog with the chart, the per-date table and the data pin. Logged-in users also get **Add run** and **Remove**.
+
+The tables `benchmarks` and `entries` are created by an administrator (no schema code). The columns of `benchmarks` that define a benchmark are `name`, `description`, `dataset_qid`, `target_column`, `date_column`, `filter_column`, `filter_value`, `test_start`, `test_end`, `history_start`, `history_end`, `input_filename`; finalizing sets `data_commit`, `component_name`, `prediction_length`, `truth_points` and `finalized_at`, retiring sets `retired_at`. Configuration: `BENCHMARKS_DB`, `BENCHMARKS_USER`, `BENCHMARKS_PASSWORD`; user and password default to the `BLACKBOARD_*` values. The database user needs SELECT, INSERT and UPDATE.
 
 ## Running locally
 

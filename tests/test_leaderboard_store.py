@@ -58,40 +58,6 @@ def test_connect_uses_benchmark_settings(monkeypatch):
     assert seen["charset"] == "utf8mb4"
 
 
-def test_create_benchmark_inserts_with_parameters(monkeypatch):
-    conn = _use(monkeypatch, ([], 1, 5))
-    assert store.create_benchmark("Flu 2022", BENCH, truth_points=26) == 5
-    sql, params = conn.executed[0]
-    assert sql.startswith("INSERT INTO benchmarks") and "%s" in sql
-    assert params == ("Flu 2022", "Q1", "v", "datum", "typ", "a", date(2022, 1, 1), date(2022, 12, 31), 26)
-    assert conn.commits == 1 and conn.closed
-
-
-def test_benchmark_from_row_roundtrip():
-    row = {"dataset_qid": "Q1", "target_column": "v", "date_column": "datum", "filter_column": None,
-           "filter_value": None, "test_start": date(2022, 1, 1), "test_end": date(2022, 12, 31)}
-    assert store.benchmark_from_row(row) == Benchmark("Q1", "v", "datum", date(2022, 1, 1), date(2022, 12, 31))
-
-
-def test_list_benchmarks_hides_retired_and_counts_active_entries(monkeypatch):
-    conn = _use(monkeypatch, ([{"id": 1, "name": "B", "entry_count": 2}], 1, None))
-    assert store.list_benchmarks() == [{"id": 1, "name": "B", "entry_count": 2}]
-    sql = conn.executed[0][0]
-    assert "retired_at IS NULL" in sql and "removed_at IS NULL" in sql
-
-
-def test_get_benchmark_returns_none_when_missing(monkeypatch):
-    _use(monkeypatch, ([], 0, None))
-    assert store.get_benchmark(99) is None
-
-
-def test_retire_benchmark_reports_whether_a_row_changed(monkeypatch):
-    conn = _use(monkeypatch, ([], 1, None), ([], 0, None))
-    assert store.retire_benchmark(1) is True
-    assert store.retire_benchmark(1) is False
-    assert "UPDATE benchmarks SET retired_at" in conn.executed[0][0]
-
-
 def test_add_entry_checks_for_active_duplicate_then_inserts(monkeypatch):
     conn = _use(monkeypatch, ([], 0, None), ([], 1, 42))
     assert store.add_entry(3, _entry()) == 42
@@ -179,10 +145,6 @@ def test_remove_entry_is_a_soft_delete(monkeypatch):
 
 def test_no_function_ever_issues_a_delete(monkeypatch):
     conn = _use(monkeypatch)
-    store.create_benchmark("n", BENCH, 1)
-    store.list_benchmarks()
-    store.get_benchmark(1)
-    store.retire_benchmark(1)
     store.add_entry(1, _entry())
     store.list_entries(1)
     store.remove_entry(1, 1)

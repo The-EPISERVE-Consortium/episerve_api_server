@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from app.auth import _daily_token
 from app.benchmarks.definition import DefinitionError
+from app.clients import lakefs as lakefs_client
 from app.leaderboard import actions
 from app.leaderboard.entries import Benchmark
 from app.leaderboard.loaders import LoadError
@@ -54,7 +55,7 @@ def reads_are_database_only(monkeypatch):
 
     monkeypatch.setattr(actions.ckan_client, "list_model_runs", external)
     monkeypatch.setattr(actions.ckan_client, "list_processed_datasets", external)
-    monkeypatch.setattr(actions.lakefs_client, "processed_head_commit", external)
+    monkeypatch.setattr(lakefs_client, "processed_head_commit", external)
 
 
 def test_list_and_get_benchmarks(monkeypatch):
