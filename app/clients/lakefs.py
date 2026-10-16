@@ -1,4 +1,5 @@
 import json
+import re
 import lakefs
 from lakefs import Client
 from app.config import settings
@@ -161,3 +162,42 @@ def get_model_run(run_id: str) -> dict | None:
         return _parse_run_fdo(run_id, json.loads(content))
     except Exception:
         return None
+
+
+_QID = re.compile(r"Q[0-9]+")
+_FILENAME = re.compile(r"[A-Za-z0-9_.\-]+")
+_COMMIT = re.compile(r"[0-9a-f]{8,64}")
+
+
+def processed_head_commit() -> str:
+    """Return the commit id of the processed-data repository's configured branch head."""
+    repo = lakefs.Repository(settings.lakefs_processed_repo, client=_client())
+    return repo.branch(settings.lakefs_branch).head.id
+
+
+def read_processed_component(commit: str, qid: str, filename: str, max_bytes: int) -> bytes:
+    """Read a dataset component of the processed-data repository at a pinned commit.
+
+    Args:
+        commit: lakeFS commit id (hex).
+        qid: Dataset QID, e.g. ``Q9493814122238``; the path uses the QID sharding.
+        filename: Component file name (no directories).
+        max_bytes: Largest object accepted.
+
+    Returns:
+        The object's bytes.
+
+    Raises:
+        ValueError: If an argument is unsafe or the object exceeds ``max_bytes``.
+    """
+    if (
+        not _COMMIT.fullmatch(commit or "") or not _QID.fullmatch(qid or "")
+        or not _FILENAME.fullmatch(filename or "") or filename in (".", "..")
+    ):
+        raise ValueError("Invalid commit, dataset or file name.")
+    path = f"{_shard_qid(qid)}/components/{filename}"
+    repo = lakefs.Repository(settings.lakefs_processed_repo, client=_client())
+    data = repo.ref(commit).object(path).reader().read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError("The dataset file exceeds the size limit.")
+    return data

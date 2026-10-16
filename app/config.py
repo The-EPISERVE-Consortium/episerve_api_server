@@ -43,6 +43,12 @@ class Settings:
     blackboard_user: str = os.environ.get("BLACKBOARD_USER", "")
     blackboard_password: str = os.environ.get("BLACKBOARD_PASSWORD", "")
 
+    # Benchmarks (leaderboard) -- own database on the same MariaDB instance. Until a
+    # dedicated user exists, the blackboard credentials are used.
+    benchmarks_db: str = os.environ.get("BENCHMARKS_DB") or "benchmarks"
+    benchmarks_user: str = os.environ.get("BENCHMARKS_USER") or os.environ.get("BLACKBOARD_USER", "")
+    benchmarks_password: str = os.environ.get("BENCHMARKS_PASSWORD") or os.environ.get("BLACKBOARD_PASSWORD", "")
+
     # Server
     port: int = int(os.environ.get("PORT", "8000"))
 
