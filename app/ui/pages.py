@@ -184,6 +184,13 @@ def _tv2_summary(state: dict, hint: str = ""):
                 if not state.get("datasets"):
                     ui.label("None selected").classes("text-xs text-gray-400")
 
+        bench = state.get("benchmark")
+        if bench:
+            with ui.row().classes("w-full items-start gap-3 py-3 border-b border-gray-100"):
+                ui.icon("flag").classes("text-blue-600 mt-0.5 shrink-0")
+                ui.label(f"Benchmark: {bench['name']} (data commit {bench['data_commit'][:12]})").classes(
+                    "text-xs text-gray-600 flex-1 min-w-0")
+
         with ui.row().classes("w-full items-start gap-3 py-3 border-b border-gray-100"):
             ui.icon("view_in_ar").classes("text-blue-600 mt-0.5 shrink-0")
             with ui.column().classes("flex-1 gap-0"):
@@ -2340,7 +2347,8 @@ def register_pages():
         except Exception:
             logger.exception("could not list the final benchmarks")
             finals = []
-        chosen_benchmark: dict = {"id": None}
+        active = (state.get("benchmark") or {}).get("id")
+        chosen_benchmark: dict = {"id": active if any(b["id"] == active for b in finals) else None}
 
         def use_benchmark():
             benchmark_id = chosen_benchmark["id"]
@@ -2450,6 +2458,7 @@ def register_pages():
                     with ui.row().classes("w-full items-center gap-3 mt-2"):
                         ui.select(
                             {b["id"]: b["name"] for b in finals}, label="Start from a benchmark",
+                            value=chosen_benchmark["id"],
                             on_change=lambda e: chosen_benchmark.update(id=e.value),
                         ).classes("w-80").props("dense outlined")
                         ui.button("Use benchmark", on_click=use_benchmark).props("no-caps").classes(

@@ -60,16 +60,20 @@ def _use(find, client, benchmark_id=3):
 
 
 def test_step1_shows_the_benchmark_card_and_use_applies_it(monkeypatch):
-    state, notes = _fresh_state(), _notes(monkeypatch)
+    state, notes, seen = _fresh_state(), _notes(monkeypatch), {}
 
     async def after(out, client, find, drain):
         assert "Start from a benchmark" in labels(find)
+        assert not any(t.startswith("Benchmark:") for t in labels(find))
         await _use(find, client)
+        await drain()
+        seen["labels"] = labels(find)
 
     render(monkeypatch, pages, "/ui/run_workflow/1", setup=_setup(monkeypatch, state), after=after)
     assert state["benchmark"]["id"] == 3
     assert state["datasets"][0]["data_path"] == URL and state["sql"] == {"Q1": SQL}
     assert "Benchmark Flu applied" in notes
+    assert f"Benchmark: Flu (data commit {COMMIT[:12]})" in seen["labels"]
 
 
 def test_step1_has_no_card_when_listing_fails(monkeypatch):
@@ -98,7 +102,7 @@ def test_step1_shows_not_found_message_and_generic_failure(monkeypatch):
 
 def test_choosing_a_dataset_by_hand_clears_the_benchmark(monkeypatch):
     state = _fresh_state()
-    state["benchmark"] = {"id": 3, "name": "Flu"}
+    state["benchmark"] = _benchmark_state()["benchmark"]
 
     async def after(out, client, find, drain):
         card = next(e for e in find(ui.element) if any(
@@ -181,3 +185,94 @@ def test_step4_overlays_the_horizon_for_declared_parameters(monkeypatch):
 
     render(monkeypatch, pages, "/ui/run_workflow/4", setup=_setup(monkeypatch, state), after=after)
     assert seen["config"] == {"prediction_length": 27, "history_length": 91}
+
+
+def test_summary_shows_benchmark_only_while_active(monkeypatch):
+    seen = {}
+
+    def after(out, client, find, drain):
+        seen["labels"] = labels(find)
+
+    state = _benchmark_state()
+    render(monkeypatch, pages, "/ui/run_workflow/4", setup=_setup(monkeypatch, state), after=after)
+    assert f"Benchmark: Flu (data commit {COMMIT[:12]})" in seen["labels"]
+    state["benchmark"] = None
+    render(monkeypatch, pages, "/ui/run_workflow/4", setup=_setup(monkeypatch, state), after=after)
+    assert not any(t.startswith("Benchmark:") for t in seen["labels"])
+
+
+def test_step1_select_is_seeded_from_the_active_benchmark(monkeypatch):
+    seen = {}
+
+    def after(out, client, find, drain):
+        seen["values"] = [s.value for s in find(ui.select) if s.props.get("label") == "Start from a benchmark"]
+
+    render(monkeypatch, pages, "/ui/run_workflow/1", setup=_setup(monkeypatch, _benchmark_state()), after=after)
+    assert seen["values"] == [3]
+    render(monkeypatch, pages, "/ui/run_workflow/1", setup=_setup(monkeypatch, _fresh_state()), after=after)
+    assert seen["values"] == [None]
+
+
+def test_use_benchmark_then_step5_end_to_end(monkeypatch):
+    state, seen = _fresh_state(), {}
+
+    async def use(out, client, find, drain):
+        await _use(find, client)
+
+    render(monkeypatch, pages, "/ui/run_workflow/1", setup=_setup(monkeypatch, state), after=use)
+
+    def review(out, client, find, drain):
+        seen["labels"] = labels(find)
+
+    render(monkeypatch, pages, "/ui/run_workflow/4", setup=_setup(monkeypatch, state),
+           after=lambda *a: seen.update(config=json.loads(state["config"])))
+    assert seen["config"] == {"prediction_length": 27, "history_length": 91}
+    render(monkeypatch, pages, "/ui/run_workflow/5", setup=_setup(monkeypatch, state), after=review)
+    texts = seen["labels"]
+    assert not any("would not qualify" in t for t in texts)
+    payload = next(t for t in texts if "input_data_files" in t)
+    assert f"?version={COMMIT}" in payload and "input.parquet" in payload and "CAST" in payload
+
+
+def test_step5_warns_when_the_input_is_not_at_the_data_commit(monkeypatch):
+    seen = {}
+
+    def after(out, client, find, drain):
+        seen["labels"] = labels(find)
+
+    _step5(monkeypatch, _benchmark_state(path=DATASET["data_path"]), after)
+    assert "This run would not qualify for the leaderboard:" in seen["labels"]
+    assert any("is not read at the benchmark's data commit" in t for t in seen["labels"])
+
+
+def test_clear_all_clears_the_benchmark(monkeypatch):
+    state = _benchmark_state()
+
+    async def after(out, client, find, drain):
+        assert any(t.startswith("Benchmark:") for t in labels(find))
+        await click(button(find, "Clear selection"), client)
+        await drain()
+        seen["labels"] = labels(find)
+
+    seen = {}
+    render(monkeypatch, pages, "/ui/run_workflow/1", setup=_setup(monkeypatch, state), after=after)
+    assert state["benchmark"] is None and state["datasets"] == []
+    assert not any(t.startswith("Benchmark:") for t in seen["labels"])
+
+
+def test_benchmark_whose_dataset_is_missing_changes_nothing(monkeypatch):
+    notes, state = _notes(monkeypatch), _fresh_state()
+    spec = {**SPEC, "dataset_qid": "Q404"}
+
+    async def after(out, client, find, drain):
+        await _use(find, client)
+
+    render(monkeypatch, pages, "/ui/run_workflow/1", setup=_setup(monkeypatch, state, spec=spec), after=after)
+    assert notes == ["The benchmark's dataset is not available"]
+    assert state == _fresh_state()
+
+
+def test_legacy_session_state_gets_a_benchmark_key(monkeypatch):
+    legacy = {"datasets": [], "model": None, "sql": {}, "config": None, "filenames": {}}
+    monkeypatch.setattr(pages, "_napp", SimpleNamespace(storage=SimpleNamespace(user={"tv2": legacy})))
+    assert pages._tv2_state()["benchmark"] is None
