@@ -1,10 +1,15 @@
 """The /ui/leaderboard page: stored benchmarks and their ranked entries."""
 
-from nicegui import ui, app as _napp
+from datetime import date as _date
+
+from nicegui import run, ui, app as _napp
 from starlette.requests import Request
 
 from app.auth import _daily_token
+from app.clients import ckan as ckan_client
 from app.leaderboard import actions, store
+from app.leaderboard.loaders import LoadError
+from app.leaderboard.scoring import NotScorable
 from app.leaderboard.present import (
     LABELS, chart_option, filter_entries, history_window, point_rows, summary, table_rows,
 )
@@ -23,11 +28,139 @@ def _is_logged_in() -> bool:
     return _napp.storage.user.get("token") == _daily_token()
 
 
+def _new_benchmark_dialog() -> None:
+    """Dialog to create a benchmark; loads the dataset choices from CKAN when it opens."""
+    with ui.dialog() as dialog, ui.card().classes("w-[40rem] max-w-full gap-2"):
+        ui.label("New benchmark").classes("text-lg font-semibold")
+        error = ui.label("").classes("text-red-600 text-sm")
+        try:
+            options = {d["qid"]: f"{d['name']} ({d['qid']})" for d in ckan_client.list_processed_datasets()}
+        except Exception as e:
+            options = {}
+            error.set_text(f"Could not load datasets: {e}")
+        name = ui.input("Name").props("outlined dense").classes("w-full")
+        dataset = ui.select(options, label="Dataset", value=next(iter(options), None)).props("outlined dense").classes("w-full")
+        target = ui.input("Target column").props("outlined dense").classes("w-full")
+        date_col = ui.input("Date column", value="datum").props("outlined dense").classes("w-full")
+        start = ui.input("Test start (C)", placeholder="YYYY-MM-DD").props("outlined dense").classes("w-full")
+        end = ui.input("Test end (D)", placeholder="YYYY-MM-DD").props("outlined dense").classes("w-full")
+        fcol = ui.input("Filter column (optional)").props("outlined dense").classes("w-full")
+        fval = ui.input("Filter value").props("outlined dense").classes("w-full")
+        spinner = ui.spinner(size="md")
+        spinner.set_visibility(False)
+
+        async def create():
+            error.set_text("")
+            try:
+                test_start, test_end = _date.fromisoformat(start.value), _date.fromisoformat(end.value)
+            except (ValueError, TypeError):
+                error.set_text("Enter test start and end as YYYY-MM-DD.")
+                return
+
+            def _create():
+                return actions.create_benchmark(
+                    name=name.value or "", dataset_qid=dataset.value or "", target_column=target.value or "",
+                    date_column=date_col.value or "", test_start=test_start, test_end=test_end,
+                    filter_column=(fcol.value or "").strip() or None, filter_value=fval.value or None,
+                )
+
+            create_btn.disable()
+            spinner.set_visibility(True)
+            try:
+                new_id = await run.io_bound(_create)
+            except (LoadError, actions.NotFound) as e:
+                error.set_text(str(e))
+                return
+            except Exception as e:
+                error.set_text(f"Could not create the benchmark: {e}")
+                return
+            finally:
+                spinner.set_visibility(False)
+                create_btn.enable()
+            dialog.close()
+            ui.navigate.to(f"/ui/leaderboard?benchmark={new_id}")
+
+        with ui.row().classes("justify-end w-full"):
+            ui.button("Cancel", on_click=dialog.close).props("flat")
+            create_btn = ui.button("Create", on_click=create)
+    dialog.on("hide", dialog.delete)
+    dialog.open()
+
+
+def _add_run_dialog(benchmark_id: int) -> None:
+    """Dialog to add a model run to the benchmark; scoring runs when 'Add' is pressed."""
+    with ui.dialog() as dialog, ui.card().classes("w-[40rem] max-w-full gap-2"):
+        ui.label("Add run").classes("text-lg font-semibold")
+        error = ui.label("").classes("text-red-600 text-sm")
+        try:
+            candidates = actions.candidates(benchmark_id)
+        except Exception as e:
+            candidates = []
+            error.set_text(f"Could not list runs: {e}")
+        addable = {c["qid"]: f"{c['model_name']} · {c['qid']} · {c['run_timestamp'][:10]}"
+                   for c in candidates if c["reason"] is None}
+        blocked = [c for c in candidates if c["reason"] is not None]
+        select = ui.select(addable, label="Model run").props("outlined dense").classes("w-full")
+        if blocked:
+            with ui.expansion(f"Runs that cannot be added ({len(blocked)})").classes("w-full"):
+                for c in blocked:
+                    ui.label(f"{c['model_name']} ({c['qid']}): {c['reason']}").classes("text-sm text-gray-600")
+        spinner = ui.spinner(size="md")
+        spinner.set_visibility(False)
+
+        async def add():
+            error.set_text("")
+            if not select.value:
+                error.set_text("Choose a model run.")
+                return
+            add_btn.disable()
+            spinner.set_visibility(True)
+            try:
+                await run.io_bound(lambda: actions.add_run(benchmark_id, select.value))
+            except (NotScorable, actions.Conflict, actions.NotFound, LoadError) as e:
+                error.set_text(str(e))
+                return
+            except Exception as e:
+                error.set_text(f"Could not add the run: {e}")
+                return
+            finally:
+                spinner.set_visibility(False)
+                add_btn.enable()
+            dialog.close()
+            ui.navigate.reload()
+
+        with ui.row().classes("justify-end w-full"):
+            ui.button("Cancel", on_click=dialog.close).props("flat")
+            add_btn = ui.button("Add", on_click=add)
+    dialog.on("hide", dialog.delete)
+    dialog.open()
+
+
+def _retire_dialog(benchmark_id: int) -> None:
+    with ui.dialog() as dialog, ui.card().classes("gap-2"):
+        ui.label("Retire this benchmark? It disappears from the list; its entries stay stored.")
+
+        def retire():
+            try:
+                actions.retire_benchmark(benchmark_id)
+            except Exception as e:
+                ui.notify(f"Could not retire the benchmark: {e}", type="negative")
+                return
+            dialog.close()
+            ui.navigate.to("/ui/leaderboard")
+
+        with ui.row().classes("justify-end w-full"):
+            ui.button("Cancel", on_click=dialog.close).props("flat")
+            ui.button("Retire benchmark", on_click=retire).props("color=negative")
+    dialog.on("hide", dialog.delete)
+    dialog.open()
+
+
 def register_leaderboard_page() -> None:
     """Register ``/ui/leaderboard``. Reads the database only; never CKAN, DOIP or lakeFS."""
 
     @ui.page("/ui/leaderboard")
-    def leaderboard_page(request: Request, benchmark: int | None = None):
+    def leaderboard_page(request: Request, benchmark: str | None = None):
         _header("/ui/leaderboard")
         logged_in = _is_logged_in()
         try:
@@ -37,7 +170,11 @@ def register_leaderboard_page() -> None:
                 _error_label(f"Could not load benchmarks: {e}")
             return
         ids = [b["id"] for b in boards]
-        selected = benchmark if benchmark in ids else (ids[0] if ids else None)
+        try:
+            requested = int(benchmark)
+        except (TypeError, ValueError):
+            requested = None
+        selected = requested if requested in ids else (ids[0] if ids else None)
         state = {"rank_by": "interval_score", "all_runs": False, "model": None, "min_days": 0}
 
         with ui.column().classes("px-8 py-6 w-full gap-4"):
@@ -49,6 +186,12 @@ def register_leaderboard_page() -> None:
                         "computed once, when a run is added, and stored with the data version they used."
                     ).classes("text-sm text-gray-500 mt-1")
                 _api_box(f"{request.base_url}benchmarks" + (f"/{selected}/leaderboard" if selected else ""))
+            if logged_in:
+                with ui.row().classes("items-center gap-3"):
+                    ui.button("New benchmark", on_click=_new_benchmark_dialog)
+                    if selected is not None:
+                        ui.button("Add run", on_click=lambda: _add_run_dialog(selected))
+                        ui.button("Retire benchmark", on_click=lambda: _retire_dialog(selected))
             if not boards:
                 ui.label("No benchmarks yet." + ("" if logged_in else " Log in to create one.")).classes(
                     "text-sm text-gray-500")
@@ -148,6 +291,17 @@ def register_leaderboard_page() -> None:
                             rows=point_rows(entry), row_key="date",
                         ).props("dense flat").classes("w-full")
                         ui.button("Close", on_click=dialog.close).props("flat")
+                        if logged_in and entry.entry_id is not None:
+                            def remove(entry_id=entry.entry_id):
+                                try:
+                                    actions.remove_entry(selected, entry_id)
+                                except Exception as e:
+                                    ui.notify(f"Could not remove the entry: {e}", type="negative")
+                                    return
+                                dialog.close()
+                                ui.navigate.reload()
+
+                            ui.button("Remove from leaderboard", on_click=remove).props("flat color=negative")
                     dialog.on("hide", dialog.delete)
                     dialog.open()
 

@@ -2,11 +2,9 @@
 
 import asyncio
 import re
-from contextlib import nullcontext
 from datetime import date
 
 import httpx
-import pytest
 from nicegui import Client, background_tasks, events, ui
 
 from app.leaderboard.entries import Benchmark
@@ -213,3 +211,136 @@ def test_detail_dialog_shows_link_window_params_pins_and_per_date_rows(monkeypat
     assert detail.rows[0]["error"] == "1.00"
     series = {s["name"]: s["data"] for s in out["charts"][0].options["series"]}
     assert series["Observed"] == [10.0, 20.0] and series["q10–q90"] == [4.0, 4.0]
+
+
+def test_non_numeric_benchmark_parameter_falls_back_to_the_first_benchmark(monkeypatch):
+    log = []
+    out = _render(monkeypatch, board=_board([_entry()]), query="?benchmark=abc", rank_log=log)
+    assert out["status"] == 200
+    assert log[0][0] == 2
+
+
+def test_model_filter_survives_a_rank_by_change(monkeypatch):
+    async def scenario(out, client, find, drain):
+        next(e for e in find(ui.select) if e.props.get("label") == "Model").value = "other"
+        await drain()
+        next(e for e in find(ui.select) if e.props.get("label") == "Rank by").value = "mae"
+        await drain()
+        out["labels_after"] = [e.text for e in find(ui.label)]
+        out["rows_after"] = [r["model"] for t in find(ui.table) if t.props.get("row-key") == "run_qid"
+                             for r in t.rows]
+
+    out = _render(monkeypatch, board=_board([_entry(), _entry("Q11", "other", mae=2.0)]), after=scenario)
+    assert out["rows_after"] == ["other"]
+    assert "Showing 1 of 2 entries" in out["labels_after"]
+
+
+def _labels(find):
+    return [e.text for e in find(ui.label)]
+
+
+def _button(find, label):
+    return next((b for b in find(ui.button) if b.props.get("label") == label), None)
+
+
+def test_anonymous_users_see_no_management_controls(monkeypatch):
+    out = _render(monkeypatch, board=_board([_entry()]))
+    labels = {b.props.get("label") for b in out["find"](ui.button)}
+    assert not labels & {"New benchmark", "Add run", "Retire benchmark"}
+
+
+def test_logged_in_users_see_management_controls(monkeypatch):
+    out = _render(monkeypatch, board=_board([_entry()]), logged_in=True)
+    labels = {b.props.get("label") for b in out["find"](ui.button)}
+    assert {"New benchmark", "Add run", "Retire benchmark"} <= labels
+
+
+def test_add_run_dialog_lists_addable_runs_and_explains_the_others(monkeypatch):
+    monkeypatch.setattr(leaderboard_page.actions, "candidates", lambda bid: [
+        {"qid": "Q10", "model_name": "timesfm", "run_timestamp": "2026-01-02T00:00:00Z", "reason": None},
+        {"qid": "Q11", "model_name": "chronos", "run_timestamp": "2026-01-01T00:00:00Z", "reason": "run status is failed, not success"},
+    ])
+    added = []
+    monkeypatch.setattr(leaderboard_page.actions, "add_run", lambda bid, qid: added.append((bid, qid)) or 42)
+
+    async def scenario(out, client, find, drain):
+        await _click(_button(find, "Add run"), client)
+        select = next(e for e in find(ui.select) if e.props.get("label") == "Model run")
+        assert list(select.options.values()) == ["timesfm · Q10 · 2026-01-02"] or list(select.options) == ["Q10"]
+        out["labels_dialog"] = _labels(find)
+        select.value = "Q10"
+        await _click(_button(find, "Add"), client)
+        await drain()
+
+    out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert any("chronos (Q11): run status is failed" in t for t in out["labels_dialog"])
+    assert added == [(2, "Q10")]
+
+
+def test_add_run_shows_the_reason_when_scoring_fails(monkeypatch):
+    from app.leaderboard.scoring import NotScorable
+
+    monkeypatch.setattr(leaderboard_page.actions, "candidates", lambda bid: [
+        {"qid": "Q10", "model_name": "timesfm", "run_timestamp": "2026-01-02T00:00:00Z", "reason": None}])
+
+    def refuse(bid, qid):
+        raise NotScorable("forecast covers 1 of 2 dates in the test window")
+
+    monkeypatch.setattr(leaderboard_page.actions, "add_run", refuse)
+
+    async def scenario(out, client, find, drain):
+        await _click(_button(find, "Add run"), client)
+        next(e for e in find(ui.select) if e.props.get("label") == "Model run").value = "Q10"
+        await _click(_button(find, "Add"), client)
+        await drain()
+        out["labels_after"] = _labels(find)
+
+    out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert any("forecast covers 1 of 2 dates" in t for t in out["labels_after"])
+
+
+def test_remove_button_in_the_detail_dialog_removes_the_entry(monkeypatch):
+    removed = []
+    monkeypatch.setattr(leaderboard_page.actions, "remove_entry", lambda bid, eid: removed.append((bid, eid)))
+
+    async def scenario(out, client, find, drain):
+        table = out["table"]
+        for listener in table._event_listeners.values():
+            if listener.type == "rowClick":
+                res = listener.handler(events.GenericEventArguments(
+                    sender=table, client=client, args=[{}, {"run_qid": "Q10"}, 0]))
+                if asyncio.iscoroutine(res):
+                    await res
+        await _click(_button(find, "Remove from leaderboard"), client)
+        await drain()
+
+    _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert removed == [(2, 9)]
+
+
+def test_new_benchmark_dialog_validates_and_creates(monkeypatch):
+    created = []
+    monkeypatch.setattr(leaderboard_page.actions, "create_benchmark", lambda **kw: created.append(kw) or 8)
+
+    async def scenario(out, client, find, drain):
+        # _render makes CKAN raise while the page loads; the dialog may call it once it opens.
+        monkeypatch.setattr(leaderboard_page.ckan_client, "list_processed_datasets",
+                            lambda: [{"qid": "Q1", "name": "Wastewater"}])
+        await _click(_button(find, "New benchmark"), client)
+        inputs = {i.props.get("label"): i for i in find(ui.input)}
+        inputs["Name"].value = "Flu 2022"
+        inputs["Target column"].value = "v"
+        inputs["Test start (C)"].value = "not-a-date"
+        inputs["Test end (D)"].value = "2022-01-31"
+        await _click(_button(find, "Create"), client)
+        await drain()
+        out["labels_bad"] = _labels(find)
+        assert created == []
+        inputs["Test start (C)"].value = "2022-01-01"
+        await _click(_button(find, "Create"), client)
+        await drain()
+
+    out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert any("YYYY-MM-DD" in t for t in out["labels_bad"])
+    assert created and created[0]["name"] == "Flu 2022" and created[0]["dataset_qid"] == "Q1"
+    assert created[0]["target_column"] == "v" and created[0]["date_column"] == "datum"
