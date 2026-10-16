@@ -67,11 +67,13 @@ def validate(benchmark: Benchmark, name: str) -> None:
     for label, value in (("target", benchmark.target_column), ("date", benchmark.date_column)):
         if not (value or "").strip() or len(value) > MAX_COLUMN:
             raise DefinitionError(f"The {label} column is required (column, at most {MAX_COLUMN} characters).")
-    if benchmark.filter_column:
-        if len(benchmark.filter_column) > MAX_COLUMN:
-            raise DefinitionError(f"The filter column is longer than {MAX_COLUMN} characters (column).")
+    if benchmark.filter_column is not None and benchmark.filter_column != "":
+        if not benchmark.filter_column.strip() or len(benchmark.filter_column) > MAX_COLUMN:
+            raise DefinitionError(f"The filter column must be 1 to {MAX_COLUMN} characters (filter column).")
         if not benchmark.filter_value or len(benchmark.filter_value) > MAX_FILTER_VALUE:
             raise DefinitionError(f"A filter value of 1 to {MAX_FILTER_VALUE} characters is required with a filter column (filter value).")
+    elif benchmark.filter_value:
+        raise DefinitionError("A filter value needs a filter column.")
     if benchmark.test_start > benchmark.test_end:
         raise DefinitionError("The test start must not be after the test end.")
     if benchmark.history_end is not None and benchmark.history_end >= benchmark.test_start:
@@ -125,7 +127,7 @@ def derive_horizon(observed: list[date], last_history: date) -> Horizon:
     Raises:
         DefinitionError: If there are no observed dates or the input range reaches the window.
     """
-    dates = sorted(observed)
+    dates = sorted(set(observed))
     if not dates:
         raise DefinitionError("The test window has no observed dates.")
     if last_history >= dates[0]:

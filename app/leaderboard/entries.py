@@ -1,4 +1,4 @@
-"""Benchmark definition and the rules that decide whether a run can be scored."""
+"""History-window parsing and the rules that decide whether a run can be scored."""
 
 import re
 from dataclasses import dataclass

@@ -57,8 +57,14 @@ def test_generated_sql_is_accepted_by_the_qualification_rules():
     ("  ", {}, "name"),
     ("x" * 201, {}, "name"),
     ("ok", {"dataset_qid": "bad"}, "dataset"),
-    ("ok", {"target_column": " "}, "column"),
-    ("ok", {"date_column": "d" * 201}, "column"),
+    ("ok", {"target_column": " "}, "target column"),
+    ("ok", {"date_column": "d" * 201}, "date column"),
+    ("ok", {"filter_column": "c" * 201}, "filter column"),
+    ("ok", {"filter_column": "  "}, "filter column"),
+    ("ok", {"filter_column": None, "filter_value": "x"}, "needs a filter column"),
+    ("ok", {"input_filename": ".hidden.parquet"}, "file name"),
+    ("ok", {"input_filename": ".parquet"}, "file name"),
+    ("ok", {"input_filename": "a" * 94 + ".parquet"}, "file name"),
     ("ok", {"filter_column": "typ", "filter_value": None}, "filter value"),
     ("ok", {"filter_column": "typ", "filter_value": "v" * 501}, "filter value"),
     ("ok", {"test_start": date(2026, 10, 1)}, "test start"),
@@ -75,6 +81,11 @@ def test_validate_rejects(name, overrides, message):
 def test_validate_accepts_a_good_definition_and_an_open_history_end():
     validate(_b(), "Flu 2026")
     validate(_b(history_end=None, history_start=None), "Flu 2026")
+
+
+def test_validate_accepts_boundaries():
+    validate(_b(test_start=date(2026, 4, 1), test_end=date(2026, 4, 1)), "ok")
+    validate(_b(history_end=date(2026, 3, 31)), "ok")
 
 
 def _weekly(start, n):
@@ -101,7 +112,19 @@ def test_single_observation_horizon():
     assert h.prediction_length == 1
 
 
-@pytest.mark.parametrize("observed,last", [([], date(2026, 3, 25)), ([date(2026, 4, 1)], date(2026, 4, 1))])
+@pytest.mark.parametrize("observed,last", [([], date(2026, 3, 25)), ([date(2026, 4, 1)], date(2026, 4, 1)), ([date(2026, 4, 1), date(2026, 4, 8)], date(2026, 4, 5))])
 def test_horizon_rejects_empty_or_overlapping(observed, last):
     with pytest.raises(DefinitionError):
         derive_horizon(observed, last)
+
+
+def test_duplicate_dates_collapse():
+    d = date(2026, 4, 1)
+    assert derive_horizon([d, d], date(2026, 3, 25)) == derive_horizon([d], date(2026, 3, 25))
+    h = derive_horizon([d, d, d + timedelta(days=7)], date(2026, 3, 25))
+    assert h.frequency_days == 7
+
+
+def test_unsorted_input_equals_sorted():
+    dates = _weekly(date(2026, 4, 1), 5)
+    assert derive_horizon(dates[::-1], date(2026, 3, 25)) == derive_horizon(dates, date(2026, 3, 25))
