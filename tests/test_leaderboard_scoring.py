@@ -100,3 +100,44 @@ def test_candidate_runs_explain_why_a_run_cannot_be_added():
     assert reasons["Q10"] is None
     assert "failed" in reasons["Q11"]
     assert reasons["Q13"] == "already on this leaderboard"
+
+
+from dataclasses import replace
+
+from app.leaderboard.run_inputs import RunInput
+
+PIN = "ab" * 32
+STRICT = replace(BENCH, data_commit=PIN)
+
+
+def test_score_run_in_strict_mode_uses_the_provenance_inputs():
+    forecast = pd.DataFrame({"date": DATES, "forecast": [11.0, 19.0]})
+    good = [RunInput("Q1", "x.parquet", PIN, SQL)]
+    entry = score_run(STRICT, _run(data_transformation_sql=["SELECT 1"]), TRUTH, truth_commit=PIN, truth_as_of="t",
+                      load_predictions=lambda r, b: forecast, load_params=lambda q: {}, inputs=good)
+    assert entry.truth_commit == PIN
+    stale = [RunInput("Q1", "x.parquet", "cd" * 32, SQL)]
+    with pytest.raises(NotScorable, match="pinned to"):
+        score_run(STRICT, _run(), TRUTH, truth_commit=PIN, truth_as_of="t",
+                  load_predictions=lambda r, b: forecast, load_params=lambda q: {}, inputs=stale)
+
+
+def test_candidates_for_a_strict_benchmark_check_provenance_only_where_needed():
+    runs = [_run("Q10"), _run("Q11"), _run("Q12", status="failed"), _run("Q13"), _run("Q14")]
+    calls = []
+
+    def inputs_for(qid):
+        calls.append(qid)
+        if qid == "Q11":
+            return [RunInput("Q1", "x.parquet", "cd" * 32, SQL)]
+        if qid == "Q10":
+            return [RunInput("Q1", "x.parquet", PIN, SQL)]
+        raise RuntimeError("DOIP down")
+
+    result = {c["qid"]: c["reason"] for c in candidate_runs(STRICT, runs, {"Q13"}, load_inputs=inputs_for)}
+    assert result["Q10"] is None
+    assert "pinned to" in result["Q11"]
+    assert "failed" in result["Q12"]
+    assert result["Q13"] == "already on this leaderboard"
+    assert "provenance could not be read" in result["Q14"]
+    assert sorted(calls) == ["Q10", "Q11", "Q14"]                       # not for failed or already-added runs

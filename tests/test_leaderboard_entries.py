@@ -202,3 +202,54 @@ def test_equality_filter_rejects_not_and_case():
         "SELECT CASE WHEN typ = 'A' THEN 1 END FROM df WHERE typ = 'A'", "typ", "A"
     )
     assert has_equality_filter("SELECT notification FROM df WHERE typ = 'A'", "typ", "A")
+
+
+from dataclasses import replace
+
+from app.leaderboard.run_inputs import RunInput
+
+PIN = "ab" * 32
+
+
+def _strict(**overrides):
+    return replace(_benchmark(), data_commit=PIN, **overrides)
+
+
+def _input(**overrides):
+    base = dict(dataset_qid="Q9493814122238", filename="x.parquet", commit=PIN, sql=SQL)
+    return RunInput(**{**base, **overrides})
+
+
+def test_strict_run_with_the_pinned_commit_qualifies_using_the_provenance_sql():
+    run = _run(data_transformation_sql=["SELECT garbage"])        # CKAN extra is ignored in strict mode
+    result = qualify_run(run, _strict(), inputs=[_input()])
+    assert result.reason is None and result.window == HistoryWindow(date(2024, 1, 3), date(2026, 3, 25))
+
+
+def test_strict_run_with_another_commit_is_refused_with_both_ids():
+    result = qualify_run(_run(), _strict(), inputs=[_input(commit="cd" * 32)])
+    assert result.relevant and "input was read at commit cdcdcdcdcdcd" in result.reason
+    assert "pinned to abababababab" in result.reason
+
+
+def test_strict_run_with_unknown_commit_says_unknown():
+    assert "unknown" in qualify_run(_run(), _strict(), inputs=[_input(commit=None)]).reason
+
+
+def test_strict_run_without_readable_provenance_or_matching_input():
+    assert "provenance could not be read" in qualify_run(_run(), _strict(), inputs=None).reason
+    reason = qualify_run(_run(), _strict(), inputs=[_input(dataset_qid="Q5")]).reason
+    assert "no input from this benchmark's dataset" in reason
+
+
+def test_strict_run_still_applies_status_leakage_and_filter_rules():
+    assert "failed" in qualify_run(_run(status="failed"), _strict(), inputs=[_input()]).reason
+    leaky = _input(sql="SELECT * FROM df WHERE CAST(datum AS DATE) <= DATE '2026-04-10'")
+    assert "test start" in qualify_run(_run(), _strict(), inputs=[leaky]).reason
+    missing_filter = replace(_strict(), filter_column="typ", filter_value="RSV A")
+    assert "filter" in qualify_run(_run(), missing_filter, inputs=[_input()]).reason
+    assert qualify_run(_run(input_dataset_qids=["Q5"]), _strict(), inputs=[_input()]).relevant is False
+
+
+def test_without_a_pinned_commit_the_previous_behaviour_is_unchanged():
+    assert qualify_run(_run(), _benchmark()).reason is None

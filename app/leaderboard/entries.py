@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 
 from app.benchmarks.definition import Benchmark
+from app.leaderboard.run_inputs import RunInput
 
 
 @dataclass(frozen=True)
@@ -113,25 +114,7 @@ def has_equality_filter(sql: str, column: str, value: str) -> bool:
     return re.search(pattern, sql) is not None
 
 
-def qualify_run(run: dict, benchmark: Benchmark) -> Qualification:
-    """Decide whether a catalog run can be an entry of the benchmark.
-
-    Args:
-        run: A record from ``ckan_client.list_model_runs()``.
-        benchmark: The benchmark being evaluated.
-
-    Returns:
-        ``relevant=False`` for runs on other datasets; otherwise a reason when
-        the run cannot be scored, or the parsed history window when it can.
-    """
-    qids = run.get("input_dataset_qids") or []
-    if benchmark.dataset_qid not in qids:
-        return Qualification(relevant=False)
-    if run.get("status") != "success":
-        return Qualification(True, f"run status is {run.get('status') or 'unknown'}, not success")
-    statements = run.get("data_transformation_sql") or []
-    index = qids.index(benchmark.dataset_qid)
-    sql = statements[index] if len(statements) == len(qids) else None
+def _check_sql(sql: str | None, benchmark: Benchmark) -> Qualification:
     window = parse_history_window(sql, benchmark.date_column) if sql else None
     if window is None:
         return Qualification(True, "history window not found in the run's SQL")
@@ -145,3 +128,43 @@ def qualify_run(run: dict, benchmark: Benchmark) -> Qualification:
                 window,
             )
     return Qualification(True, None, window)
+
+
+def _short(commit: str | None) -> str:
+    return commit[:12] if commit else "unknown"
+
+
+def qualify_run(run: dict, benchmark: Benchmark, inputs: list[RunInput] | None = None) -> Qualification:
+    """Decide whether a catalog run can be an entry of the benchmark.
+
+    Args:
+        run: A record from ``ckan_client.list_model_runs()``.
+        benchmark: The benchmark being evaluated.
+        inputs: The run's inputs from its DOIP provenance. Needed when the benchmark is pinned
+            (``benchmark.data_commit`` set): then the run must have read its input at exactly that
+            commit and the SQL is taken from the provenance.
+
+    Returns:
+        ``relevant=False`` for runs on other datasets; otherwise a reason when the run cannot be
+        scored, or the parsed history window when it can.
+    """
+    qids = run.get("input_dataset_qids") or []
+    if benchmark.dataset_qid not in qids:
+        return Qualification(relevant=False)
+    if run.get("status") != "success":
+        return Qualification(True, f"run status is {run.get('status') or 'unknown'}, not success")
+    if benchmark.data_commit is None:
+        statements = run.get("data_transformation_sql") or []
+        index = qids.index(benchmark.dataset_qid)
+        return _check_sql(statements[index] if len(statements) == len(qids) else None, benchmark)
+    if inputs is None:
+        return Qualification(True, "the run's provenance could not be read")
+    match = next((i for i in inputs if i.dataset_qid == benchmark.dataset_qid), None)
+    if match is None:
+        return Qualification(True, "the run's provenance lists no input from this benchmark's dataset")
+    if match.commit != benchmark.data_commit.lower():
+        return Qualification(
+            True,
+            f"input was read at commit {_short(match.commit)}, the benchmark is pinned to {_short(benchmark.data_commit)}",
+        )
+    return _check_sql(match.sql, benchmark)

@@ -7,6 +7,7 @@ import pandas as pd
 from app.leaderboard.entries import Benchmark, qualify_run
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.metrics import score_forecast
+from app.leaderboard.run_inputs import RunInput
 from app.leaderboard.service import Entry, finite_or_none, points_for
 
 
@@ -23,6 +24,7 @@ def score_run(
     truth_as_of: str,
     load_predictions: Callable[[dict, Benchmark], pd.DataFrame],
     load_params: Callable[[str], dict],
+    inputs: list[RunInput] | None = None,
 ) -> Entry:
     """Qualify and score a run, producing the entry to store.
 
@@ -34,6 +36,7 @@ def score_run(
         truth_as_of: The dataset's CKAN ``last_modified``, for display.
         load_predictions: ``(run, benchmark) -> DataFrame``; may raise ``LoadError``.
         load_params: ``(run_qid) -> dict`` of run parameters.
+        inputs: The run's provenance inputs; required for a benchmark pinned to a data commit.
 
     Returns:
         The scored entry (not yet stored).
@@ -42,7 +45,7 @@ def score_run(
         NotScorable: With the reason, if the run does not qualify, its predictions
             cannot be read, or it does not forecast every observed date.
     """
-    verdict = qualify_run(run, benchmark)
+    verdict = qualify_run(run, benchmark, inputs=inputs)
     if not verdict.relevant:
         raise NotScorable("the run was not made from this benchmark's dataset")
     if verdict.reason:
@@ -65,17 +68,29 @@ def score_run(
     )
 
 
-def candidate_runs(benchmark: Benchmark, runs: list[dict], active_run_qids: set[str]) -> list[dict]:
+def candidate_runs(
+    benchmark: Benchmark, runs: list[dict], active_run_qids: set[str],
+    load_inputs: Callable[[str], list[RunInput] | None] | None = None,
+) -> list[dict]:
     """Runs on the benchmark's dataset, with the reason each cannot be added (None if it can).
 
     Only the cheap checks run here (status, dataset, history window, filter); a run that
-    passes them can still be rejected when added if its predictions are unusable.
+    passes them can still be rejected when added if its predictions are unusable. For a
+    benchmark pinned to a data commit, ``load_inputs(run_qid)`` supplies the run's provenance
+    inputs (for runs that are successful and not yet added); a failing loader counts as unreadable.
     """
     candidates = []
     for run in runs:
         verdict = qualify_run(run, benchmark)
         if not verdict.relevant:
             continue
+        pinned = benchmark.data_commit is not None
+        if pinned and load_inputs and run.get("status") == "success" and run["qid"] not in active_run_qids:
+            try:
+                inputs = load_inputs(run["qid"])
+            except Exception:
+                inputs = None
+            verdict = qualify_run(run, benchmark, inputs=inputs)
         reason = "already on this leaderboard" if run["qid"] in active_run_qids else verdict.reason
         candidates.append({
             "qid": run["qid"], "model_name": run.get("model_name", ""),
