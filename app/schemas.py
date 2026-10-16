@@ -1,3 +1,4 @@
+from datetime import date
 from pydantic import BaseModel
 from typing import Any
 
@@ -87,3 +88,64 @@ class LeaderboardResponse(BaseModel):
     best: str | None
     entries: list[LeaderboardEntry]
     not_scorable: list[SkippedRunOut]
+
+
+class BenchmarkOut(BaseModel):
+    id: int
+    name: str
+    dataset_qid: str
+    target_column: str
+    date_column: str
+    filter_column: str | None
+    filter_value: str | None
+    test_start: str
+    test_end: str
+    truth_points: int
+    entry_count: int | None = None
+    created_at: str
+    retired_at: str | None
+
+
+class BenchmarkCreate(BaseModel):
+    name: str
+    dataset_qid: str
+    target_column: str
+    date_column: str
+    test_start: date
+    test_end: date
+    filter_column: str | None = None
+    filter_value: str | None = None
+
+
+class EntryCreate(BaseModel):
+    run_qid: str
+
+
+class EntryCreated(BaseModel):
+    entry_id: int
+
+
+class BenchmarkEntryOut(BaseModel):
+    rank: int
+    entry_id: int | None
+    run_qid: str
+    model_name: str
+    docker_tag: str
+    params: dict[str, Any]
+    history_start: str | None
+    history_end: str
+    run_timestamp: str
+    n_scored: int
+    n_expected: int
+    metrics: dict[str, float | None]
+    points: list[dict[str, Any]]
+    truth_commit: str
+    truth_as_of: str
+    scored_at: str
+
+
+class BenchmarkLeaderboardOut(BaseModel):
+    benchmark: BenchmarkOut
+    rank_by: str
+    best: str | None
+    entries: list[BenchmarkEntryOut]
