@@ -1,5 +1,6 @@
 """The /ui/leaderboard page: stored benchmarks and their ranked entries."""
 
+import logging
 from datetime import date as _date
 
 from nicegui import run, ui, app as _napp
@@ -15,6 +16,9 @@ from app.leaderboard.present import (
 )
 from app.ui.pages import _api_box, _error_label, _header
 
+logger = logging.getLogger(__name__)
+
+_LOGIN_EXPIRED = "Your login has expired; please log in again."
 _ALL_MODELS = "All models"
 # Metric cells show formatted strings; sort on the raw numbers, missing values last when ascending.
 _RAW_SORT = (
@@ -35,9 +39,10 @@ def _new_benchmark_dialog() -> None:
         error = ui.label("").classes("text-red-600 text-sm")
         try:
             options = {d["qid"]: f"{d['name']} ({d['qid']})" for d in ckan_client.list_processed_datasets()}
-        except Exception as e:
+        except Exception:
+            logger.exception("could not load the dataset choices")
             options = {}
-            error.set_text(f"Could not load datasets: {e}")
+            error.set_text("Could not load datasets.")
         name = ui.input("Name").props("outlined dense").classes("w-full")
         dataset = ui.select(options, label="Dataset", value=next(iter(options), None)).props("outlined dense").classes("w-full")
         target = ui.input("Target column").props("outlined dense").classes("w-full")
@@ -50,6 +55,9 @@ def _new_benchmark_dialog() -> None:
         spinner.set_visibility(False)
 
         async def create():
+            if not _is_logged_in():
+                ui.notify(_LOGIN_EXPIRED, type="warning")
+                return
             error.set_text("")
             try:
                 test_start, test_end = _date.fromisoformat(start.value), _date.fromisoformat(end.value)
@@ -71,8 +79,9 @@ def _new_benchmark_dialog() -> None:
             except (LoadError, actions.NotFound) as e:
                 error.set_text(str(e))
                 return
-            except Exception as e:
-                error.set_text(f"Could not create the benchmark: {e}")
+            except Exception:
+                logger.exception("could not create the benchmark")
+                error.set_text("Could not create the benchmark.")
                 return
             finally:
                 spinner.set_visibility(False)
@@ -94,9 +103,10 @@ def _add_run_dialog(benchmark_id: int) -> None:
         error = ui.label("").classes("text-red-600 text-sm")
         try:
             candidates = actions.candidates(benchmark_id)
-        except Exception as e:
+        except Exception:
+            logger.exception("could not list the candidate runs")
             candidates = []
-            error.set_text(f"Could not list runs: {e}")
+            error.set_text("Could not list runs.")
         addable = {c["qid"]: f"{c['model_name']} · {c['qid']} · {c['run_timestamp'][:10]}"
                    for c in candidates if c["reason"] is None}
         blocked = [c for c in candidates if c["reason"] is not None]
@@ -109,6 +119,9 @@ def _add_run_dialog(benchmark_id: int) -> None:
         spinner.set_visibility(False)
 
         async def add():
+            if not _is_logged_in():
+                ui.notify(_LOGIN_EXPIRED, type="warning")
+                return
             error.set_text("")
             if not select.value:
                 error.set_text("Choose a model run.")
@@ -120,8 +133,9 @@ def _add_run_dialog(benchmark_id: int) -> None:
             except (NotScorable, actions.Conflict, actions.NotFound, LoadError) as e:
                 error.set_text(str(e))
                 return
-            except Exception as e:
-                error.set_text(f"Could not add the run: {e}")
+            except Exception:
+                logger.exception("could not add the run")
+                error.set_text("Could not add the run.")
                 return
             finally:
                 spinner.set_visibility(False)
@@ -141,10 +155,17 @@ def _retire_dialog(benchmark_id: int) -> None:
         ui.label("Retire this benchmark? It disappears from the list; its entries stay stored.")
 
         def retire():
+            if not _is_logged_in():
+                ui.notify(_LOGIN_EXPIRED, type="warning")
+                return
             try:
                 actions.retire_benchmark(benchmark_id)
-            except Exception as e:
-                ui.notify(f"Could not retire the benchmark: {e}", type="negative")
+            except actions.NotFound as e:
+                ui.notify(str(e), type="negative")
+                return
+            except Exception:
+                logger.exception("could not retire the benchmark")
+                ui.notify("Could not retire the benchmark.", type="negative")
                 return
             dialog.close()
             ui.navigate.to("/ui/leaderboard")
@@ -165,9 +186,10 @@ def register_leaderboard_page() -> None:
         logged_in = _is_logged_in()
         try:
             boards = store.list_benchmarks()
-        except Exception as e:
+        except Exception:
+            logger.exception("could not load the benchmarks")
             with ui.column().classes("px-8 py-6"):
-                _error_label(f"Could not load benchmarks: {e}")
+                _error_label("Could not load benchmarks.")
             return
         ids = [b["id"] for b in boards]
         try:
@@ -223,8 +245,9 @@ def register_leaderboard_page() -> None:
             except actions.NotFound:
                 _error_label("Benchmark not found.")
                 return
-            except Exception as e:
-                _error_label(f"Could not load the leaderboard: {e}")
+            except Exception:
+                logger.exception("could not load the leaderboard")
+                _error_label("Could not load the leaderboard.")
                 return
             ui.label(summary(board)).classes("text-sm text-gray-700")
             if not board.entries:
@@ -293,10 +316,17 @@ def register_leaderboard_page() -> None:
                         ui.button("Close", on_click=dialog.close).props("flat")
                         if logged_in and entry.entry_id is not None:
                             def remove(entry_id=entry.entry_id):
+                                if not _is_logged_in():
+                                    ui.notify(_LOGIN_EXPIRED, type="warning")
+                                    return
                                 try:
                                     actions.remove_entry(selected, entry_id)
-                                except Exception as e:
-                                    ui.notify(f"Could not remove the entry: {e}", type="negative")
+                                except actions.NotFound as e:
+                                    ui.notify(str(e), type="negative")
+                                    return
+                                except Exception:
+                                    logger.exception("could not remove the entry")
+                                    ui.notify("Could not remove the entry.", type="negative")
                                     return
                                 dialog.close()
                                 ui.navigate.reload()

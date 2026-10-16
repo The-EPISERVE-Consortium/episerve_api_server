@@ -72,6 +72,12 @@ def create_benchmark(
         raise LoadError("A name is required.")
     if not (target_column or "").strip() or not (date_column or "").strip():
         raise LoadError("Target column and date column are required.")
+    for label, value, limit in (
+        ("Name", name, 200), ("Target column", target_column, 200), ("Date column", date_column, 200),
+        ("Filter column", filter_column, 200), ("Filter value", filter_value, 500),
+    ):
+        if value and len(value.strip() if label != "Filter value" else value) > limit:
+            raise LoadError(f"{label} must be at most {limit} characters.")
     if test_start > test_end:
         raise LoadError("The test start must not be after the test end.")
     if filter_column and not filter_value:

@@ -121,3 +121,18 @@ def test_add_remove_and_retire(monkeypatch):
     assert client.delete("/benchmarks/3/entries/9", headers=AUTH).status_code == 204
     assert client.post("/benchmarks/3/retire", headers=AUTH).status_code == 204
     assert calls == [("add", 3, "Q10"), ("remove", 3, 9), ("retire", 3)]
+
+
+def test_unexpected_errors_are_logged_and_not_leaked(monkeypatch, caplog):
+    secret = "Can't connect to MySQL server on 'db.internal'"
+
+    def boom():
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(router.store, "list_benchmarks", boom)
+    with caplog.at_level("ERROR"):
+        resp = client.get("/benchmarks")
+    assert resp.status_code == 502
+    assert "db.internal" not in resp.text and "MySQL" not in resp.text
+    assert resp.json()["detail"] == "The benchmarks database or data storage is unavailable."
+    assert any(secret in (r.exc_text or "") or secret in r.getMessage() for r in caplog.records)

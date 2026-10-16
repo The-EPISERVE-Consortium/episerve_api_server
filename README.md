@@ -83,7 +83,7 @@ Predictions are read from the run's `predictions.tsv` CKAN DataStore resource. C
 | `DELETE /benchmarks/{id}/entries/{entry_id}` | Bearer | Remove an entry |
 | `POST /benchmarks/{id}/retire` | Bearer | Retire a benchmark |
 
-Status codes: `404` unknown (or retired) benchmark, entry, run or dataset; `409` run already on the board; `422` invalid input or the run cannot be scored (reason in `detail`); `502` upstream failure.
+Status codes: `401`/`403` missing or invalid token on writes; `404` unknown benchmark, entry, run or dataset, or adding a run to / retiring a retired benchmark (`GET /benchmarks/{id}` and `/leaderboard` still return `200` for a retired benchmark); `409` run already on the board; `422` invalid input or the run cannot be scored (reason in `detail`); `502` backend (database or data storage) unavailable.
 
 The web view is at `/ui/leaderboard`: a benchmark selector, rank-by, a show-all-runs switch and a sortable table with model and minimum-history filters. Clicking a row opens a detail dialog with the chart, the per-date table and the data pin. Logged-in users also get New benchmark, Add run, Remove and Retire.
 

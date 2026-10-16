@@ -199,3 +199,58 @@ def test_candidates_mark_runs_already_on_the_board(world):
     world["stored"].append(Entry("Q10", "timesfm", "", {}, None, date(2021, 12, 31), "", 2, 2, {}, []))
     (candidate,) = actions.candidates(3)
     assert candidate["qid"] == "Q10" and candidate["reason"] == "already on this leaderboard"
+
+
+@pytest.mark.parametrize("kw,limit", [
+    ({"name": "n" * 201}, "200"), ({"target_column": "t" * 201}, "200"), ({"date_column": "d" * 201}, "200"),
+    ({"filter_column": "f" * 201, "filter_value": "x"}, "200"),
+    ({"filter_column": "f", "filter_value": "x" * 501}, "500"),
+])
+def test_create_benchmark_rejects_values_longer_than_the_columns(world, kw, limit):
+    with pytest.raises(LoadError, match=limit):
+        _create(**kw)
+    assert world["created"] == []
+
+
+def test_create_benchmark_accepts_values_at_the_limits(world):
+    _create(name="n" * 200, target_column="t" * 200, date_column="d" * 200,
+            filter_column="f" * 200, filter_value="x" * 500)
+    assert len(world["created"]) == 1
+
+
+def test_read_leaderboard_works_for_a_retired_benchmark(world, monkeypatch):
+    monkeypatch.setattr(actions.store, "get_benchmark", lambda bid: {**ROW, "retired_at": "2026-10-01 00:00:00"})
+    world["stored"].append(Entry("Q10", "a", "", {}, None, date(2021, 12, 31), "", 2, 2,
+                                 {"mae": 1.0, "rmse": None, "coverage": None, "interval_score": None}, [],
+                                 truth_as_of="2026-10-14"))
+    board = actions.read_leaderboard(3, "mae")
+    assert [e.run_qid for e in board.entries] == ["Q10"]
+
+
+def test_retire_benchmark_not_found_when_the_store_reports_it_was_not_active(world, monkeypatch):
+    monkeypatch.setattr(actions.store, "retire_benchmark", lambda bid: False)
+    with pytest.raises(actions.NotFound):
+        actions.retire_benchmark(3)
+
+
+def test_a_removed_run_can_be_added_again(world, monkeypatch):
+    stored = {}
+
+    def add(bid, entry):
+        stored[7] = entry
+        return 7
+
+    monkeypatch.setattr(actions.store, "add_entry", add)
+    monkeypatch.setattr(actions.store, "list_entries", lambda bid: list(stored.values()))
+
+    def remove(bid, eid):
+        return stored.pop(eid, None) is not None
+
+    monkeypatch.setattr(actions.store, "remove_entry", remove)
+    assert actions.add_run(3, "Q10") == 7
+    with pytest.raises(actions.Conflict):
+        actions.add_run(3, "Q10")
+    actions.remove_entry(3, 7)
+    assert stored == {}
+    assert actions.add_run(3, "Q10") == 7
+    assert stored[7].run_qid == "Q10"

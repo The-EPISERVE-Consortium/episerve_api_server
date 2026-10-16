@@ -3,6 +3,7 @@
 import json
 from datetime import date
 
+import pymysql.err
 import pytest
 
 from app.config import settings
@@ -19,7 +20,10 @@ class FakeCursor:
 
     def execute(self, sql, params=None):
         self.conn.executed.append((" ".join(sql.split()), params))
-        rows, rowcount, lastrowid = self.conn.results.pop(0) if self.conn.results else ([], 0, None)
+        result = self.conn.results.pop(0) if self.conn.results else ([], 0, None)
+        if isinstance(result, Exception):
+            raise result
+        rows, rowcount, lastrowid = result
         self._rows, self.rowcount, self.lastrowid = rows, rowcount, lastrowid
 
     def fetchone(self):
@@ -57,6 +61,14 @@ def _use(monkeypatch, *results):
     conn = FakeConn(results)
     monkeypatch.setattr(store, "_connect", lambda: conn)
     return conn
+
+
+def _use_attempts(monkeypatch, *attempts):
+    """One FakeConn per _connect() call, each with its own scripted results."""
+    conns = [FakeConn(a) for a in attempts]
+    pending = list(conns)
+    monkeypatch.setattr(store, "_connect", lambda: pending.pop(0))
+    return conns
 
 
 def _entry(**overrides):
@@ -140,6 +152,46 @@ def test_add_entry_rejects_an_active_duplicate_without_inserting(monkeypatch):
     with pytest.raises(store.DuplicateEntry):
         store.add_entry(3, _entry())
     assert len(conn.executed) == 1 and conn.commits == 0 and conn.rolled and conn.closed
+
+
+def _deadlock(code=1213):
+    return pymysql.err.OperationalError(code, "Deadlock found when trying to get lock")
+
+
+def test_add_entry_retries_once_after_a_deadlock(monkeypatch):
+    first, second = _use_attempts(
+        monkeypatch, (([], 0, None), _deadlock()), (([], 0, None), ([], 1, 43)))
+    assert store.add_entry(3, _entry()) == 43
+    assert first.closed and second.closed and first.rolled and second.commits == 1
+
+
+def test_add_entry_retries_after_a_lock_wait_timeout(monkeypatch):
+    conns = _use_attempts(monkeypatch, (([], 0, None), _deadlock(1205)), (([], 0, None), ([], 1, 44)))
+    assert store.add_entry(3, _entry()) == 44
+    assert all(c.closed for c in conns)
+
+
+def test_add_entry_deadlock_then_committed_duplicate_is_a_duplicate(monkeypatch):
+    first, second = _use_attempts(
+        monkeypatch, (([], 0, None), _deadlock()), (([{"id": 7}], 1, None),))
+    with pytest.raises(store.DuplicateEntry):
+        store.add_entry(3, _entry())
+    assert first.closed and second.closed
+
+
+def test_add_entry_second_deadlock_propagates(monkeypatch):
+    conns = _use_attempts(monkeypatch, (([], 0, None), _deadlock()), (([], 0, None), _deadlock()))
+    with pytest.raises(pymysql.err.OperationalError):
+        store.add_entry(3, _entry())
+    assert all(c.closed for c in conns)
+
+
+def test_add_entry_does_not_retry_other_operational_errors(monkeypatch):
+    err = pymysql.err.OperationalError(2003, "Can't connect")
+    conns = _use_attempts(monkeypatch, (([], 0, None), err), (([], 0, None), ([], 1, 45)))
+    with pytest.raises(pymysql.err.OperationalError):
+        store.add_entry(3, _entry())
+    assert conns[0].closed and len(conns[1].executed) == 0
 
 
 def test_list_entries_maps_rows_back_to_entries(monkeypatch):

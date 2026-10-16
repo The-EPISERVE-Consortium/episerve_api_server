@@ -1,3 +1,4 @@
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -10,6 +11,8 @@ from app.schemas import (
     BenchmarkCreate, BenchmarkEntryOut, BenchmarkLeaderboardOut, BenchmarkOut, EntryCreate, EntryCreated,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/benchmarks", tags=["benchmarks"])
 
 
@@ -20,7 +23,8 @@ def _http(exc: Exception) -> HTTPException:
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, (LoadError, NotScorable)):
         return HTTPException(status_code=422, detail=str(exc))
-    return HTTPException(status_code=502, detail=f"Benchmarks error: {exc}")
+    logger.exception("benchmarks request failed")
+    return HTTPException(status_code=502, detail="The benchmarks database or data storage is unavailable.")
 
 
 def _benchmark_out(row: dict) -> BenchmarkOut:

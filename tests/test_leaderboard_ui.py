@@ -136,7 +136,19 @@ def test_database_errors_show_a_label_instead_of_crashing(monkeypatch):
             return await http.get("/ui/leaderboard")
 
     response = asyncio.run(fetch())
-    assert response.status_code == 200 and "db down" in response.text
+    assert response.status_code == 200
+    assert "Could not load benchmarks." in response.text and "db down" not in response.text
+
+
+def test_leaderboard_read_failure_shows_generic_text_and_logs(monkeypatch, caplog):
+    def boom(bid, rank_by="interval_score", best_per_model=True):
+        raise RuntimeError("Can't connect to MySQL server on 'db.internal'")
+
+    with caplog.at_level("ERROR"):
+        out = _render(monkeypatch, board=boom)
+    assert "⚠ Could not load the leaderboard." in out["labels"]
+    assert not any("db.internal" in t for t in out["labels"])
+    assert any("db.internal" in (r.exc_text or "") for r in caplog.records)
 
 
 def test_rank_by_and_all_runs_rerender_from_the_database(monkeypatch):
@@ -344,3 +356,113 @@ def test_new_benchmark_dialog_validates_and_creates(monkeypatch):
     assert any("YYYY-MM-DD" in t for t in out["labels_bad"])
     assert created and created[0]["name"] == "Flu 2022" and created[0]["dataset_qid"] == "Q1"
     assert created[0]["target_column"] == "v" and created[0]["date_column"] == "datum"
+
+
+def _capture_notify(monkeypatch):
+    notes = []
+    monkeypatch.setattr(leaderboard_page.ui, "notify", lambda message, **kw: notes.append((message, kw)))
+    return notes
+
+
+def _expired(monkeypatch):
+    monkeypatch.setattr(leaderboard_page, "_is_logged_in", lambda: False)
+
+
+def test_expired_login_blocks_add_run(monkeypatch):
+    monkeypatch.setattr(leaderboard_page.actions, "candidates", lambda bid: [
+        {"qid": "Q10", "model_name": "timesfm", "run_timestamp": "2026-01-02T00:00:00Z", "reason": None}])
+    called = []
+    monkeypatch.setattr(leaderboard_page.actions, "add_run", lambda bid, qid: called.append(qid) or 1)
+    notes = _capture_notify(monkeypatch)
+
+    async def scenario(out, client, find, drain):
+        await _click(_button(find, "Add run"), client)
+        next(e for e in find(ui.select) if e.props.get("label") == "Model run").value = "Q10"
+        _expired(monkeypatch)
+        await _click(_button(find, "Add"), client)
+        await drain()
+
+    _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert called == [] and notes and notes[-1][1]["type"] == "warning" and "expired" in notes[-1][0]
+
+
+def test_expired_login_blocks_create_benchmark(monkeypatch):
+    called = []
+    monkeypatch.setattr(leaderboard_page.actions, "create_benchmark", lambda **kw: called.append(kw) or 8)
+    notes = _capture_notify(monkeypatch)
+
+    async def scenario(out, client, find, drain):
+        monkeypatch.setattr(leaderboard_page.ckan_client, "list_processed_datasets",
+                            lambda: [{"qid": "Q1", "name": "Wastewater"}])
+        await _click(_button(find, "New benchmark"), client)
+        inputs = {i.props.get("label"): i for i in find(ui.input)}
+        inputs["Name"].value = "Flu"
+        inputs["Target column"].value = "v"
+        inputs["Test start (C)"].value = "2022-01-01"
+        inputs["Test end (D)"].value = "2022-01-31"
+        _expired(monkeypatch)
+        await _click(_button(find, "Create"), client)
+        await drain()
+
+    _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert called == [] and notes and notes[-1][1]["type"] == "warning"
+
+
+def test_expired_login_blocks_remove_entry(monkeypatch):
+    called = []
+    monkeypatch.setattr(leaderboard_page.actions, "remove_entry", lambda bid, eid: called.append(eid))
+    notes = _capture_notify(monkeypatch)
+
+    async def scenario(out, client, find, drain):
+        table = out["table"]
+        for listener in table._event_listeners.values():
+            if listener.type == "rowClick":
+                res = listener.handler(events.GenericEventArguments(
+                    sender=table, client=client, args=[{}, {"run_qid": "Q10"}, 0]))
+                if asyncio.iscoroutine(res):
+                    await res
+        _expired(monkeypatch)
+        await _click(_button(find, "Remove from leaderboard"), client)
+        await drain()
+
+    _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert called == [] and notes and notes[-1][1]["type"] == "warning"
+
+
+def test_expired_login_blocks_retire(monkeypatch):
+    called = []
+    monkeypatch.setattr(leaderboard_page.actions, "retire_benchmark", lambda bid: called.append(bid))
+    notes = _capture_notify(monkeypatch)
+
+    async def scenario(out, client, find, drain):
+        await _click(_button(find, "Retire benchmark"), client)
+        _expired(monkeypatch)
+        dialog_button = [b for b in find(ui.button) if b.props.get("label") == "Retire benchmark"][-1]
+        await _click(dialog_button, client)
+        await drain()
+
+    _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert called == [] and notes and notes[-1][1]["type"] == "warning"
+
+
+def test_unexpected_write_errors_are_generic_and_logged(monkeypatch, caplog):
+    monkeypatch.setattr(leaderboard_page.actions, "candidates", lambda bid: [
+        {"qid": "Q10", "model_name": "timesfm", "run_timestamp": "2026-01-02T00:00:00Z", "reason": None}])
+
+    def boom(bid, qid):
+        raise RuntimeError("Can't connect to MySQL server on 'db.internal'")
+
+    monkeypatch.setattr(leaderboard_page.actions, "add_run", boom)
+
+    async def scenario(out, client, find, drain):
+        await _click(_button(find, "Add run"), client)
+        next(e for e in find(ui.select) if e.props.get("label") == "Model run").value = "Q10"
+        await _click(_button(find, "Add"), client)
+        await drain()
+        out["labels_after"] = _labels(find)
+
+    with caplog.at_level("ERROR"):
+        out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert "Could not add the run." in out["labels_after"]
+    assert not any("db.internal" in t for t in out["labels_after"])
+    assert any("db.internal" in (r.exc_text or "") for r in caplog.records)

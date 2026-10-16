@@ -174,3 +174,29 @@ def test_truth_at_commit_reads_the_first_component_at_the_pinned_commit(monkeypa
     truth = loaders.truth_at_commit(dataset, BENCH, "abc12345")
     assert truth["truth"].tolist() == [10.0]
     assert calls == [("abc12345", "Q1", "d.parquet", loaders.MAX_DOWNLOAD_BYTES)]
+
+
+def test_truth_at_commit_wraps_value_errors_as_load_errors(monkeypatch):
+    def too_big(commit, qid, filename, max_bytes):
+        raise ValueError("The dataset file exceeds the size limit.")
+
+    monkeypatch.setattr(loaders.lakefs_client, "read_processed_component", too_big)
+    dataset = {"qid": "Q1", "components": [{"name": "d.parquet", "url": "u"}]}
+    with pytest.raises(loaders.LoadError, match="size limit"):
+        loaders.truth_at_commit(dataset, BENCH, "abc12345")
+    with pytest.raises(loaders.LoadError, match="components"):
+        loaders.truth_at_commit({"qid": "Q1", "components": []}, BENCH, "abc12345")
+
+
+def test_truth_at_commit_unsafe_commit_is_a_load_error(monkeypatch):
+    monkeypatch.setattr(loaders.lakefs_client, "_client", lambda: None)
+    dataset = {"qid": "Q1", "components": [{"name": "d.parquet", "url": "u"}]}
+    with pytest.raises(loaders.LoadError, match="Invalid"):
+        loaders.truth_at_commit(dataset, BENCH, "../evil")
+
+
+def test_truth_at_commit_keeps_load_errors_unchanged(monkeypatch):
+    monkeypatch.setattr(loaders.lakefs_client, "read_processed_component", lambda *a: b"not a parquet file")
+    dataset = {"qid": "Q1", "components": [{"name": "d.parquet", "url": "u"}]}
+    with pytest.raises(loaders.LoadError, match="could not be read"):
+        loaders.truth_at_commit(dataset, BENCH, "abc12345")

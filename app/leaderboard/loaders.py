@@ -132,14 +132,18 @@ def truth_at_commit(dataset: dict, benchmark: Benchmark, commit: str) -> pd.Data
         Columns ``date`` and ``truth`` sorted by date.
 
     Raises:
-        LoadError: As ``parse_truth``.
-        ValueError: If the dataset has no component, an argument is unsafe, or the
-            file exceeds the size limit.
+        LoadError: As ``parse_truth``, and when the dataset has no component, an
+            argument is unsafe, or the file exceeds the size limit.
     """
-    component = resolve_component([dataset], dataset.get("qid", ""))
-    data = lakefs_client.read_processed_component(
-        commit, dataset["qid"], component["name"], MAX_DOWNLOAD_BYTES,
-    )
+    try:
+        component = resolve_component([dataset], dataset.get("qid", ""))
+        data = lakefs_client.read_processed_component(
+            commit, dataset["qid"], component["name"], MAX_DOWNLOAD_BYTES,
+        )
+    except LoadError:
+        raise
+    except ValueError as exc:
+        raise LoadError(str(exc)) from exc
     return parse_truth(data, benchmark)
 
 

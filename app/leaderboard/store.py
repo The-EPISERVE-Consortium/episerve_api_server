@@ -8,6 +8,7 @@ import json
 
 import pymysql
 import pymysql.cursors
+import pymysql.err
 
 from app.config import settings
 from app.leaderboard.entries import Benchmark
@@ -108,37 +109,61 @@ def retire_benchmark(benchmark_id: int) -> bool:
         conn.close()
 
 
+_RETRYABLE = (1213, 1205)  # deadlock, lock wait timeout
+
+
 def add_entry(benchmark_id: int, entry: Entry) -> int:
     """Store a scored entry and return its id.
 
+    The duplicate check and the insert run in one transaction (``SELECT … FOR UPDATE``).
+    Concurrent adds can make MariaDB abort one transaction (deadlock 1213, lock wait
+    timeout 1205); the whole transaction is then retried once on a fresh connection.
+
     Raises:
-        DuplicateEntry: If an active entry for the same run exists. The check and the
-            insert run in one transaction (``SELECT … FOR UPDATE``).
+        DuplicateEntry: If an active entry for the same run exists.
+        pymysql.err.OperationalError: On a second deadlock/timeout or any other database error.
     """
+    try:
+        return _add_entry_once(benchmark_id, entry)
+    except pymysql.err.OperationalError as exc:
+        if not exc.args or exc.args[0] not in _RETRYABLE:
+            raise
+    return _add_entry_once(benchmark_id, entry)
+
+
+def _add_entry_once(benchmark_id: int, entry: Entry) -> int:
     conn = _connect()
     try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id FROM entries WHERE benchmark_id = %s AND run_qid = %s AND removed_at IS NULL FOR UPDATE",
-                (benchmark_id, entry.run_qid),
-            )
-            if cur.fetchone():
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM entries WHERE benchmark_id = %s AND run_qid = %s AND removed_at IS NULL "
+                    "FOR UPDATE",
+                    (benchmark_id, entry.run_qid),
+                )
+                if cur.fetchone():
+                    conn.rollback()
+                    raise DuplicateEntry(f"Run {entry.run_qid} is already on this leaderboard.")
+                cur.execute(
+                    "INSERT INTO entries (benchmark_id, run_qid, model_name, docker_tag, run_timestamp, params, "
+                    "history_start, history_end, n_scored, n_expected, mae, rmse, coverage, interval_score, points, "
+                    "truth_as_of, truth_commit) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (benchmark_id, entry.run_qid, entry.model_name, entry.docker_tag, entry.run_timestamp,
+                     json.dumps(entry.params, allow_nan=False), entry.history_start, entry.history_end,
+                     entry.n_scored, entry.n_expected,
+                     entry.metrics.get("mae"), entry.metrics.get("rmse"), entry.metrics.get("coverage"),
+                     entry.metrics.get("interval_score"), json.dumps(entry.points, allow_nan=False),
+                     entry.truth_as_of, entry.truth_commit),
+                )
+                entry_id = cur.lastrowid
+            conn.commit()
+            return entry_id
+        except pymysql.err.OperationalError:
+            try:
                 conn.rollback()
-                raise DuplicateEntry(f"Run {entry.run_qid} is already on this leaderboard.")
-            cur.execute(
-                "INSERT INTO entries (benchmark_id, run_qid, model_name, docker_tag, run_timestamp, params, "
-                "history_start, history_end, n_scored, n_expected, mae, rmse, coverage, interval_score, points, "
-                "truth_as_of, truth_commit) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (benchmark_id, entry.run_qid, entry.model_name, entry.docker_tag, entry.run_timestamp,
-                 json.dumps(entry.params, allow_nan=False), entry.history_start, entry.history_end,
-                 entry.n_scored, entry.n_expected,
-                 entry.metrics.get("mae"), entry.metrics.get("rmse"), entry.metrics.get("coverage"),
-                 entry.metrics.get("interval_score"), json.dumps(entry.points, allow_nan=False),
-                 entry.truth_as_of, entry.truth_commit),
-            )
-            entry_id = cur.lastrowid
-        conn.commit()
-        return entry_id
+            except Exception:
+                pass
+            raise
     finally:
         conn.close()
 
