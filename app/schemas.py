@@ -56,6 +56,8 @@ class ModelRunStatus(BaseModel):
 class BenchmarkOut(BaseModel):
     id: int
     name: str
+    state: str
+    description: str | None = None
     dataset_qid: str
     target_column: str
     date_column: str
@@ -63,14 +65,21 @@ class BenchmarkOut(BaseModel):
     filter_value: str | None
     test_start: str
     test_end: str
-    truth_points: int
+    history_start: str | None = None
+    history_end: str | None = None
+    input_filename: str = "input.parquet"
+    prediction_length: int | None = None
+    truth_points: int | None = None
+    data_commit: str | None = None
     entry_count: int | None = None
     created_at: str
+    finalized_at: str | None = None
     retired_at: str | None
 
 
 class BenchmarkCreate(BaseModel):
     name: str
+    description: str | None = None
     dataset_qid: str
     target_column: str
     date_column: str
@@ -78,6 +87,49 @@ class BenchmarkCreate(BaseModel):
     test_end: date
     filter_column: str | None = None
     filter_value: str | None = None
+    history_start: date | None = None
+    history_end: date | None = None
+    input_filename: str = "input.parquet"
+
+
+class BenchmarkPatch(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    dataset_qid: str | None = None
+    target_column: str | None = None
+    date_column: str | None = None
+    test_start: date | None = None
+    test_end: date | None = None
+    filter_column: str | None = None
+    filter_value: str | None = None
+    history_start: date | None = None
+    history_end: date | None = None
+    input_filename: str | None = None
+
+
+class CheckReportOut(BaseModel):
+    ok: bool
+    problems: list[str]
+    warnings: list[str]
+    data_commit: str | None = None
+    component_name: str | None = None
+    truth_points: int | None = None
+    history_end: str | None = None
+    last_history_date: str | None = None
+    prediction_length: int | None = None
+    frequency_days: int | None = None
+    input_sql: str | None = None
+
+
+class RunSpecOut(BaseModel):
+    benchmark_id: int
+    dataset_qid: str
+    data_commit: str
+    input_data_files: list[list[str]]
+    data_transformation_sql: list[str]
+    config: dict[str, Any]
+    test_start: str
+    test_end: str
 
 
 class EntryCreate(BaseModel):

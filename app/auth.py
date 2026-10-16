@@ -21,3 +21,11 @@ def _daily_token() -> str:
 def require_auth(credentials: HTTPAuthorizationCredentials = Depends(_security)) -> None:
     if not hmac.compare_digest(credentials.credentials, _daily_token()):
         raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+
+_optional_security = HTTPBearer(auto_error=False)
+
+
+def optional_auth(credentials: HTTPAuthorizationCredentials | None = Depends(_optional_security)) -> bool:
+    """True only when a valid daily Bearer token is presented; never raises."""
+    return credentials is not None and hmac.compare_digest(credentials.credentials, _daily_token())
