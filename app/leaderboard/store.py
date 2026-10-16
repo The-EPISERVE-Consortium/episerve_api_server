@@ -7,10 +7,9 @@ setting ``removed_at`` / ``retired_at``.
 import json
 
 import pymysql
-import pymysql.cursors
 import pymysql.err
 
-from app.config import settings
+from app import db
 from app.leaderboard.entries import Benchmark
 from app.leaderboard.metrics import METRICS
 from app.leaderboard.service import Entry
@@ -21,14 +20,7 @@ class DuplicateEntry(Exception):
 
 
 def _connect() -> pymysql.connections.Connection:
-    return pymysql.connect(
-        host=settings.mariadb_host,
-        user=settings.benchmarks_user,
-        password=settings.benchmarks_password,
-        database=settings.benchmarks_db,
-        cursorclass=pymysql.cursors.DictCursor,
-        charset="utf8mb4",
-    )
+    return db.connect()
 
 
 _BENCHMARK_SELECT = (
