@@ -1,5 +1,6 @@
 import hmac
 import json
+import logging
 import duckdb
 import pandas as pd
 from fastapi import HTTPException
@@ -8,6 +9,9 @@ from nicegui import ui, run, app as _napp
 from starlette.requests import Request
 
 from app.auth import _daily_token
+from app.benchmarks import actions as bactions
+from app.benchmarks.errors import NotFound as BenchmarkNotFound
+from app.benchmarks.workflow import apply_benchmark, clear_benchmark, overlay_config, workflow_problems
 from app.clients import ckan as ckan_client
 from app.clients import blackboard as blackboard_client
 from app.config import settings
@@ -21,6 +25,8 @@ from app.model_run_preview import (
     find_run_components, resolve_model_run,
 )
 from app.sql_validation import validate_transformation_sql
+
+logger = logging.getLogger(__name__)
 
 
 NAV_ITEMS = [
@@ -121,7 +127,9 @@ def _tv2_state() -> dict:
             "sql": {},
             "config": None,
             "filenames": {},
+            "benchmark": None,
         }
+    _napp.storage.user["tv2"].setdefault("benchmark", None)
     return _napp.storage.user["tv2"]
 
 
@@ -2312,6 +2320,7 @@ def register_pages():
             else:
                 selected_qids.add(qid)
             state["datasets"] = [r for r in all_ds if r["qid"] in selected_qids]
+            clear_benchmark(state)
             _napp.storage.user["tv2"] = state
             dataset_cards.refresh()
             bottom_bar.refresh()
@@ -2320,10 +2329,51 @@ def register_pages():
         def clear_all():
             selected_qids.clear()
             state["datasets"] = []
+            clear_benchmark(state)
             _napp.storage.user["tv2"] = state
             dataset_cards.refresh()
             bottom_bar.refresh()
             run_summary.refresh()
+
+        try:
+            finals = bactions.list_final()
+        except Exception:
+            logger.exception("could not list the final benchmarks")
+            finals = []
+        chosen_benchmark: dict = {"id": None}
+
+        def use_benchmark():
+            benchmark_id = chosen_benchmark["id"]
+            if benchmark_id is None:
+                ui.notify("Choose a benchmark first", type="warning", position="top")
+                return
+            try:
+                spec = bactions.run_spec(benchmark_id)
+                row = bactions.get(benchmark_id)
+            except BenchmarkNotFound as exc:
+                ui.notify(str(exc), type="negative", position="top")
+                return
+            except Exception:
+                logger.exception("could not apply benchmark %s", benchmark_id)
+                ui.notify("Could not apply the benchmark", type="negative", position="top")
+                return
+            ds = next((r for r in all_ds if r["qid"] == spec["dataset_qid"]), None)
+            if ds is None:
+                ui.notify("The benchmark's dataset is not available", type="negative", position="top")
+                return
+            try:
+                apply_benchmark(state, spec, ds, row)
+            except Exception:
+                logger.exception("could not apply benchmark %s", benchmark_id)
+                ui.notify("Could not apply the benchmark", type="negative", position="top")
+                return
+            selected_qids.clear()
+            selected_qids.add(ds["qid"])
+            _napp.storage.user["tv2"] = state
+            dataset_cards.refresh()
+            bottom_bar.refresh()
+            run_summary.refresh()
+            ui.notify(f"Benchmark {row['name']} applied", type="positive", position="top")
 
         def do_filter(v: str):
             vl = v.lower()
@@ -2391,6 +2441,19 @@ def register_pages():
                 ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
                 ui.label("Configure and run a forecast model in a few simple steps.").classes("text-sm text-gray-500")
             _tv2_stepper(1)
+            if finals:
+                with ui.element("div").classes("w-full border border-gray-200 rounded-xl p-5 bg-white"):
+                    ui.label("Start from a benchmark").classes("text-lg font-bold text-gray-900")
+                    ui.label(
+                        "Prefills the dataset at the benchmark's data commit, the transformation and the horizon."
+                    ).classes("text-sm text-gray-500 mt-1")
+                    with ui.row().classes("w-full items-center gap-3 mt-2"):
+                        ui.select(
+                            {b["id"]: b["name"] for b in finals}, label="Start from a benchmark",
+                            on_change=lambda e: chosen_benchmark.update(id=e.value),
+                        ).classes("w-80").props("dense outlined")
+                        ui.button("Use benchmark", on_click=use_benchmark).props("no-caps").classes(
+                            "bg-blue-700 text-white rounded-lg")
             with ui.row().classes("w-full gap-6 items-start"):
                 with ui.element("div").classes("flex-1 border border-gray-200 rounded-xl p-5 bg-white"):
                     with ui.row().classes("w-full items-start justify-between mb-4"):
@@ -2646,7 +2709,10 @@ def register_pages():
                     if state.get("config") is None:
                         params = (state["model"] or {}).get("additional_properties", [])
                         state["config"] = json.dumps(
-                            {p["name"]: p.get("value") for p in params}, indent=2
+                            overlay_config(
+                                {p["name"]: p.get("value") for p in params},
+                                state.get("benchmark"), {p["name"] for p in params},
+                            ), indent=2
                         ) if params else "{}"
                     config_inp = ui.codemirror(
                         value=state["config"],
@@ -2722,6 +2788,10 @@ def register_pages():
                 )
                 result_lbl.set_text(f"Triggered: {result['prefect_flow_run_id']} ({result['status']})")
                 result_lbl.classes(remove="text-gray-500", add="text-green-600 font-medium")
+                if state.get("benchmark"):
+                    with result_box:
+                        ui.link("Open the leaderboard", f"/ui/leaderboard?benchmark={state['benchmark']['id']}")
+                        ui.label("Add the run there once it has finished.").classes("text-sm text-gray-500")
                 ui.notify("Model run triggered", type="positive", position="top")
             except Exception as exc:
                 ui.notify(f"Prefect error: {exc}", type="negative", position="top")
@@ -2739,6 +2809,22 @@ def register_pages():
                 ).classes("bg-blue-700 text-white px-8 rounded-lg").props(
                     f"{'disabled' if not settings.prefect_api_url else ''} no-caps"
                 )
+            bench = state.get("benchmark")
+            if bench:
+                with ui.element("div").classes("w-full border border-blue-200 rounded-xl p-4 bg-blue-50 gap-1"):
+                    ui.label(f"Benchmark: {bench['name']} (data commit {bench['data_commit'][:12]})").classes(
+                        "text-sm font-semibold text-blue-800")
+                    bench_row = next((d for d in datasets if d["qid"] == bench["dataset_qid"]), None)
+                    problems = workflow_problems(
+                        bench, (bench_row or {}).get("data_path", ""),
+                        state.get("sql", {}).get(bench["dataset_qid"], ""), bench["date_column"],
+                        bench.get("filter_column"), bench.get("filter_value"),
+                    ) if bench_row else ["the benchmark's dataset is no longer selected"]
+                    if problems:
+                        ui.label("This run would not qualify for the leaderboard:").classes(
+                            "text-sm text-orange-700 font-medium")
+                        for problem in problems:
+                            ui.label(f"- {problem}").classes("text-sm text-orange-700")
             with ui.column().classes("w-full gap-4"):
 
                     # Input datasets + filename editing
@@ -2746,7 +2832,7 @@ def register_pages():
                         ui.label("Input Datasets").classes("text-base font-bold text-gray-900 mb-3")
                         for idx, row in enumerate(datasets):
                             qid           = row["qid"]
-                            original_name = row["data_path"].split("/")[-1] if row.get("data_path") else ""
+                            original_name = row["data_path"].split("?")[0].split("/")[-1] if row.get("data_path") else ""
                             suffix        = "." + original_name.rsplit(".", 1)[-1] if "." in original_name else ""
                             default_fn    = state.get("filenames", {}).get(
                                 qid, f"input{'' if idx == 0 else idx + 1}{suffix}"
@@ -2799,6 +2885,7 @@ def register_pages():
                     ).classes("text-sm text-orange-700")
 
             result_lbl = ui.label("").classes("text-sm text-gray-500")
+            result_box = ui.column().classes("gap-1")
 
         _tv2_footer()
 
