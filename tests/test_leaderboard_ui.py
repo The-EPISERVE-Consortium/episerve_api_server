@@ -1,16 +1,16 @@
 """The stored leaderboard page: reads only, no external calls."""
 
 import asyncio
-import re
 from datetime import date
 
 import httpx
-from nicegui import Client, background_tasks, events, ui
+from nicegui import events, ui
 
 from app.leaderboard.entries import Benchmark
 from app.leaderboard.service import Entry, Leaderboard
 from app.main import app
 from app.ui import leaderboard_page, pages
+from tests.ui_harness import click, render
 
 BENCH = Benchmark("Q1", "v", "datum", date(2022, 1, 1), date(2022, 1, 31))
 COMMIT = "0123abcd" * 8
@@ -35,62 +35,32 @@ def _board(entries, bid=3):
 
 def _render(monkeypatch, *, boards=BOARDS, board=None, logged_in=False, query="", after=None, rank_log=None):
     """Render the page in memory and return what a test needs to inspect it."""
-    def external(*args, **kwargs):
-        raise AssertionError("the page must not call CKAN, DOIP or lakeFS")
-
-    monkeypatch.setattr(pages.ckan_client, "list_processed_datasets", external)
-    monkeypatch.setattr(pages.ckan_client, "list_model_runs", external)
-    monkeypatch.setattr(leaderboard_page.store, "list_benchmarks", lambda: boards)
-
     def read(bid, rank_by="interval_score", best_per_model=True):
         if rank_log is not None:
             rank_log.append((bid, rank_by, best_per_model))
         return board(bid) if callable(board) else board
 
-    monkeypatch.setattr(leaderboard_page.actions, "read_leaderboard", read)
-    monkeypatch.setattr(leaderboard_page, "_is_logged_in", lambda: logged_in)
-    out = {}
+    def setup():
+        monkeypatch.setattr(leaderboard_page.bactions, "list_final", lambda: boards)
+        monkeypatch.setattr(leaderboard_page.actions, "read_leaderboard", read)
 
-    async def scenario():
-        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http:
-            response = await http.get("/ui/leaderboard" + query)
-            out["status"] = response.status_code
-            client_id = re.search(r"'client_id': '([0-9a-f-]+)'", response.text).group(1)
-            client = Client.instances[client_id]
-
-            def find(kind):
-                return [e for e in client.elements.values() if isinstance(e, kind)]
-
-            tables = [t for t in find(ui.table) if t.props.get("row-key") == "run_qid"]
-            out.update(client=client, find=find, labels=[e.text for e in find(ui.label)],
-                       table=tables[0] if tables else None)
-            if after:
-                pending = []
-
-                def defer(awaitable=None, *, coroutine=None, **kwargs):
-                    pending.append(awaitable or coroutine)
-
-                async def drain():
-                    while pending:
-                        await pending.pop(0)
-
-                with monkeypatch.context() as patches, client:
-                    patches.setattr(background_tasks, "create", defer)
-                    patches.setattr(background_tasks, "create_or_defer", defer)
-                    res = after(out, client, find, drain)
-                    if asyncio.iscoroutine(res):
-                        await res
-
-    asyncio.run(scenario())
-    return out
+    return render(monkeypatch, leaderboard_page, "/ui/leaderboard" + query, logged_in=logged_in, setup=setup,
+                  after=after, table_key="run_qid")
 
 
-async def _click(button, client, args=None):
-    for listener in button._event_listeners.values():
-        if listener.type == "click":
-            res = listener.handler(events.GenericEventArguments(sender=button, client=client, args=args or {}))
-            if asyncio.iscoroutine(res):
-                await res
+_click = click
+
+
+def test_benchmark_definitions_link_is_present(monkeypatch):
+    for boards in (BOARDS, []):
+        out = _render(monkeypatch, boards=boards, board=_board([_entry()]))
+        hrefs = {e.props.get("href"): e.text for e in out["find"](ui.link)}
+        assert hrefs.get("/ui/benchmarks") == "Benchmark definitions"
+
+
+def test_nav_has_benchmarks_before_leaderboard():
+    items = [p for _, p in pages.NAV_ITEMS]
+    assert items.index("/ui/benchmarks") + 1 == items.index("/ui/leaderboard")
 
 
 def test_nav_has_leaderboard_item():
@@ -117,7 +87,9 @@ def test_query_parameter_selects_the_benchmark(monkeypatch):
 
 def test_empty_states_and_login_hint(monkeypatch):
     out = _render(monkeypatch, boards=[], board=None)
-    assert "No benchmarks yet. Log in to create one." in out["labels"]
+    assert "No benchmarks yet. Design one on the Benchmarks page." in out["labels"]
+    out = _render(monkeypatch, boards=[], board=None, logged_in=True)
+    assert "No benchmarks yet. Design one on the Benchmarks page." in out["labels"]
     out = _render(monkeypatch, board=_board([]))
     assert "No runs on this leaderboard yet. Log in to add runs." in out["labels"]
     out = _render(monkeypatch, board=_board([]), logged_in=True)
@@ -128,7 +100,7 @@ def test_database_errors_show_a_label_instead_of_crashing(monkeypatch):
     def boom():
         raise RuntimeError("db down")
 
-    monkeypatch.setattr(leaderboard_page.store, "list_benchmarks", boom)
+    monkeypatch.setattr(leaderboard_page.bactions, "list_final", boom)
     monkeypatch.setattr(leaderboard_page, "_is_logged_in", lambda: False)
 
     async def fetch():
@@ -264,7 +236,8 @@ def test_anonymous_users_see_no_management_controls(monkeypatch):
 def test_logged_in_users_see_management_controls(monkeypatch):
     out = _render(monkeypatch, board=_board([_entry()]), logged_in=True)
     labels = {b.props.get("label") for b in out["find"](ui.button)}
-    assert {"New benchmark", "Add run", "Retire benchmark"} <= labels
+    assert "Add run" in labels
+    assert not labels & {"New benchmark", "Retire benchmark"}   # management moved to /ui/benchmarks
 
 
 def test_add_run_dialog_lists_addable_runs_and_explains_the_others(monkeypatch):
@@ -330,34 +303,6 @@ def test_remove_button_in_the_detail_dialog_removes_the_entry(monkeypatch):
     assert removed == [(2, 9)]
 
 
-def test_new_benchmark_dialog_validates_and_creates(monkeypatch):
-    created = []
-    monkeypatch.setattr(leaderboard_page.actions, "create_benchmark", lambda **kw: created.append(kw) or 8)
-
-    async def scenario(out, client, find, drain):
-        # _render makes CKAN raise while the page loads; the dialog may call it once it opens.
-        monkeypatch.setattr(leaderboard_page.ckan_client, "list_processed_datasets",
-                            lambda: [{"qid": "Q1", "name": "Wastewater"}])
-        await _click(_button(find, "New benchmark"), client)
-        inputs = {i.props.get("label"): i for i in find(ui.input)}
-        inputs["Name"].value = "Flu 2022"
-        inputs["Target column"].value = "v"
-        inputs["Test start (C)"].value = "not-a-date"
-        inputs["Test end (D)"].value = "2022-01-31"
-        await _click(_button(find, "Create"), client)
-        await drain()
-        out["labels_bad"] = _labels(find)
-        assert created == []
-        inputs["Test start (C)"].value = "2022-01-01"
-        await _click(_button(find, "Create"), client)
-        await drain()
-
-    out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
-    assert any("YYYY-MM-DD" in t for t in out["labels_bad"])
-    assert created and created[0]["name"] == "Flu 2022" and created[0]["dataset_qid"] == "Q1"
-    assert created[0]["target_column"] == "v" and created[0]["date_column"] == "datum"
-
-
 def _capture_notify(monkeypatch):
     notes = []
     monkeypatch.setattr(leaderboard_page.ui, "notify", lambda message, **kw: notes.append((message, kw)))
@@ -386,28 +331,6 @@ def test_expired_login_blocks_add_run(monkeypatch):
     assert called == [] and notes and notes[-1][1]["type"] == "warning" and "expired" in notes[-1][0]
 
 
-def test_expired_login_blocks_create_benchmark(monkeypatch):
-    called = []
-    monkeypatch.setattr(leaderboard_page.actions, "create_benchmark", lambda **kw: called.append(kw) or 8)
-    notes = _capture_notify(monkeypatch)
-
-    async def scenario(out, client, find, drain):
-        monkeypatch.setattr(leaderboard_page.ckan_client, "list_processed_datasets",
-                            lambda: [{"qid": "Q1", "name": "Wastewater"}])
-        await _click(_button(find, "New benchmark"), client)
-        inputs = {i.props.get("label"): i for i in find(ui.input)}
-        inputs["Name"].value = "Flu"
-        inputs["Target column"].value = "v"
-        inputs["Test start (C)"].value = "2022-01-01"
-        inputs["Test end (D)"].value = "2022-01-31"
-        _expired(monkeypatch)
-        await _click(_button(find, "Create"), client)
-        await drain()
-
-    _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
-    assert called == [] and notes and notes[-1][1]["type"] == "warning"
-
-
 def test_expired_login_blocks_remove_entry(monkeypatch):
     called = []
     monkeypatch.setattr(leaderboard_page.actions, "remove_entry", lambda bid, eid: called.append(eid))
@@ -423,22 +346,6 @@ def test_expired_login_blocks_remove_entry(monkeypatch):
                     await res
         _expired(monkeypatch)
         await _click(_button(find, "Remove from leaderboard"), client)
-        await drain()
-
-    _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
-    assert called == [] and notes and notes[-1][1]["type"] == "warning"
-
-
-def test_expired_login_blocks_retire(monkeypatch):
-    called = []
-    monkeypatch.setattr(leaderboard_page.actions, "retire_benchmark", lambda bid: called.append(bid))
-    notes = _capture_notify(monkeypatch)
-
-    async def scenario(out, client, find, drain):
-        await _click(_button(find, "Retire benchmark"), client)
-        _expired(monkeypatch)
-        dialog_button = [b for b in find(ui.button) if b.props.get("label") == "Retire benchmark"][-1]
-        await _click(dialog_button, client)
         await drain()
 
     _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)

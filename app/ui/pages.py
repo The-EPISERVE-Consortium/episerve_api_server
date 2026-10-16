@@ -27,6 +27,7 @@ NAV_ITEMS = [
     ("Datasets",        "/ui/datasets"),
     ("Models",          "/ui/models"),
     ("Model Runs",      "/ui/model-runs"),
+    ("Benchmarks",      "/ui/benchmarks"),
     ("Leaderboard",     "/ui/leaderboard"),
     ("AI Blackboard",   "/ui/blackboard"),
     ("Run Workflow",        "/ui/run_workflow/1"),
@@ -1343,6 +1344,10 @@ def register_pages():
     from app.ui.leaderboard_page import register_leaderboard_page
 
     register_leaderboard_page()
+
+    from app.ui.benchmarks_page import register_benchmarks_page
+
+    register_benchmarks_page()
 
     @ui.page("/ui/blackboard")
     def blackboard(request: Request):
