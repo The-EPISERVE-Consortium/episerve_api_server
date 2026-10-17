@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 
 _LOGIN_EXPIRED = "Your login has expired; please log in again."
 _ALL_MODELS = "All models"
+_DEFAULT_RANK_BY = "mae"
+_TOP_N = 3  # runs shown while "Show all runs" is off
 # Metric cells show formatted strings; sort on the raw numbers, missing values last when ascending.
 _RAW_SORT = (
     "(a, b, rowA, rowB) => { const x = rowA.raw.METRIC, y = rowB.raw.METRIC;"
@@ -210,7 +212,7 @@ def register_leaderboard_page() -> None:
 
     @ui.page("/ui/benchmarks/{benchmark_id}")
     def leaderboard_page(benchmark_id: int, tab: str = _DEFAULT_TAB):
-        _header("/ui/benchmarks", api=f"benchmarks/{benchmark_id}/leaderboard")
+        _header("/ui/benchmarks", api=f"benchmarks/{benchmark_id}/leaderboard?rank_by={_DEFAULT_RANK_BY}&all_runs=true")
         logged_in = _is_logged_in()
         selected = benchmark_id
         try:
@@ -227,7 +229,7 @@ def register_leaderboard_page() -> None:
                 ui.link("← All benchmarks", "/ui/benchmarks").classes("text-sm")
                 _error_label("Benchmark not found.")
             return
-        state = {"rank_by": "interval_score", "all_runs": False, "model": None, "min_days": 0, "text": ""}
+        state = {"rank_by": _DEFAULT_RANK_BY, "all_runs": False, "model": None, "min_days": 0, "text": ""}
         tab = _FORMER_TABS.get(tab, tab)
         open_tab = tab if tab in dict(_TABS) else _DEFAULT_TAB
 
@@ -260,7 +262,7 @@ def register_leaderboard_page() -> None:
         @ui.refreshable
         def board_view():
             try:
-                board = actions.read_leaderboard(selected, state["rank_by"], not state["all_runs"])
+                board = actions.read_leaderboard(selected, state["rank_by"], False)  # every run; the top ones are cut below
             except actions.NotFound:
                 _error_label("Benchmark not found.")
                 return
@@ -296,6 +298,10 @@ def register_leaderboard_page() -> None:
                 entries = filter_entries(board.entries, flt["model"], flt["min_days"], flt["text"])
                 if flt["model"] or flt["min_days"] or flt["text"].strip():
                     ui.label(f"Showing {len(entries)} of {len(board.entries)} entries").classes("text-xs text-gray-500")
+                if not state["all_runs"] and len(entries) > _TOP_N:
+                    ui.label(f"The top {_TOP_N} of {len(entries)} runs. Turn on \"Show all runs\" to see all of them."
+                             ).classes("text-xs text-gray-500")
+                    entries = entries[:_TOP_N]
                 table = ui.table(columns=columns, rows=table_rows(board, entries), row_key="run_qid",
                                  pagination={"rowsPerPage": 25}).classes("w-full")
                 _help_headers(table, columns)

@@ -76,7 +76,7 @@ def test_page_renders_the_requested_benchmark_from_the_database_only(monkeypatch
     out = _render(monkeypatch, board=_board([_entry(), _entry("Q11", "other", mae=2.0)]), rank_log=log)
     assert out["status"] == 200
     assert [r["model"] for r in out["table"].rows] == ["timesfm", "other"]
-    assert log[0][0] == 3
+    assert log[0] == (3, "mae", False)      # ranked by MAE, every run is read; the top ones are cut in the page
     assert "Best entry: timesfm, ranked by interval score." in out["labels"]
 
 
@@ -428,7 +428,7 @@ def test_only_an_admin_can_edit_the_description_and_it_is_saved_for_a_final_benc
 def test_the_header_of_the_page_holds_only_the_title_and_the_api_box(monkeypatch):
     out = _render(monkeypatch, board=_board([_entry()]))
     assert "Flu" in out["labels"]
-    assert "curl http://test/benchmarks/3/leaderboard" in out["labels"]
+    assert "curl http://test/benchmarks/3/leaderboard?rank_by=mae&all_runs=true" in out["labels"]
     assert not any(t.startswith(("Organized by", "Dataset:", "Test window:")) for t in out["labels"])
 
 
@@ -467,4 +467,31 @@ def test_column_titles_of_the_leaderboard_have_a_tooltip_with_the_explanation(mo
             "header-cell-history", "header-cell-scored"} <= set(out["slots"])
     assert "<q-tooltip" in out["slots"]["header-cell-mae"] and "Mean absolute error" in out["slots"]["header-cell-mae"]
     assert "{{ props.col.label }}" in out["slots"]["header-cell-mae"]       # the title itself stays
+
+
+def _five():
+    return _board([_entry(f"Q{i}", "timesfm" if i % 2 else "chronos", mae=float(i)) for i in range(1, 6)])
+
+
+def test_without_show_all_runs_only_the_top_three_are_listed_and_the_page_says_so(monkeypatch):
+    def grab(out, client, find, drain):
+        out["labels"] = _labels(find)
+
+    out = _render(monkeypatch, board=_five(), after=grab)
+    assert [r["run_qid"] for r in out["table"].rows] == ["Q1", "Q2", "Q3"]       # the best MAE first
+    assert [r["rank"] for r in out["table"].rows] == [1, 2, 3]
+    assert any(t.startswith("The top 3 of 5 runs") for t in out["labels"])
+
+
+def test_show_all_runs_lists_every_run(monkeypatch):
+    async def scenario(out, client, find, drain):
+        next(sw for sw in find(ui.switch) if sw.text == "Show all runs").value = True
+        await drain()
+        table = next(t for t in find(ui.table) if t.props.get("row-key") == "run_qid")
+        out["qids"] = [r["run_qid"] for r in table.rows]
+        out["labels"] = _labels(find)
+
+    out = _render(monkeypatch, board=_five(), after=scenario)
+    assert out["qids"] == ["Q1", "Q2", "Q3", "Q4", "Q5"]
+    assert not any(t.startswith("The top 3 of") for t in out["labels"])
 
