@@ -18,7 +18,7 @@ def test_an_older_manifest_without_sources_still_names_the_target_file():
     (target,) = recipe.source_rows(ROW, MANIFEST)
     assert (target["role"], target["qid"], target["file"]) == ("target", "Q1", "d.parquet")
     assert target["url"].endswith("/doip/retrieve/Q1/d.parquet?version=" + "c" * 64)
-    assert target["catalog"].endswith("/dataset/q1")
+    assert target["catalog"] == "https://data.episerve.zib.de/dataset/q1"
 
 
 def test_layouts_describe_one_row_per_date_and_fall_back_to_date_and_target():

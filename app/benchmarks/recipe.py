@@ -8,6 +8,9 @@ from app.benchmarks.definition import covariates_from_row, filters_from_row, obj
 from app.config import settings
 
 
+CATALOG_URL = "https://data.episerve.zib.de"      # the public address (the pod's CKAN_URL is the cluster-internal one)
+
+
 def _filters_text(filters) -> str:
     return " and ".join(f"{column} = {value!r}" for column, value in filters)
 
@@ -17,8 +20,8 @@ def file_layouts(row: dict, manifest: dict) -> list[dict]:
     owner = {name: covariate.name for covariate in covariates_from_row(row) for name in covariate.output_columns()}
     layouts = []
     for kind, title, meaning in (
-        ("input", "input.parquet", "one row per observation date of the target series in the input window"),
-        ("reference", "reference.parquet", "one row per observation date of the target series in the test window"),
+        ("input", "input.parquet", "an observation date of the target series in the input window"),
+        ("reference", "reference.parquet", "an observation date of the target series in the test window"),
     ):
         entry = manifest[kind]
         columns = [{"column": name,
@@ -45,7 +48,7 @@ def source_rows(row: dict, manifest: dict) -> list[dict]:
         component = source.get("component")
         rows.append({
             "role": source["role"], "qid": source["qid"],
-            "catalog": f"{settings.ckan_url.rstrip('/')}/dataset/{source['qid'].lower()}",
+            "catalog": f"{CATALOG_URL}/dataset/{source['qid'].lower()}",
             "file": component,
             "url": f"{base}/doip/retrieve/{source['qid']}/{component}" + (f"?version={commit}" if commit else "")
             if component else None,
