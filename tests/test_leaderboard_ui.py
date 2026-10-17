@@ -276,26 +276,6 @@ def test_anonymous_users_get_no_candidates_and_no_backend_call(monkeypatch):
     assert "Potential candidates for this leaderboard" not in out["labels"]
 
 
-def test_remove_button_on_the_run_page_removes_the_entry_and_returns_to_the_board(monkeypatch):
-    removed, went = [], []
-    monkeypatch.setattr(leaderboard_page.actions, "remove_entry", lambda bid, eid: removed.append((bid, eid)))
-    monkeypatch.setattr(leaderboard_page.ui.navigate, "to", lambda target, *a, **k: went.append(target))
-
-    async def scenario(out, client, find, drain):
-        await _click(_button(find, "Remove from leaderboard"), client)
-        await drain()
-
-    _detail(monkeypatch, logged_in=True, after=scenario)
-    assert removed == [(3, 9)] and went == ["/ui/benchmarks/3"]
-
-
-def test_anonymous_users_get_no_remove_button_on_the_run_page(monkeypatch):
-    def grab(out, client, find, drain):
-        out["buttons"] = [b.text for b in find(ui.button)]
-    out = _detail(monkeypatch, after=grab)
-    assert "Remove from leaderboard" not in out["buttons"]
-
-
 def _capture_notify(monkeypatch):
     notes = []
     monkeypatch.setattr(leaderboard_page.ui, "notify", lambda message, **kw: notes.append((message, kw)))
@@ -320,20 +300,6 @@ def test_expired_login_blocks_add_run(monkeypatch):
 
     _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
     assert called == [] and notes and notes[-1][1]["type"] == "warning" and "expired" in notes[-1][0]
-
-
-def test_expired_login_blocks_remove_entry(monkeypatch):
-    called = []
-    monkeypatch.setattr(leaderboard_page.actions, "remove_entry", lambda bid, eid: called.append(eid))
-    notes = _capture_notify(monkeypatch)
-
-    async def scenario(out, client, find, drain):
-        _expired(monkeypatch)
-        await _click(_button(find, "Remove from leaderboard"), client)
-        await drain()
-
-    _detail(monkeypatch, logged_in=True, after=scenario)
-    assert called == [] and notes and notes[-1][1]["type"] == "warning"
 
 
 def test_unexpected_write_errors_are_generic_and_logged(monkeypatch, caplog):
@@ -464,6 +430,14 @@ def test_the_header_of_the_page_holds_only_the_title_and_the_api_box(monkeypatch
     assert "Flu" in out["labels"]
     assert "curl http://test/benchmarks/3/leaderboard" in out["labels"]
     assert not any(t.startswith(("Organized by", "Dataset:", "Test window:")) for t in out["labels"])
+
+
+def test_the_run_page_has_no_remove_button_for_anybody(monkeypatch):
+    def grab(out, client, find, drain):
+        out["buttons"] = [b.text for b in find(ui.button)]
+
+    out = _detail(monkeypatch, logged_in=True, after=grab)
+    assert "Remove from leaderboard" not in out["buttons"]
 
 
 def test_the_run_page_shows_the_api_box_too(monkeypatch):

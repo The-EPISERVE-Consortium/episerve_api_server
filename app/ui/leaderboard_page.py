@@ -69,7 +69,7 @@ _OPEN_RUN_JS = (
 )
 
 
-def _entry_detail(entry, benchmark_id: int, logged_in: bool) -> None:
+def _entry_detail(entry, benchmark_id: int) -> None:
     """The detail of one scored run: window, pins, parameters, chart and per-date rows (+ Remove when logged in)."""
     ui.label(f"{entry.model_name} — run {entry.run_qid}").classes("text-2xl font-semibold")
     ui.link(
@@ -96,23 +96,6 @@ def _entry_detail(entry, benchmark_id: int, logged_in: bool) -> None:
         ],
         rows=point_rows(entry), row_key="date",
     ).props("dense flat").classes("w-full")
-    if logged_in and entry.entry_id is not None:
-        def remove(entry_id=entry.entry_id):
-            if not _is_logged_in():
-                ui.notify(_LOGIN_EXPIRED, type="warning")
-                return
-            try:
-                actions.remove_entry(benchmark_id, entry_id)
-            except actions.NotFound as e:
-                ui.notify(str(e), type="negative")
-                return
-            except Exception:
-                logger.exception("could not remove the entry")
-                ui.notify("Could not remove the entry.", type="negative")
-                return
-            ui.navigate.to(f"/ui/benchmarks/{benchmark_id}")
-
-        ui.button("Remove from leaderboard", on_click=remove).props("flat color=negative")
 
 
 def _is_admin() -> bool:
@@ -208,7 +191,6 @@ def register_leaderboard_page() -> None:
     def run_page(benchmark_id: int, run_qid: str):
         """One scored run of a benchmark (opened in its own window from the leaderboard)."""
         _header("/ui/benchmarks", api=f"benchmarks/{benchmark_id}/leaderboard?all_runs=true")
-        logged_in = _is_logged_in()
         with ui.column().classes("px-8 py-6 w-full max-w-5xl gap-3"):
             ui.link("← Back to the leaderboard", f"/ui/benchmarks/{benchmark_id}").classes("text-sm")
             try:
@@ -224,7 +206,7 @@ def register_leaderboard_page() -> None:
             if entry is None:
                 _error_label("Run not found.")
                 return
-            _entry_detail(entry, benchmark_id, logged_in)
+            _entry_detail(entry, benchmark_id)
 
     @ui.page("/ui/benchmarks/{benchmark_id}")
     def leaderboard_page(benchmark_id: int, tab: str = _DEFAULT_TAB):
