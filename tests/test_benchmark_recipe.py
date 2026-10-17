@@ -52,3 +52,72 @@ def test_a_covariate_step_aligns_with_the_grid_in_three_lines():
     assert len(step["code"].splitlines()) == 3 and 'cov["city"] == \'Berlin\'' in step["code"]
     assert "np.searchsorted(grid" in step["code"] and ".mean()" in step["code"]
     assert "from w.parquet" in step["text"] and "wetter__temp" in step["text"]
+
+
+# --- the description must do what the code does ---------------------------------------------------------------
+
+
+def _frames():
+    import numpy as np
+    import pandas as pd
+    days = pd.date_range("2025-01-01", periods=80, freq="7D")
+    target = pd.DataFrame({"datum": days.strftime("%Y-%m-%d"), "v": np.arange(80, dtype=float), "typ": "a",
+                           "age": "35-59"})
+    other = target.assign(typ="b", v=-1.0)                                  # a different series that the filters drop
+    noisy = pd.DataFrame({"datum": ["2025-01-01"], "v": [float("nan")], "typ": "a", "age": "35-59"})
+    target = pd.concat([target, other, noisy], ignore_index=True)
+    daily = pd.date_range("2024-12-01", periods=600, freq="D")
+    cov = pd.DataFrame({"day": daily.strftime("%Y-%m-%d"), "temp": np.arange(600, dtype=float) % 17,
+                        "city": ["Berlin", "Hamburg"] * 300})
+    cov.loc[10:20, "temp"] = float("nan")
+    return target, cov
+
+
+def _parquet(frame):
+    from io import BytesIO
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    buffer = BytesIO()
+    pq.write_table(pa.Table.from_pandas(frame, preserve_index=False), buffer)
+    return buffer.getvalue()
+
+
+def test_the_sql_and_python_of_the_steps_give_what_the_builder_gives():
+    import duckdb
+    import numpy as np
+    import pandas as pd
+    from app.benchmarks import materialize
+    from app.benchmarks.store import benchmark_from_row
+
+    target, cov = _frames()
+    for aggregation in ("mean", "sum", "last"):
+        row = {**ROW, "filters": json.dumps([["typ", "a"], ["age", "35-59"]]), "history_end": date(2026, 4, 1),
+               "test_start": date(2026, 4, 8), "test_end": date(2026, 6, 24), "history_start": date(2025, 2, 5),
+               "dataset_qid": "Q1", "covariates": json.dumps([
+                   {"name": "wetter", "dataset_qid": "Q2", "date_column": "day", "columns": ["temp"],
+                    "filters": [["city", "Berlin"]], "aggregation": aggregation}])}
+        manifest = {**MANIFEST, "sources": [{"role": "target", "qid": "Q1", "component": "d.parquet"},
+                                            {"role": "wetter", "qid": "Q2", "component": "w.parquet"}]}
+        built = materialize.build(benchmark_from_row(row), date(2026, 4, 1), _parquet(target), {"wetter": _parquet(cov)})
+        steps = recipe.steps(row, manifest)
+
+        connection = duckdb.connect()
+        connection.register("df", target)
+        connection.execute(steps[1]["code"])
+        input_sql, reference_sql = (q for q in steps[2]["code"].split(";\n") if q.strip())
+        input_table = connection.execute(input_sql.rstrip(";")).df()
+        reference_table = connection.execute(reference_sql.rstrip(";")).df()
+        assert input_table["v"].tolist() == built.input["v"].tolist()
+        assert pd.to_datetime(input_table["datum"]).dt.date.tolist() == built.input["datum"].tolist()
+        assert reference_table["v"].tolist() == built.reference["v"].tolist()
+
+        scope = {"pd": pd, "np": np, "cov": cov, "grid": pd.DatetimeIndex(pd.to_datetime(input_table["datum"]))}
+        exec(steps[3]["code"], scope)                                                  # noqa: S102 (our own text)
+        expected = built.input["wetter__temp"].to_numpy()
+        np.testing.assert_allclose(scope["aligned"].to_numpy().ravel(), expected, equal_nan=True)
+
+
+def test_the_steps_are_stored_with_the_manifest_and_shown_as_stored(monkeypatch):
+    stored = [{"text": "frozen", "code": "", "language": ""}]
+    assert recipe.display_steps(ROW, {**MANIFEST, "recipe": stored}) == stored
+    assert recipe.display_steps(ROW, MANIFEST)[0]["language"] == "python"         # generated for older benchmarks

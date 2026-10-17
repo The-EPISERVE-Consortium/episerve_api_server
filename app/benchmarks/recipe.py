@@ -111,6 +111,7 @@ def steps(row: dict, manifest: dict) -> list[dict]:
         source = next((s for s in sources if s["role"] == covariate.name), None)
         cond = "".join(f' & (cov["{c}"] == {v!r})' for c, v in covariate.filters)
         cols = list(covariate.columns)
+        how = "sum(min_count=1)" if covariate.aggregation == "sum" else f"{covariate.aggregation}()"
         out.append({
             "text": f"Covariate {covariate.name} (dataset {covariate.dataset_qid}): the rows between two input dates "
                     f"are combined by {covariate.aggregation} into the later date (cov is read like df in step 1"
@@ -118,10 +119,10 @@ def steps(row: dict, manifest: dict) -> list[dict]:
                     f"nothing is filled in, and rows after {history_end} are never used. Output columns: "
                     f"{', '.join(covariate.output_columns())}.",
             "language": "python",
-            "code": f"rows = cov[(pd.to_datetime(cov[\"{covariate.date_column}\"]) <= \"{history_end}\"){cond}]\n"
-                    f"slot = np.searchsorted(grid, pd.to_datetime(rows[\"{covariate.date_column}\"]), side=\"left\")\n"
-                    f"aligned = rows.groupby(slot)[{cols!r}].{covariate.aggregation}()"
-                    f".reindex(range(len(grid)))",
+            "code": f"d = pd.to_datetime(cov[\"{covariate.date_column}\"])\n"
+                    f"rows = cov[(d > grid[0] - grid.to_series().diff().median()) & (d <= \"{history_end}\"){cond}]\n"
+                    f"aligned = rows.groupby(np.searchsorted(grid, d[rows.index], side=\"left\"))"
+                    f"[{cols!r}].{how}.reindex(range(len(grid)))",
         })
     columns = manifest["input"].get("columns") or [date_column, target_column]
     out.append({
@@ -138,3 +139,9 @@ def steps(row: dict, manifest: dict) -> list[dict]:
         "language": "", "code": "",
     })
     return out
+
+
+def display_steps(row: dict, manifest: dict) -> list[dict]:
+    """The steps to show: the ones stored with the benchmark when it was finalized; for a benchmark finalized before
+    that, steps generated from its definition."""
+    return manifest.get("recipe") or steps(row, manifest)

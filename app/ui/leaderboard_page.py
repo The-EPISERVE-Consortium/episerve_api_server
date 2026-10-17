@@ -187,7 +187,7 @@ def _generated_data_sections(row: dict, manifest: dict) -> None:
         "body-cell-file", """<q-td :props="props"><a v-if="props.row.url" :href="props.row.url" target="_blank">"""
                           """{{ props.value }}</a><span v-else>-</span></q-td>""")
     ui.label("How the files are generated").classes("text-xl font-semibold text-gray-900 mt-4")
-    for number, step in enumerate(recipe.steps(row, manifest), start=1):
+    for number, step in enumerate(recipe.display_steps(row, manifest), start=1):
         ui.label(f"{number}. {step['text']}").classes("text-sm text-gray-700 max-w-4xl mt-2")
         if step["code"]:
             ui.code(step["code"], language=step["language"]).classes("w-full max-w-4xl")

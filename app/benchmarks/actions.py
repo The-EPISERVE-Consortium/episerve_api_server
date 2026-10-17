@@ -9,7 +9,7 @@ import json
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
-from app.benchmarks import fdo, materialize, store
+from app.benchmarks import fdo, materialize, recipe, store
 from app.benchmarks.definition import (
     Benchmark, DefinitionError, derive_horizon, input_uri, materialized_from_row,
     normalize_covariates, normalize_filters, validate,
@@ -227,12 +227,15 @@ def _covariate_data(benchmark: Benchmark, commit: str, sources: list | None = No
 
 
 def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materialize.Built",
-              sources: list | None = None) -> dict:
-    """Store the generated files as one FDO object and return the manifest recorded with the finalized benchmark."""
+              sources: list | None, view: dict) -> dict:
+    """Store the generated files as one FDO object and return the manifest recorded with the finalized benchmark.
+
+    ``view`` is the benchmark row as it is after finalizing (resolved history end, pinned commit, component); the
+    steps that describe how the files were generated are generated from it once and kept in the manifest."""
     input_bytes, input_sha = materialize.to_parquet(built.input)
     reference_bytes, reference_sha = materialize.to_parquet(built.reference)
     qid = fdo.mint_qid()
-    sources = sorted({benchmark.dataset_qid, *(c.dataset_qid for c in benchmark.covariates)})
+    source_qids = sorted({benchmark.dataset_qid, *(c.dataset_qid for c in benchmark.covariates)})
     parts = {
         "input": ("input.parquet", input_bytes, input_sha, built.input),
         "reference": ("reference.parquet", reference_bytes, reference_sha, built.reference),
@@ -248,12 +251,13 @@ def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materi
     files[fdo.fdo_path(qid)] = fdo.build_fdo(
         qid=qid, benchmark_id=benchmark_id, benchmark_name=name,
         files={role: {k: v for k, v in manifest[role].items() if k != "qid"} for role in parts},
-        benchmark=benchmark, source_qids=sources,
+        benchmark=benchmark, source_qids=source_qids,
         description=f"{name}. Generated model input (history window, target series and covariates) and "
                     "reference data (the test window the forecasts are scored against).")
     branch, commit = lakefs_client.write_benchmark_objects(
         files, f"benchmark {benchmark_id}: generated input and reference files")
     manifest.update(branch=branch, commit=commit)
+    manifest["recipe"] = recipe.steps(view, manifest)
     return manifest
 
 
@@ -304,8 +308,9 @@ def finalize(benchmark_id: int, expected_commit: str | None = None, *, by: User)
     again = _row(benchmark_id)
     if (again["name"], store.benchmark_from_row(again)) != (row["name"], benchmark):
         raise Conflict("The draft changed while it was being finalized; check it again.")
+    view = {**row, "history_end": report.history_end, "data_commit": commit, "component_name": report.component_name}
     manifest = _manifest(benchmark_id, row["name"], replace(benchmark, data_commit=commit), report.built,
-                         report.sources)
+                         report.sources, view)
     done = store.finalize(
         benchmark_id, data_commit=commit, component_name=report.component_name, truth_points=report.truth_points,
         prediction_length=report.prediction_length, history_end=report.history_end, materialized=manifest,
@@ -332,7 +337,25 @@ def materialize_final(benchmark_id: int) -> dict:
     report = _evaluate(benchmark, _dataset(benchmark.dataset_qid), benchmark.data_commit, row["component_name"])
     if not report.ok:
         raise LoadError("; ".join(report.problems))
-    manifest = _manifest(benchmark_id, row["name"], benchmark, report.built, report.sources)
+    manifest = _manifest(benchmark_id, row["name"], benchmark, report.built, report.sources, row)
+    store.set_materialized(benchmark_id, manifest)
+    return manifest
+
+
+def store_recipe(benchmark_id: int) -> dict:
+    """Keep the description of how a final benchmark's files were generated with its manifest (for a benchmark that
+    was finalized before the manifest carried it); the sources default to the benchmark's target dataset.
+
+    Raises:
+        NotFound: Unknown, not final or without generated files.
+    """
+    row = _row(benchmark_id)
+    manifest = materialized_from_row(row)
+    if store.state(row) != "final" or not manifest:
+        raise NotFound(f"Benchmark {benchmark_id} has no generated files")
+    if not manifest.get("sources"):
+        manifest["sources"] = [{"role": "target", "qid": row["dataset_qid"], "component": row["component_name"]}]
+    manifest["recipe"] = recipe.steps(row, manifest)
     store.set_materialized(benchmark_id, manifest)
     return manifest
 
