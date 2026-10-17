@@ -24,6 +24,8 @@ body, .q-layout, .q-page-container {{ background: var(--epi-bg); }}
   margin: 0 auto;
   padding: 0 !important;
 }}
+.q-tab--active {{ color: var(--epi-accent) !important; }}
+.q-tab__indicator {{ color: var(--epi-accent) !important; }}
 """
 
 

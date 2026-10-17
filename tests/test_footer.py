@@ -52,3 +52,4 @@ def test_the_ui_theme_puts_the_content_in_a_white_rounded_card_on_the_beige_the_
     css = theme.THEME_CSS
     assert theme.BEIGE in css and "border-radius: 16px" in css and ".nicegui-content" in css
     assert "var(--epi-bg" in footer_module.UI_FOOTER_CSS      # the footer takes the same beige
+    assert ".q-tab--active" in css and ".q-tab__indicator" in css   # the active tab is blue
