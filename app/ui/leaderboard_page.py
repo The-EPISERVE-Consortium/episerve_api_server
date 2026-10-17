@@ -8,9 +8,9 @@ from starlette.requests import Request
 from app.auth import _daily_token
 from app.benchmarks import actions as bactions
 from app.leaderboard import actions
-from app.leaderboard.about import (
-    METRIC_DOCS, description_text, entry_rules, evaluation_facts, overview_facts, training_facts,
-)
+from app.benchmarks.definition import evaluation_sql
+from app.benchmarks.store import benchmark_from_row
+from app.leaderboard.about import METRIC_DOCS, description_text, overview_facts
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
 from app.leaderboard.present import (
@@ -169,14 +169,6 @@ def _entry_detail(entry, benchmark_id: int, logged_in: bool) -> None:
         ui.button("Remove from leaderboard", on_click=remove).props("flat color=negative")
 
 
-def _facts_table(facts: list[tuple[str, str]]) -> None:
-    ui.table(
-        columns=[{"name": "property", "label": "", "field": "property", "align": "left"},
-                 {"name": "value", "label": "", "field": "value", "align": "left"}],
-        rows=[{"property": k, "value": v} for k, v in facts], row_key="property",
-    ).props("dense flat hide-header").classes("w-full max-w-4xl")
-
-
 def _overview_tab(row: dict) -> None:
     ui.label(description_text(row)).classes("text-sm text-gray-600")
     with ui.column().classes("gap-1"):
@@ -185,24 +177,26 @@ def _overview_tab(row: dict) -> None:
 
 
 def _data_tab(row: dict, benchmark_id: int) -> None:
+    ui.add_css(".nicegui-code pre, .nicegui-code code { white-space: pre-wrap !important; word-break: break-word; }")
     ui.label("Training data").classes("text-xl font-semibold text-gray-900")
-    _facts_table(training_facts(row))
     try:
         spec = bactions.run_spec(benchmark_id)
         url = spec["input_data_files"][0][0]
-        sql = spec["data_transformation_sql"][0]
+        training = spec["data_transformation_sql"][0]
     except Exception:
         logger.exception("could not build the run spec for the data tab")
-        ui.label("The input URL and SQL are not available right now.").classes("text-sm text-gray-500")
+        ui.label("The data file link and the training SQL are not available right now.").classes(
+            "text-sm text-gray-500")
     else:
+        ui.label("The data file at the pinned version:").classes("text-sm text-gray-600")
         ui.link(url, url, new_tab=True).classes("text-sm break-all")
-        ui.label("Input SQL (applied to the file before the model sees it)").classes("text-sm text-gray-600")
-        ui.code(sql, language="sql").classes("w-full max-w-4xl").style("white-space: pre-wrap; word-break: break-word")
-        ui.add_css(".nicegui-code pre, .nicegui-code code { white-space: pre-wrap !important; word-break: break-word; }")
-
-    ui.label("Evaluation").classes("text-xl font-semibold text-gray-900 mt-4")
-    _facts_table(evaluation_facts(row))
-    ui.label("Metrics").classes("text-lg font-semibold text-gray-900")
+        ui.label("Apply this SQL to the file; the result is what a model sees.").classes("text-sm text-gray-600")
+        ui.code(training, language="sql").classes("w-full max-w-4xl")
+    ui.label("Evaluation data").classes("text-xl font-semibold text-gray-900 mt-4")
+    ui.label("Apply this SQL to the same file; forecasts are scored against the result.").classes(
+        "text-sm text-gray-600")
+    ui.code(evaluation_sql(benchmark_from_row(row)), language="sql").classes("w-full max-w-4xl")
+    ui.label("Evaluation criteria").classes("text-xl font-semibold text-gray-900 mt-4")
     ui.table(
         columns=[{"name": "metric", "label": "Metric", "field": "metric", "align": "left"},
                  {"name": "meaning", "label": "Definition", "field": "meaning", "align": "left",
@@ -210,19 +204,6 @@ def _data_tab(row: dict, benchmark_id: int) -> None:
                  {"name": "better", "label": "Better", "field": "better", "align": "left"}],
         rows=[{"metric": n, "meaning": m, "better": b} for n, m, b in METRIC_DOCS], row_key="metric",
     ).props("dense flat").classes("w-full max-w-5xl")
-    ui.label("Ranking").classes("text-lg font-semibold text-gray-900")
-    with ui.column().classes("gap-1 text-sm text-gray-700"):
-        ui.label("The leaderboard is ranked by the interval score by default; MAE, RMSE and coverage can be "
-                 "chosen. Coverage ranks by its distance to 80%.")
-        ui.label("Entries without a value for the chosen metric come last. By default each model shows its "
-                 "best entry; 'Show all runs' lists every entry.")
-        ui.label("Scores are computed once, when a run is added, and stored with the data version they used; "
-                 "a later revision of the data never changes a score. Models with 'baseline' in their name are "
-                 "marked as reference runs.")
-    ui.label("Which runs are accepted").classes("text-lg font-semibold text-gray-900")
-    with ui.column().classes("gap-1 text-sm text-gray-700"):
-        for rule in entry_rules(row):
-            ui.label("• " + rule)
 
 
 def register_leaderboard_page() -> None:

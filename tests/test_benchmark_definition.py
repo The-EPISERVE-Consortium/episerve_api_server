@@ -4,7 +4,9 @@ from datetime import date, timedelta
 
 import pytest
 
-from app.benchmarks.definition import Benchmark, DefinitionError, derive_horizon, input_sql, validate
+from app.benchmarks.definition import (
+    Benchmark, DefinitionError, derive_horizon, evaluation_sql, input_sql, validate,
+)
 from app.leaderboard.entries import HistoryWindow, has_equality_filter, parse_history_window
 
 
@@ -80,3 +82,12 @@ def test_irregular_spacing_is_flagged():
 def test_horizon_rejects_empty_or_overlapping(observed, last):
     with pytest.raises(DefinitionError):
         derive_horizon(observed, last)
+
+
+def test_evaluation_sql_selects_the_test_window_of_the_series():
+    assert evaluation_sql(_b()) == (
+        'SELECT CAST("datum" AS DATE) AS "datum", "viruslast_normalisiert" FROM df '
+        "WHERE \"typ\" = 'Influenza A+B' AND CAST(\"datum\" AS DATE) >= DATE '2026-04-01' "
+        "AND CAST(\"datum\" AS DATE) <= DATE '2026-09-30' ORDER BY \"datum\""
+    )
+

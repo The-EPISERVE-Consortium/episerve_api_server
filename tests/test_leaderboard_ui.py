@@ -296,30 +296,40 @@ def test_unexpected_write_errors_are_generic_and_logged(monkeypatch, caplog):
 # --- tabs: Overview | Data | Evaluation | Leaderboard -------------------------------------------------------------
 
 
-def test_data_tab_lists_the_facts_the_pin_the_input_link_and_the_sql(monkeypatch):
+def test_data_tab_shows_the_file_link_and_the_sql_for_the_training_and_the_evaluation_data(monkeypatch):
     def grab(out, client, find, drain):
-        out["code"] = [e.content for e in find(ui.code)]
+        out["code"] = [(e.content, _panel_of(e)) for e in find(ui.code)]
         out["links"] = [(e.text, e.props.get("href")) for e in find(ui.link)]
-        out["facts"] = {r["property"]: r["value"] for t in find(ui.table) if t.props.get("row-key") == "property"
-                        for r in t.rows}
 
     out = _render(monkeypatch, board=_board([_entry()]), after=grab)
-    facts = out["facts"]
-    assert facts["Data commit"] == COMMIT and facts["Dataset"] == "Q1" and facts["Test window"].startswith("2022-01-01")
-    assert "SELECT 1 FROM df" in out["code"]
     url = f"https://doip.example/doip/retrieve/Q1/d.parquet?version={COMMIT}"
     assert (url, url) in out["links"]
+    sql = [content for content, panel in out["code"] if panel == "data"]
+    assert len(sql) == 2
+    assert "SELECT 1 FROM df" in sql[0]                                        # the training data: the benchmark's input SQL
+    assert "DATE '2022-01-01'" in sql[1] and "DATE '2022-01-31'" in sql[1]    # the evaluation data: the test window
 
 
 def test_data_tab_survives_a_missing_run_spec(monkeypatch):
     def grab(out, client, find, drain):
         out["code"] = [e.content for e in find(ui.code)]
-        out["facts"] = [t for t in find(ui.table) if t.props.get("row-key") == "property"]
+        out["metrics"] = [t for t in find(ui.table) if t.props.get("row-key") == "metric"]
 
     out = _render(monkeypatch, board=_board([_entry()]), spec=RuntimeError("db down"), after=grab)
-    assert out["status"] == 200 and len(out["facts"]) == 2          # training and evaluation facts still shown
-    assert not any("SELECT" in c for c in out["code"])
-    assert "The input URL and SQL are not available right now." in out["labels"]
+    assert out["status"] == 200 and len(out["metrics"]) == 1
+    assert len(out["code"]) == 1 and "DATE '2022-01-01'" in out["code"][0]        # the evaluation SQL needs no run spec
+    assert "The data file link and the training SQL are not available right now." in out["labels"]
+
+
+def test_data_tab_has_only_the_data_and_the_evaluation_criteria(monkeypatch):
+    def grab(out, client, find, drain):
+        out["tables"] = {t.props.get("row-key"): _panel_of(t) for t in find(ui.table)}
+
+    out = _render(monkeypatch, board=_board([_entry()]), after=grab)
+    for heading in ("Training data", "Evaluation data", "Evaluation criteria"):
+        assert heading in out["labels"]
+    assert out["tables"]["metric"] == "data" and "property" not in out["tables"]        # no fact tables
+    assert not any(t in out["labels"] for t in ("Ranking", "Which runs are accepted", "Metrics"))
 
 
 # --- three tabs: Overview (default), Data and Leaderboard ----------------------------------------------------
@@ -362,17 +372,6 @@ def test_overview_has_the_general_facts_but_no_how_to_run(monkeypatch):
     assert [b for b, panel in out["buttons"] if panel == "overview" and b] == []
 
 
-def test_data_tab_has_training_data_and_evaluation_with_metrics_and_rules(monkeypatch):
-    def grab(out, client, find, drain):
-        out["metrics"] = [t for t in find(ui.table) if t.props.get("row-key") == "metric"]
-        out["panels"] = {t.props.get("row-key"): _panel_of(t) for t in find(ui.table)}
-
-    out = _render(monkeypatch, board=_board([_entry()]), after=grab)
-    assert "Training data" in out["labels"] and "Evaluation" in out["labels"]
-    assert len(out["metrics"]) == 1 and out["panels"]["metric"] == "data"
-    assert any("Which runs are accepted" in t for t in out["labels"])
-
-
 def test_the_header_of_the_page_holds_only_the_title_and_the_api_box(monkeypatch):
     out = _render(monkeypatch, board=_board([_entry()]))
     assert "Flu" in out["labels"]
@@ -395,4 +394,3 @@ def test_the_leaderboard_tab_has_no_start_button_and_no_command_line_block(monke
     assert "Start a run from this benchmark" not in out["buttons"]
     assert out["code"] == [] and out["expansions"] == []
     assert "Add run" in out["buttons"]                       # adding a finished run stays
-

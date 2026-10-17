@@ -119,6 +119,21 @@ def input_sql(benchmark: Benchmark) -> str:
     )
 
 
+def evaluation_sql(benchmark: Benchmark) -> str:
+    """The SQL (table ``df``) that cuts the test window (the evaluation data) out of the dataset."""
+    date_col = _ident(benchmark.date_column)
+    cast = f"CAST({date_col} AS DATE)"
+    where = []
+    if benchmark.filter_column:
+        where.append(f"{_ident(benchmark.filter_column)} = {_literal(benchmark.filter_value or '')}")
+    where.append(f"{cast} >= DATE '{benchmark.test_start.isoformat()}'")
+    where.append(f"{cast} <= DATE '{benchmark.test_end.isoformat()}'")
+    return (
+        f"SELECT {cast} AS {date_col}, {_ident(benchmark.target_column)} FROM df "
+        f"WHERE {' AND '.join(where)} ORDER BY {date_col}"
+    )
+
+
 def derive_horizon(observed: list[date], last_history: date) -> Horizon:
     """Forecast length (in steps of the data's frequency) that reaches the last observed date.
 
