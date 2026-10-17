@@ -34,72 +34,6 @@ def _is_logged_in() -> bool:
     return session.can("benchmarks")
 
 
-async def _add_run_dialog(benchmark_id: int) -> None:
-    """Dialog to add a model run to the benchmark; scoring runs when 'Add' is pressed.
-
-    The dialog opens at once; the candidate runs (one provenance fetch each) load in a worker thread.
-    """
-    holder: dict = {}
-    with ui.dialog() as dialog, ui.card().classes("w-[40rem] max-w-full gap-2"):
-        ui.label("Add run").classes("text-lg font-semibold")
-        error = ui.label("").classes("text-red-600 text-sm")
-        loading = ui.row().classes("items-center gap-2")
-        with loading:
-            ui.spinner(size="sm")
-            ui.label("Loading runs…").classes("text-sm text-gray-600")
-        body = ui.column().classes("w-full gap-2")
-        spinner = ui.spinner(size="md")
-        spinner.set_visibility(False)
-
-        async def add():
-            if not _is_logged_in():
-                ui.notify(_LOGIN_EXPIRED, type="warning")
-                return
-            error.set_text("")
-            select = holder.get("select")
-            if select is None or not select.value:
-                error.set_text("Choose a model run.")
-                return
-            add_btn.disable()
-            spinner.set_visibility(True)
-            try:
-                await run.io_bound(lambda: actions.add_run(benchmark_id, select.value))
-            except (NotScorable, actions.Conflict, actions.NotFound, LoadError) as e:
-                error.set_text(str(e))
-                return
-            except Exception:
-                logger.exception("could not add the run")
-                error.set_text("Could not add the run.")
-                return
-            finally:
-                spinner.set_visibility(False)
-                add_btn.enable()
-            dialog.close()
-            ui.navigate.reload()
-
-        with ui.row().classes("justify-end w-full"):
-            ui.button("Cancel", on_click=dialog.close).props("flat")
-            add_btn = ui.button("Add", on_click=add)
-    dialog.on("hide", dialog.delete)
-    dialog.open()
-    try:
-        candidates = await run.io_bound(actions.candidates, benchmark_id)
-    except Exception:
-        logger.exception("could not list the candidate runs")
-        candidates = []
-        error.set_text("Could not list runs.")
-    loading.delete()
-    addable = {c["qid"]: f"{c['model_name']} · {c['qid']} · {c['run_timestamp'][:10]}"
-               for c in candidates if c["reason"] is None}
-    blocked = [c for c in candidates if c["reason"] is not None]
-    with body:
-        holder["select"] = ui.select(addable, label="Model run").props("outlined dense").classes("w-full")
-        if blocked:
-            with ui.expansion(f"Runs that cannot be added ({len(blocked)})").classes("w-full"):
-                for c in blocked:
-                    ui.label(f"{c['model_name']} ({c['qid']}): {c['reason']}").classes("text-sm text-gray-600")
-
-
 _TABS = [("overview", "Overview"), ("data", "Data"), ("leaderboard", "Leaderboard")]
 _DEFAULT_TAB = "overview"
 # earlier tab names open the tab that now holds their content
@@ -315,8 +249,6 @@ def register_leaderboard_page() -> None:
                 with ui.tab_panel("data").classes("gap-3"):
                     _data_tab(row, selected)
                 with ui.tab_panel("leaderboard").classes("gap-3"):
-                    if logged_in:
-                        ui.button("Add run", on_click=lambda: _add_run_dialog(selected)).classes("self-start")
                     with ui.row().classes("items-end gap-3"):
                         def set_rank(e):
                             state["rank_by"] = e.value
@@ -329,6 +261,7 @@ def register_leaderboard_page() -> None:
                         ui.select(LABELS, label="Rank by", value=state["rank_by"], on_change=set_rank).props("outlined dense")
                         ui.switch("Show all runs", value=state["all_runs"], on_change=set_all)
                     view = ui.column().classes("w-full gap-3")
+                    candidates_box = ui.column().classes("w-full gap-2 mt-6")
 
         @ui.refreshable
         def board_view():
@@ -343,7 +276,7 @@ def register_leaderboard_page() -> None:
                 return
             ui.label(summary(board)).classes("text-sm text-gray-700")
             if not board.entries:
-                ui.label("No runs on this leaderboard yet." + ("" if logged_in else " Log in to add runs.")).classes(
+                ui.label("No runs on this leaderboard yet." + (" Add one from the candidates below." if logged_in else " Log in to add runs.")).classes(
                     "text-sm text-gray-500")
                 return
             columns = [
@@ -407,5 +340,76 @@ def register_leaderboard_page() -> None:
                           on_change=set_min_days).props("outlined dense")
             board_table()
 
+        @ui.refreshable
+        async def candidates_view():
+            """Finished runs that fit this benchmark but are not on the leaderboard yet, each with an add button.
+
+            Listing them reads the provenance of every run (CKAN, DOIP), so it happens in a worker thread after
+            the page is shown, and only for users who may add runs.
+            """
+            ui.label("Potential candidates for this leaderboard").classes("text-lg font-semibold text-gray-900")
+            ui.label("Finished model runs that fit this benchmark (input read at the pinned data version, one "
+                     "input) and are not on the leaderboard yet.").classes("text-sm text-gray-600")
+            loading = ui.row().classes("items-center gap-2")
+            with loading:
+                ui.spinner(size="sm")
+                ui.label("Loading runs…").classes("text-sm text-gray-600")
+            try:
+                found = await run.io_bound(actions.candidates, selected)
+            except Exception:
+                logger.exception("could not list the candidate runs")
+                loading.delete()
+                _error_label("Could not list the candidate runs.")
+                return
+            loading.delete()
+            rows = [{"qid": c["qid"], "model": c["model_name"], "date": c["run_timestamp"][:10]}
+                    for c in found if c["reason"] is None]
+            if not rows:
+                ui.label("No other matching runs right now.").classes("text-sm text-gray-500")
+                return
+            candidates = ui.table(
+                columns=[{"name": "model", "label": "Model", "field": "model", "align": "left",
+                          "style": "white-space: normal; max-width: 20rem"},
+                         {"name": "qid", "label": "Run", "field": "qid", "align": "left"},
+                         {"name": "date", "label": "Date", "field": "date", "align": "left"},
+                         {"name": "add", "label": "", "field": "qid", "align": "right"}],
+                rows=rows, row_key="qid",
+            ).props("flat bordered dense hide-bottom").classes("max-w-4xl w-full")
+            candidates.add_slot("body-cell-model", _MODEL_CELL)
+            candidates.add_slot("body-cell-add", (
+                "<q-td :props='props' class='text-right'><q-btn dense flat no-caps color='primary' "
+                "label='Add to leaderboard' @click=\"() => $parent.$emit('add', props.row)\" /></q-td>"))
+
+            async def add_candidate(e):
+                qid = (e.args or {}).get("qid")
+                if not _is_logged_in():
+                    ui.notify(_LOGIN_EXPIRED, type="warning")
+                    return
+                if not qid:
+                    return
+                candidates.props("loading")
+                try:
+                    await run.io_bound(lambda: actions.add_run(selected, qid))
+                except (NotScorable, actions.Conflict, actions.NotFound, LoadError) as err:
+                    candidates.props(remove="loading")
+                    ui.notify(str(err), type="negative", multi_line=True)
+                    return
+                except Exception:
+                    logger.exception("could not add the run")
+                    candidates.props(remove="loading")
+                    ui.notify("Could not add the run.", type="negative")
+                    return
+                ui.notify(f"{qid} added to the leaderboard", type="positive")
+                board_view.refresh()
+                candidates_view.refresh()
+
+            candidates.on("add", add_candidate)
+
         with view:
             board_view()
+        if logged_in:
+            async def load_candidates():
+                with candidates_box:
+                    await candidates_view()
+
+            ui.timer(0.1, load_candidates, once=True)  # after the page is shown

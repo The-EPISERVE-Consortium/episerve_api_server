@@ -1,9 +1,10 @@
 """The stored leaderboard page: reads only, no external calls."""
 
+import asyncio
 from datetime import date
 
 import pytest
-from nicegui import ui
+from nicegui import events, ui
 
 from app.leaderboard.entries import Benchmark
 from app.leaderboard.service import Entry, Leaderboard
@@ -154,56 +155,108 @@ def _button(find, label):
     return next((b for b in find(ui.button) if b.props.get("label") == label), None)
 
 
+CANDIDATES = [
+    {"qid": "Q10", "model_name": "timesfm", "run_timestamp": "2026-01-02T00:00:00Z", "reason": None},
+    {"qid": "Q11", "model_name": "chronos", "run_timestamp": "2026-01-01T00:00:00Z",
+     "reason": "run status is failed, not success"},
+    {"qid": "Q12", "model_name": "chronos", "run_timestamp": "2026-01-01T00:00:00Z",
+     "reason": "already on this leaderboard"},
+]
+
+
+def _candidates(monkeypatch, found=CANDIDATES):
+    monkeypatch.setattr(leaderboard_page.actions, "candidates", lambda bid: found)
+
+
+async def _load_candidates(find):
+    """Run the timer that fills the candidates table once the page is shown."""
+    for timer in find(ui.timer):
+        res = timer.callback()
+        if asyncio.iscoroutine(res):
+            await res
+
+
+def _candidate_table(find):
+    return next((t for t in find(ui.table) if t.props.get("row-key") == "qid"), None)
+
+
+async def _press_add(find, client, qid):
+    """The 'Add to leaderboard' button of a row emits an 'add' event with the row."""
+    table = _candidate_table(find)
+    row = next(r for r in table.rows if r["qid"] == qid)
+    for listener in table._event_listeners.values():
+        if listener.type == "add":
+            res = listener.handler(events.GenericEventArguments(sender=table, client=client, args=row))
+            if asyncio.iscoroutine(res):
+                await res
+
+
 def test_anonymous_users_see_no_management_controls(monkeypatch):
     out = _render(monkeypatch, board=_board([_entry()]))
     labels = {b.props.get("label") for b in out["find"](ui.button)}
-    assert not labels & {"New benchmark", "Add run", "Retire benchmark"}
+    assert not labels & {"New benchmark", "Retire benchmark"}
 
 
-def test_add_run_dialog_lists_addable_runs_and_explains_the_others(monkeypatch):
-    monkeypatch.setattr(leaderboard_page.actions, "candidates", lambda bid: [
-        {"qid": "Q10", "model_name": "timesfm", "run_timestamp": "2026-01-02T00:00:00Z", "reason": None},
-        {"qid": "Q11", "model_name": "chronos", "run_timestamp": "2026-01-01T00:00:00Z", "reason": "run status is failed, not success"},
-    ])
+def test_candidates_table_lists_only_fitting_runs_and_adding_one_scores_it_and_refreshes(monkeypatch):
+    _candidates(monkeypatch)
     added = []
     monkeypatch.setattr(leaderboard_page.actions, "add_run", lambda bid, qid: added.append((bid, qid)) or 42)
+    notes = _capture_notify(monkeypatch)
+
+    async def grab(out, client, find, drain):
+        await _load_candidates(find)  # the candidates load after the page is shown
+        out["labels"] = _labels(find)
+        out["rows"] = [dict(r) for r in _candidate_table(find).rows]
+
+    out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=grab)
+    assert "Potential candidates for this leaderboard" in out["labels"]
+    assert out["rows"] == [{"qid": "Q10", "model": "timesfm", "date": "2026-01-02"}]  # failed / already added: not listed
 
     async def scenario(out, client, find, drain):
-        await _click(_button(find, "Add run"), client)
-        await drain()
-        select = next(e for e in find(ui.select) if e.props.get("label") == "Model run")
-        assert list(select.options.values()) == ["timesfm · Q10 · 2026-01-02"] or list(select.options) == ["Q10"]
-        out["labels_dialog"] = _labels(find)
-        select.value = "Q10"
-        await _click(_button(find, "Add"), client)
+        await _load_candidates(find)
+        await _press_add(find, client, "Q10")
         await drain()
 
-    out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
-    assert any("chronos (Q11): run status is failed" in t for t in out["labels_dialog"])
+    _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
     assert added == [(3, "Q10")]
+    assert notes[-1][1]["type"] == "positive" and "Q10" in notes[-1][0]
 
 
-def test_add_run_shows_the_reason_when_scoring_fails(monkeypatch):
+def test_candidates_table_says_so_when_there_is_nothing_to_add(monkeypatch):
+    _candidates(monkeypatch, [CANDIDATES[1], CANDIDATES[2]])
+    async def grab(out, client, find, drain):
+        await _load_candidates(find)
+        out["labels"] = _labels(find)
+
+    out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=grab)
+    assert "No other matching runs right now." in out["labels"]
+
+
+def test_anonymous_users_get_no_candidates_and_no_backend_call(monkeypatch):
+    monkeypatch.setattr(leaderboard_page.actions, "candidates",
+                        lambda bid: (_ for _ in ()).throw(AssertionError("must not be called")))
+    out = _render(monkeypatch, board=_board([_entry()]))
+    assert "Potential candidates for this leaderboard" not in out["labels"]
+
+
+def test_add_shows_the_reason_when_scoring_fails(monkeypatch):
     from app.leaderboard.scoring import NotScorable
 
-    monkeypatch.setattr(leaderboard_page.actions, "candidates", lambda bid: [
-        {"qid": "Q10", "model_name": "timesfm", "run_timestamp": "2026-01-02T00:00:00Z", "reason": None}])
+    _candidates(monkeypatch)
 
     def refuse(bid, qid):
         raise NotScorable("forecast covers 1 of 2 dates in the test window")
 
     monkeypatch.setattr(leaderboard_page.actions, "add_run", refuse)
+    notes = _capture_notify(monkeypatch)
 
     async def scenario(out, client, find, drain):
-        await _click(_button(find, "Add run"), client)
+        await _load_candidates(find)
+        await _press_add(find, client, "Q10")
         await drain()
-        next(e for e in find(ui.select) if e.props.get("label") == "Model run").value = "Q10"
-        await _click(_button(find, "Add"), client)
-        await drain()
-        out["labels_after"] = _labels(find)
 
-    out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
-    assert any("forecast covers 1 of 2 dates" in t for t in out["labels_after"])
+    _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert notes[-1][1]["type"] == "negative" and "forecast covers 1 of 2 dates" in notes[-1][0]
 
 
 def test_remove_button_on_the_run_page_removes_the_entry_and_returns_to_the_board(monkeypatch):
@@ -237,18 +290,15 @@ def _expired(monkeypatch):
 
 
 def test_expired_login_blocks_add_run(monkeypatch):
-    monkeypatch.setattr(leaderboard_page.actions, "candidates", lambda bid: [
-        {"qid": "Q10", "model_name": "timesfm", "run_timestamp": "2026-01-02T00:00:00Z", "reason": None}])
+    _candidates(monkeypatch)
     called = []
     monkeypatch.setattr(leaderboard_page.actions, "add_run", lambda bid, qid: called.append(qid) or 1)
     notes = _capture_notify(monkeypatch)
 
     async def scenario(out, client, find, drain):
-        await _click(_button(find, "Add run"), client)
-        await drain()
-        next(e for e in find(ui.select) if e.props.get("label") == "Model run").value = "Q10"
+        await _load_candidates(find)
         _expired(monkeypatch)
-        await _click(_button(find, "Add"), client)
+        await _press_add(find, client, "Q10")
         await drain()
 
     _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
@@ -270,26 +320,22 @@ def test_expired_login_blocks_remove_entry(monkeypatch):
 
 
 def test_unexpected_write_errors_are_generic_and_logged(monkeypatch, caplog):
-    monkeypatch.setattr(leaderboard_page.actions, "candidates", lambda bid: [
-        {"qid": "Q10", "model_name": "timesfm", "run_timestamp": "2026-01-02T00:00:00Z", "reason": None}])
+    _candidates(monkeypatch)
 
     def boom(bid, qid):
         raise RuntimeError("Can't connect to MySQL server on 'db.internal'")
 
     monkeypatch.setattr(leaderboard_page.actions, "add_run", boom)
+    notes = _capture_notify(monkeypatch)
 
     async def scenario(out, client, find, drain):
-        await _click(_button(find, "Add run"), client)
+        await _load_candidates(find)
+        await _press_add(find, client, "Q10")
         await drain()
-        next(e for e in find(ui.select) if e.props.get("label") == "Model run").value = "Q10"
-        await _click(_button(find, "Add"), client)
-        await drain()
-        out["labels_after"] = _labels(find)
 
     with caplog.at_level("ERROR"):
-        out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
-    assert "Could not add the run." in out["labels_after"]
-    assert not any("db.internal" in t for t in out["labels_after"])
+        _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert notes[-1][0] == "Could not add the run." and "db.internal" not in notes[-1][0]
     assert any("db.internal" in (r.exc_text or "") for r in caplog.records)
 
 
@@ -417,4 +463,4 @@ def test_the_leaderboard_tab_has_no_start_button_and_no_command_line_block(monke
     out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=grab)
     assert "Start a run from this benchmark" not in out["buttons"]
     assert out["code"] == [] and out["expansions"] == []
-    assert "Add run" in out["buttons"]                       # adding a finished run stays
+    assert "Add run" not in out["buttons"]                   # runs are added from the candidates table below
