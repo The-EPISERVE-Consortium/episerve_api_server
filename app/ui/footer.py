@@ -92,8 +92,11 @@ FOOTER_CSS = """
 }
 """
 
-# On the UI pages the footer has a light grey shade; only the landing page, which is beige itself, uses the beige.
-UI_FOOTER_CSS = ".q-footer .site-footer { background: #f3f4f6; }\n"
+# On the UI pages the footer has the beige of the page (app/ui/theme.py), with a line above it.
+UI_FOOTER_CSS = (
+    ".q-footer { background: var(--epi-bg, #f2eee5) !important; }\n"
+    ".q-footer .site-footer { background: var(--epi-bg, #f2eee5); border-top: 1px solid var(--epi-line, #d4cfc5); }\n"
+)
 
 _FOOTER_HTML = """<footer class="site-footer">
   <div class="footer-main">

@@ -26,6 +26,7 @@ from app.model_run_preview import (
 from app.sql_validation import validate_transformation_sql
 from app.ui import session
 from app.ui.footer import footer as _footer
+from app.ui.theme import apply_theme
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,7 @@ NAV_ITEMS = [
 
 def _header(current: str = "", api: str | None = None, method: str = "GET"):
     """The top bar; ``api`` (a path below the server root) adds the API box for what the page shows."""
+    apply_theme()
     with ui.header().classes("bg-white text-gray-800 border-b border-gray-200 px-8 py-3 flex items-center justify-between shadow-sm"):
         ui.label("EPISERVE").classes("text-lg font-bold tracking-wide")
         with ui.row().classes("gap-8 items-center"):
@@ -52,7 +54,7 @@ def _header(current: str = "", api: str | None = None, method: str = "GET"):
                 )
                 ui.link(label, path).classes(
                     "text-sm no-underline font-medium " +
-                    ("text-blue-700 border-b-2 border-blue-700 pb-0.5" if active else "text-gray-600 hover:text-blue-700")
+                    ("text-primary border-b-2 border-primary pb-0.5" if active else "text-[#1e3a5f] hover:text-primary")
                 )
 
             # User details dialog

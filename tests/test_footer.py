@@ -45,3 +45,10 @@ def test_the_logos_are_served_by_the_app(name):
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
     assert response.content[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_the_ui_theme_puts_the_content_in_a_white_rounded_card_on_the_beige_the_footer_shares():
+    from app.ui import theme
+    css = theme.THEME_CSS
+    assert theme.BEIGE in css and "border-radius: 16px" in css and ".nicegui-content" in css
+    assert "var(--epi-bg" in footer_module.UI_FOOTER_CSS      # the footer takes the same beige
