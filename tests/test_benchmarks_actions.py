@@ -1,5 +1,6 @@
 """Tests for designing, checking and finalizing benchmarks with every external system faked."""
 
+import json
 from datetime import date, timedelta
 from io import BytesIO
 
@@ -29,6 +30,22 @@ def _parquet(typ="Influenza A+B"):
     return buffer.getvalue()
 
 
+WEATHER_DATASET = {"qid": "Q2", "name": "Weather", "last_modified": "2026-10-14",
+                   "components": [{"name": "w.parquet", "url": "https://doip.example/doip/retrieve/Q2/w.parquet"}]}
+
+
+def _weather():
+    days = [date(2025, 10, 1) + timedelta(days=i) for i in range(400)]
+    frame = pd.DataFrame({"day": [d.isoformat() for d in days], "temp": [float(i) for i in range(400)]})
+    buffer = BytesIO()
+    pq.write_table(pa.Table.from_pandas(frame), buffer)
+    return buffer.getvalue()
+
+
+COVARIATES = [{"name": "wetter", "dataset_qid": "Q2", "date_column": "day", "columns": ["temp"],
+               "aggregation": "mean"}]
+
+
 def _row(**overrides):
     base = {"id": 3, "name": "Flu", "description": None, "dataset_qid": "Q1", "target_column": "v",
             "date_column": "datum", "filters": '[["typ", "Influenza A+B"]]',
@@ -42,13 +59,13 @@ def _row(**overrides):
 @pytest.fixture
 def world(monkeypatch):
     log = {"created": [], "updated": [], "finalized": [], "retired": [], "reads": []}
-    state = {"row": _row(), "data": _parquet()}
-    monkeypatch.setattr(actions.ckan_client, "list_processed_datasets", lambda: [DATASET])
+    state = {"row": _row(), "data": _parquet(), "weather": _weather()}
+    monkeypatch.setattr(actions.ckan_client, "list_processed_datasets", lambda: [DATASET, WEATHER_DATASET])
     monkeypatch.setattr(actions.lakefs_client, "processed_head_commit", lambda: COMMIT)
 
     def read(commit, qid, filename, max_bytes):
         log["reads"].append((commit, qid, filename))
-        return state["data"]
+        return state["weather"] if qid == "Q2" else state["data"]
 
     monkeypatch.setattr(actions.lakefs_client, "read_processed_component", read)
     monkeypatch.setattr(actions.store, "get", lambda bid: dict(state["row"]) if bid == 3 else None)
@@ -139,7 +156,7 @@ def test_finalize_pins_the_commit_read_during_the_check(world):
     actions.finalize(3, by=CREATOR)
     bid, kw = world["log"]["finalized"][0]
     assert bid == 3 and kw == {"data_commit": COMMIT, "component_name": "d.parquet", "truth_points": 27,
-                               "prediction_length": 27, "history_end": date(2026, 3, 25)}
+                               "prediction_length": 27, "history_end": date(2026, 3, 25), "materialized": None}
 
 
 def test_finalize_with_a_different_expected_commit_conflicts_and_stores_nothing(world):
@@ -268,3 +285,75 @@ def test_create_and_update_a_draft_with_several_filters(world):
     assert world["log"]["updated"][1][3].filters == ()
     actions.update_draft(3, filters=None)                                  # null removes them as well
     assert world["log"]["updated"][2][3].filters == ()
+
+
+def test_check_builds_the_input_of_a_benchmark_with_covariates_and_reports_the_columns(world):
+    world["state"]["row"] = _row(covariates=json.dumps(COVARIATES))
+    report = actions.check(3)
+    assert report.ok and report.columns == ["datum", "v", "wetter__temp"]
+    assert report.input_rows == 26 and report.missing == {"wetter__temp": 0.0}
+    assert report.input_sql is None                                       # no SQL: the generated file is the input
+    assert ("0123abcd" * 8, "Q2", "w.parquet") in world["log"]["reads"]    # the covariate is read at the same commit
+
+
+def test_check_reports_a_covariate_that_cannot_be_used(world):
+    bad = [{**COVARIATES[0], "columns": ["nope"]}]
+    world["state"]["row"] = _row(covariates=json.dumps(bad))
+    report = actions.check(3)
+    assert not report.ok and any("no column 'nope'" in p for p in report.problems)
+    world["state"]["row"] = _row(covariates=json.dumps([{**COVARIATES[0], "dataset_qid": "Q404"}]))
+    assert any("Q404" in p for p in actions.check(3).problems)
+
+
+def test_finalize_stores_the_generated_files_and_records_the_manifest(world, monkeypatch):
+    stored = {}
+
+    def write(benchmark_id, files):
+        stored.update(id=benchmark_id, files=files)
+        return "main", "ee" * 32
+
+    monkeypatch.setattr(actions.lakefs_client, "write_benchmark_files", write)
+    world["state"]["row"] = _row(covariates=json.dumps(COVARIATES))
+    actions.finalize(3, by=CREATOR)
+    assert stored["id"] == 3 and sorted(stored["files"]) == ["input.parquet", "manifest.json", "reference.parquet"]
+    _, kw = world["log"]["finalized"][0]
+    manifest = kw["materialized"]
+    assert manifest["repo"] == "benchmarks" and manifest["commit"] == "ee" * 32 and manifest["branch"] == "main"
+    assert manifest["input"]["path"] == "3/input.parquet" and manifest["input"]["columns"] == ["datum", "v", "wetter__temp"]
+    assert len(manifest["input"]["sha256"]) == 64 and manifest["reference"]["rows"] == 27
+    assert json.loads(stored["files"]["manifest.json"])["input"]["sha256"] == manifest["input"]["sha256"]
+
+
+def test_nothing_is_stored_when_the_covariates_cannot_be_built(world, monkeypatch):
+    monkeypatch.setattr(actions.lakefs_client, "write_benchmark_files",
+                        lambda *a: (_ for _ in ()).throw(AssertionError("must not write")))
+    world["state"]["row"] = _row(covariates=json.dumps([{**COVARIATES[0], "columns": ["nope"]}]))
+    with pytest.raises(LoadError, match="no column 'nope'"):
+        actions.finalize(3, by=CREATOR)
+    assert world["log"]["finalized"] == []
+
+
+def test_run_spec_of_a_benchmark_with_covariates_points_at_the_generated_file_and_needs_no_sql(world):
+    manifest = {"repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
+                "input": {"path": "3/input.parquet", "columns": ["datum", "v", "wetter__temp"]}}
+    world["state"]["row"] = {**_final(covariates=json.dumps(COVARIATES)), "materialized": json.dumps(manifest)}
+    spec = actions.run_spec(3)
+    assert spec["input_data_files"] == [[f"lakefs://benchmarks/main/3/input.parquet?version={'ee' * 32}", "input.parquet"]]
+    assert spec["data_transformation_sql"] == [""]
+    assert spec["input_columns"] == ["datum", "v", "wetter__temp"] and spec["covariate_columns"] == ["wetter__temp"]
+    assert spec["target_column"] == "v" and spec["config"]["prediction_length"] == 27
+
+
+def test_create_and_update_a_draft_with_covariates(world):
+    _create(covariates=COVARIATES, created_by=CREATOR.id)
+    cov = world["log"]["created"][0][2].covariates
+    assert [(c.name, c.dataset_qid, c.columns, c.aggregation) for c in cov] == [("wetter", "Q2", ("temp",), "mean")]
+    actions.update_draft(3, covariates=[{**COVARIATES[0], "name": "w2", "columns": "temp, rain"}])
+    assert world["log"]["updated"][0][3].covariates[0].columns == ("temp", "rain")
+    actions.update_draft(3, covariates=None)
+    assert world["log"]["updated"][1][3].covariates == ()
+    with pytest.raises(actions.NotFound):
+        _create(covariates=[{**COVARIATES[0], "dataset_qid": "Q404"}])
+    with pytest.raises(DefinitionError, match="aggregation"):
+        _create(covariates=[{**COVARIATES[0], "aggregation": "median"}])
+

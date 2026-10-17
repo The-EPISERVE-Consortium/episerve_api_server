@@ -1,6 +1,7 @@
 """Benchmark definition: one series cut into an input range and a reference range.
 
-The series is a dataset column (optionally narrowed by any number of equality filters, column = value). The *input* range
+The series is a dataset column (optionally narrowed by any number of equality filters, column = value).
+Further *covariates* (other datasets) can be added; the model input is then one generated file (see ``materialize``). The *input* range
 (``history_start``..``history_end``) is what a model run may see; the *reference* range
 (``test_start``..``test_end``) is what its forecast is compared against. Both are read
 from lakeFS at the commit pinned when the benchmark is finalized.
@@ -24,6 +25,29 @@ class DefinitionError(ValueError):
     """A benchmark definition is invalid; the message says why."""
 
 
+AGGREGATIONS = ("mean", "sum", "last")
+_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,39}")
+
+
+@dataclass(frozen=True)
+class Covariate:
+    """A further data source whose columns are added to the model input, aligned to the target series.
+
+    The target series sets the time grid; the rows of the source between two grid dates are aggregated
+    (``aggregation``) into the later date. In the input file the columns are named ``<name>__<column>``.
+    """
+
+    name: str
+    dataset_qid: str
+    date_column: str
+    columns: tuple[str, ...]
+    filters: tuple[tuple[str, str], ...] = ()
+    aggregation: str = "mean"
+
+    def output_columns(self) -> list[str]:
+        return [f"{self.name}__{column}" for column in self.columns]
+
+
 @dataclass(frozen=True)
 class Benchmark:
     """The prediction task and how its input and reference data are generated."""
@@ -39,6 +63,66 @@ class Benchmark:
     input_filename: str = "input.parquet"
     prediction_length: int | None = None
     data_commit: str | None = None
+    covariates: tuple[Covariate, ...] = ()   # with covariates the model input is one generated file (see materialize)
+
+
+def covariates_from_row(row: dict) -> tuple[Covariate, ...]:
+    """The covariate sources of a stored benchmark row; ``covariates`` is JSON text or a list of dicts."""
+    stored = row.get("covariates")
+    if isinstance(stored, str):
+        stored = json.loads(stored) if stored else []
+    return tuple(
+        Covariate(name=item["name"], dataset_qid=item["dataset_qid"], date_column=item["date_column"],
+                  columns=tuple(item["columns"]), filters=tuple((c, v) for c, v in item.get("filters") or []),
+                  aggregation=item.get("aggregation") or "mean")
+        for item in (stored or [])
+    )
+
+
+def normalize_covariates(items) -> tuple[Covariate, ...]:
+    """Covariates from dicts (API, form) or Covariate objects; text is trimmed."""
+    out = []
+    for item in items or []:
+        if isinstance(item, Covariate):
+            out.append(item)
+            continue
+        get = item.get if isinstance(item, dict) else lambda key, default=None: getattr(item, key, default)
+        columns = get("columns") or ()
+        if isinstance(columns, str):
+            columns = [part for part in columns.split(",")]
+        out.append(Covariate(
+            name=(get("name") or "").strip(), dataset_qid=(get("dataset_qid") or "").strip(),
+            date_column=(get("date_column") or "").strip(),
+            columns=tuple((column or "").strip() for column in columns),
+            filters=normalize_filters(get("filters") or ()),
+            aggregation=(get("aggregation") or "mean").strip(),
+        ))
+    return tuple(out)
+
+
+def covariates_json(covariates: tuple[Covariate, ...]) -> str | None:
+    """The JSON text stored for a benchmark's covariates; None when there are none."""
+    if not covariates:
+        return None
+    return json.dumps([
+        {"name": c.name, "dataset_qid": c.dataset_qid, "date_column": c.date_column, "columns": list(c.columns),
+         "filters": [list(pair) for pair in c.filters], "aggregation": c.aggregation}
+        for c in covariates
+    ])
+
+
+def materialized_from_row(row: dict) -> dict | None:
+    """The manifest of the generated input and reference files of a finalized benchmark with covariates, or None."""
+    stored = row.get("materialized")
+    if isinstance(stored, str):
+        stored = json.loads(stored) if stored else None
+    return stored or None
+
+
+def input_uri(manifest: dict, *, versioned: bool = True) -> str:
+    """The lakeFS URI of the generated input file; with ``versioned`` it carries the commit it was stored in."""
+    uri = f"lakefs://{manifest['repo']}/{manifest['branch']}/{manifest['input']['path']}"
+    return f"{uri}?version={manifest['commit']}" if versioned else uri
 
 
 def filters_from_row(row: dict) -> list[tuple[str, str]]:
@@ -99,6 +183,7 @@ def validate(benchmark: Benchmark, name: str) -> None:
     columns = [column.strip().lower() for column, _ in benchmark.filters]
     if len(set(columns)) != len(columns):
         raise DefinitionError("A column can be filtered only once (filter column).")
+    _validate_covariates(benchmark)
     if benchmark.test_start is None or benchmark.test_end is None:
         raise DefinitionError("The test start and end are required.")
     if benchmark.test_start > benchmark.test_end:
@@ -112,6 +197,36 @@ def validate(benchmark: Benchmark, name: str) -> None:
         raise DefinitionError("The history start must not be after the history end.")
     if not _FILENAME.fullmatch(benchmark.input_filename or "") or not benchmark.input_filename.endswith(".parquet"):
         raise DefinitionError("The input file name must look like input.parquet (letters, digits, _ . -; ending in .parquet).")
+
+
+def _validate_covariates(benchmark: Benchmark) -> None:
+    taken = {benchmark.date_column.strip().lower(), benchmark.target_column.strip().lower()}
+    names = set()
+    for number, c in enumerate(benchmark.covariates, start=1):
+        where = f"covariate {number}"
+        if not _NAME.fullmatch(c.name or ""):
+            raise DefinitionError(
+                f"The name of {where} must start with a letter and use only letters, digits and _ (at most 40).")
+        if c.name.lower() in names:
+            raise DefinitionError(f"The covariate name {c.name!r} is used twice.")
+        names.add(c.name.lower())
+        if not _QID.fullmatch(c.dataset_qid or ""):
+            raise DefinitionError(f"Choose a dataset for covariate {c.name!r} (dataset id like Q123).")
+        if not c.date_column or len(c.date_column) > MAX_COLUMN:
+            raise DefinitionError(f"Covariate {c.name!r} needs a date column.")
+        if not c.columns or any(not col or len(col) > MAX_COLUMN for col in c.columns):
+            raise DefinitionError(f"Covariate {c.name!r} needs at least one column (each 1 to {MAX_COLUMN} characters).")
+        if len({col.lower() for col in c.columns}) != len(c.columns):
+            raise DefinitionError(f"Covariate {c.name!r} lists a column twice.")
+        if c.aggregation not in AGGREGATIONS:
+            raise DefinitionError(f"The aggregation of covariate {c.name!r} must be one of {', '.join(AGGREGATIONS)}.")
+        for column, value in c.filters:
+            if not (column or "").strip() or len(column) > MAX_COLUMN or not value or len(value) > MAX_FILTER_VALUE:
+                raise DefinitionError(f"Every filter of covariate {c.name!r} needs a column and a value.")
+        for output in c.output_columns():
+            if output.lower() in taken:
+                raise DefinitionError(f"The column {output!r} would exist twice in the input file.")
+            taken.add(output.lower())
 
 
 def _ident(name: str) -> str:

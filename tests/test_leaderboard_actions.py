@@ -224,3 +224,42 @@ def test_best_entries_ranks_by_interval_score_and_falls_back_to_mae(monkeypatch)
     assert best[1] == {"model_name": "b", "metric": "interval_score", "value": 3.0}
     assert best[2] == {"model_name": "d", "metric": "mae", "value": 1.5}
     assert 3 not in best
+
+
+MANIFEST = {"version": 1, "repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
+            "input": {"path": "3/input.parquet", "columns": ["datum", "v"], "first_date": "2021-01-06",
+                      "last_date": "2021-12-29"},
+            "reference": {"path": "3/reference.parquet", "sha256": "ab" * 32, "rows": 2}}
+SOURCE = "lakefs://benchmarks/main/3/input.parquet?version=" + "ee" * 32
+MATERIALIZED_RUN = {**RUN, "input_dataset_qids": [], "data_transformation_sql": [], "input_sources": [SOURCE]}
+
+
+def test_a_benchmark_with_covariates_scores_against_its_reference_file_and_needs_no_provenance(world, monkeypatch):
+    import json
+    monkeypatch.setattr(actions.bstore, "get", lambda bid: {**FINAL_ROW, "materialized": json.dumps(MANIFEST)})
+    monkeypatch.setattr(actions.ckan_client, "list_model_runs", lambda: [MATERIALIZED_RUN])
+    monkeypatch.setattr(actions, "_load_inputs", lambda qid: (_ for _ in ()).throw(AssertionError("no provenance fetch")))
+    monkeypatch.setattr(actions.loaders, "truth_from_pin", lambda *a: (_ for _ in ()).throw(AssertionError("not the data repo")))
+    seen = []
+    monkeypatch.setattr(actions.loaders, "truth_from_reference",
+                        lambda manifest, bench: seen.append(manifest) or pd.DataFrame({"date": DATES, "truth": [10.0, 20.0]}))
+    assert actions.add_run(3, "Q10") == 42
+    entry = world["stored"][0]
+    assert seen == [MANIFEST] and entry.truth_commit == "ee" * 32                  # the benchmarks repo commit
+    assert (entry.history_start, entry.history_end) == (date(2021, 1, 6), date(2021, 12, 29))
+    candidates = actions.candidates(3)
+    assert [(c["qid"], c["reason"]) for c in candidates] == [("Q10", "already on this leaderboard")]
+
+
+def test_a_run_that_read_another_input_is_not_added_to_a_benchmark_with_covariates(world, monkeypatch):
+    import json
+    monkeypatch.setattr(actions.bstore, "get", lambda bid: {**FINAL_ROW, "materialized": json.dumps(MANIFEST)})
+    other = {**MATERIALIZED_RUN, "input_sources": [SOURCE, "https://doip.example/doip/retrieve/Q1/d.parquet"]}
+    monkeypatch.setattr(actions.ckan_client, "list_model_runs", lambda: [other])
+    monkeypatch.setattr(actions.loaders, "truth_from_reference",
+                        lambda manifest, bench: pd.DataFrame({"date": DATES, "truth": [10.0, 20.0]}))
+    from app.leaderboard.scoring import NotScorable
+    with pytest.raises(NotScorable, match="exactly that file"):
+        actions.add_run(3, "Q10")
+    assert world["stored"] == []
+

@@ -10,6 +10,7 @@ import pandas as pd
 import requests
 
 from app.benchmarks import store as bstore
+from app.benchmarks.definition import materialized_from_row
 from app.benchmarks.errors import Conflict, NotFound
 from app.clients import ckan as ckan_client
 from app.config import settings
@@ -73,13 +74,18 @@ def add_run(benchmark_id: int, run_qid: str) -> int:
     if run is None:
         raise NotFound(f"Model run {run_qid!r} not found")
     commit = row["data_commit"]
-    truth = loaders.truth_from_pin(benchmark.dataset_qid, row["component_name"], commit, benchmark)
-    inputs = _load_inputs(run_qid)
+    manifest = materialized_from_row(row)
+    if manifest:        # a benchmark with covariates: truth from its generated reference file, no provenance fetch
+        truth = loaders.truth_from_reference(manifest, benchmark)
+        commit, inputs = manifest["commit"], None
+    else:
+        truth = loaders.truth_from_pin(benchmark.dataset_qid, row["component_name"], commit, benchmark)
+        inputs = _load_inputs(run_qid)
     entry = scoring.score_run(
         benchmark, run, truth, truth_commit=commit, truth_as_of=row["finalized_at"],
         load_predictions=_load_predictions,
         load_params=lambda qid: loaders.fetch_run_params(qid, settings.doip_url),
-        inputs=inputs,
+        inputs=inputs, manifest=manifest,
     )
     try:
         return store.add_entry(benchmark_id, entry)
@@ -142,4 +148,5 @@ def candidates(benchmark_id: int) -> list[dict]:
     return scoring.candidate_runs(
         bstore.benchmark_from_row(row), ckan_client.list_model_runs(), active, load_inputs=_load_inputs,
         load_params=lambda qid: loaders.fetch_run_params(qid, settings.doip_url),
+        manifest=materialized_from_row(row),
     )

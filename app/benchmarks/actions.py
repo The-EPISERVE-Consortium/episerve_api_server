@@ -5,12 +5,14 @@ head commit of ``data-processed``: the reference data is read at that commit and
 spec makes model runs read their input at the same commit.
 """
 
+import json
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
-from app.benchmarks import store
+from app.benchmarks import materialize, store
 from app.benchmarks.definition import (
-    Benchmark, DefinitionError, derive_horizon, input_sql, normalize_filters, validate,
+    Benchmark, DefinitionError, derive_horizon, input_sql, input_uri, materialized_from_row,
+    normalize_covariates, normalize_filters, validate,
 )
 from app.benchmarks.errors import Conflict, Forbidden, NotDraft, NotFound  # noqa: F401  (re-exported)
 from app.clients import ckan as ckan_client
@@ -26,7 +28,7 @@ from app.users import User
 
 _EDITABLE = {
     "name", "description", "dataset_qid", "target_column", "date_column", "test_start", "test_end",
-    "filters", "history_start", "history_end", "input_filename",
+    "filters", "covariates", "history_start", "history_end", "input_filename",
 }
 
 
@@ -45,6 +47,10 @@ class CheckReport:
     prediction_length: int | None = None
     frequency_days: int | None = None
     input_sql: str | None = None
+    columns: list[str] | None = None            # the columns of the generated input file (benchmarks with covariates)
+    missing: dict | None = None                 # share of empty values per covariate column
+    input_rows: int | None = None
+    built: object = field(default=None, repr=False)      # the generated tables, kept for finalize
 
 
 def _dataset(qid: str) -> dict:
@@ -81,6 +87,7 @@ def create_draft(
     history_end: date | None = None,
     input_filename: str = "input.parquet",
     created_by: int | None = None,
+    covariates=(),
 ) -> int:
     """Validate a definition and store it as a draft made by the user with id ``created_by``.
 
@@ -92,9 +99,12 @@ def create_draft(
         dataset_qid=dataset_qid, target_column=(target_column or "").strip(), date_column=(date_column or "").strip(),
         test_start=test_start, test_end=test_end, filters=normalize_filters(filters),
         history_start=history_start, history_end=history_end, input_filename=input_filename,
+        covariates=normalize_covariates(covariates),
     )
     validate(benchmark, name)
     _dataset(dataset_qid)
+    for covariate in benchmark.covariates:
+        _dataset(covariate.dataset_qid)
     return store.create_draft(name.strip(), description, benchmark, created_by)
 
 
@@ -119,10 +129,14 @@ def update_draft(benchmark_id: int, **fields) -> None:
             changes[key] = changes[key].strip()
     if "filters" in changes:       # the whole list of filters at once (null or empty removes them)
         changes["filters"] = normalize_filters(changes["filters"])
+    if "covariates" in changes:    # the whole list of covariates at once (null or empty removes them)
+        changes["covariates"] = normalize_covariates(changes["covariates"])
     merged = replace(current, **changes)
     validate(merged, name)
     if "dataset_qid" in changes:
         _dataset(merged.dataset_qid)
+    for covariate in merged.covariates:
+        _dataset(covariate.dataset_qid)
     if not store.update_draft(benchmark_id, name.strip(), description, merged):
         raise NotFound(f"Benchmark {benchmark_id} not found")
 
@@ -179,6 +193,8 @@ def _evaluate(benchmark: Benchmark, dataset: dict, commit: str) -> CheckReport:
         report.warnings.append(
             "The observed dates are not evenly spaced; one forecast grid may not hit every observed date."
         )
+    if benchmark.covariates:
+        return _evaluate_covariates(report, resolved, data, commit, history_end)
     report.input_sql = input_sql(resolved)
     window = parse_history_window(report.input_sql, benchmark.date_column)
     filter_ok = all(has_equality_filter(report.input_sql, column, value) for column, value in benchmark.filters)
@@ -189,6 +205,62 @@ def _evaluate(benchmark: Benchmark, dataset: dict, commit: str) -> CheckReport:
         )
     report.ok = not report.problems
     return report
+
+
+def _covariate_data(benchmark: Benchmark, commit: str) -> dict[str, bytes]:
+    """The Parquet bytes of every covariate's dataset at ``commit``; raises ``LoadError`` with the reason."""
+    out = {}
+    for covariate in benchmark.covariates:
+        try:
+            dataset = _dataset(covariate.dataset_qid)
+        except NotFound as exc:
+            raise LoadError(f"covariate {covariate.name!r}: {exc}") from exc
+        components = dataset.get("components") or []
+        if not components:
+            raise LoadError(f"covariate {covariate.name!r}: the dataset has no downloadable component")
+        try:
+            out[covariate.name] = lakefs_client.read_processed_component(
+                commit, covariate.dataset_qid, components[0]["name"], MAX_DOWNLOAD_BYTES)
+        except NotFoundException as exc:
+            raise LoadError(f"covariate {covariate.name!r}: the dataset file does not exist at the pinned commit") from exc
+        except ValueError as exc:
+            raise LoadError(f"covariate {covariate.name!r}: {exc}") from exc
+    return out
+
+
+def _evaluate_covariates(report: CheckReport, benchmark: Benchmark, target_data: bytes, commit: str,
+                         history_end: date) -> CheckReport:
+    """Build the input and reference tables of a benchmark with covariates and report what they hold."""
+    try:
+        built = materialize.build(benchmark, history_end, target_data, _covariate_data(benchmark, commit))
+    except LoadError as exc:
+        report.problems.append(str(exc))
+        return report
+    report.warnings.extend(built.warnings)
+    report.columns, report.missing, report.input_rows, report.built = (
+        built.columns, built.missing, len(built.input), built)
+    report.ok = not report.problems
+    return report
+
+
+def _manifest(benchmark_id: int, benchmark: Benchmark, built: "materialize.Built") -> dict:
+    """Store the generated files and return the manifest recorded with the finalized benchmark."""
+    input_bytes, input_sha = materialize.to_parquet(built.input)
+    reference_bytes, reference_sha = materialize.to_parquet(built.reference)
+    manifest = {
+        "version": 1, "repo": settings.lakefs_benchmarks_repo,
+        "input": {"path": f"{benchmark_id}/input.parquet", "sha256": input_sha, "rows": len(built.input),
+                  "columns": built.columns, "first_date": str(built.input[benchmark.date_column].min()),
+                  "last_date": str(built.input[benchmark.date_column].max())},
+        "reference": {"path": f"{benchmark_id}/reference.parquet", "sha256": reference_sha,
+                      "rows": len(built.reference)},
+    }
+    branch, commit = lakefs_client.write_benchmark_files(benchmark_id, {
+        "input.parquet": input_bytes, "reference.parquet": reference_bytes,
+        "manifest.json": json.dumps(manifest, indent=2).encode(),
+    })
+    manifest.update(branch=branch, commit=commit)
+    return manifest
 
 
 def check(benchmark_id: int) -> CheckReport:
@@ -238,9 +310,10 @@ def finalize(benchmark_id: int, expected_commit: str | None = None, *, by: User)
     again = _row(benchmark_id)
     if (again["name"], store.benchmark_from_row(again)) != (row["name"], benchmark):
         raise Conflict("The draft changed while it was being finalized; check it again.")
+    manifest = _manifest(benchmark_id, benchmark, report.built) if report.built is not None else None
     done = store.finalize(
         benchmark_id, data_commit=commit, component_name=report.component_name, truth_points=report.truth_points,
-        prediction_length=report.prediction_length, history_end=report.history_end,
+        prediction_length=report.prediction_length, history_end=report.history_end, materialized=manifest,
     )
     if not done:
         raise NotFound(f"Benchmark {benchmark_id} not found")
@@ -299,6 +372,22 @@ def run_spec(benchmark_id: int) -> dict:
     if store.state(row) != "final":
         raise NotFound(f"Benchmark {benchmark_id} is not final")
     benchmark = store.benchmark_from_row(row)
+    manifest = materialized_from_row(row)
+    if manifest:
+        return {
+            "benchmark_id": row["id"],
+            "dataset_qid": benchmark.dataset_qid,
+            "data_commit": benchmark.data_commit,
+            "input_data_files": [[input_uri(manifest), benchmark.input_filename]],
+            "data_transformation_sql": [""],          # the file is used as it is
+            "config": {"prediction_length": benchmark.prediction_length, "prediction_offset": 0},
+            "test_start": benchmark.test_start.isoformat(),
+            "test_end": benchmark.test_end.isoformat(),
+            "input_columns": manifest["input"]["columns"],
+            "date_column": benchmark.date_column,
+            "target_column": benchmark.target_column,
+            "covariate_columns": [c for covariate in benchmark.covariates for c in covariate.output_columns()],
+        }
     url = (
         f"{settings.doip_url.rstrip('/')}/doip/retrieve/{benchmark.dataset_qid}/"
         f"{row['component_name']}?version={benchmark.data_commit}"

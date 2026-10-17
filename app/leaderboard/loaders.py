@@ -1,5 +1,6 @@
 """Load predictions, observations and run parameters for the leaderboard."""
 
+import hashlib
 import json
 from datetime import date
 from io import BytesIO
@@ -112,6 +113,13 @@ def _read_series(
     return truth
 
 
+def read_series(
+    data: bytes, benchmark: Benchmark, start: date, end: date, *, require_unique: bool, empty_message: str,
+) -> pd.DataFrame:
+    """The target series (columns ``date`` and ``truth``) between two dates, with the benchmark's filters applied."""
+    return _read_series(data, benchmark, start, end, require_unique=require_unique, empty_message=empty_message)
+
+
 def parse_truth(data: bytes, benchmark: Benchmark) -> pd.DataFrame:
     """Read the observed series for the test window from a dataset Parquet file.
 
@@ -176,6 +184,40 @@ def truth_from_pin(qid: str, component_name: str, commit: str, benchmark: Benchm
     except ValueError as exc:
         raise LoadError(str(exc)) from exc
     return parse_truth(data, benchmark)
+
+
+def truth_from_reference(manifest: dict, benchmark: Benchmark) -> pd.DataFrame:
+    """Read the observed series from the reference file a benchmark with covariates generated.
+
+    The file is read at the commit recorded in the manifest and checked against its stored hash.
+
+    Returns:
+        Columns ``date`` and ``truth`` sorted by date.
+
+    Raises:
+        LoadError: If the file is missing, changed (hash differs), unreadable or empty.
+    """
+    reference = manifest["reference"]
+    try:
+        data = lakefs_client.read_benchmark_file(manifest["commit"], reference["path"], MAX_DOWNLOAD_BYTES)
+    except NotFoundException as exc:
+        raise LoadError("The benchmark's reference file does not exist.") from exc
+    except ValueError as exc:
+        raise LoadError(str(exc)) from exc
+    if hashlib.sha256(data).hexdigest() != reference["sha256"]:
+        raise LoadError("The benchmark's reference file does not match its recorded hash.")
+    try:
+        frame = pq.read_table(BytesIO(data)).to_pandas()
+        out = pd.DataFrame({
+            "date": pd.to_datetime(frame[benchmark.date_column]).dt.normalize(),
+            "truth": pd.to_numeric(frame[benchmark.target_column], errors="coerce"),
+        })
+    except (pa.ArrowException, KeyError, ValueError) as exc:
+        raise LoadError("The benchmark's reference file could not be read.") from exc
+    out = out[np.isfinite(out["truth"])].sort_values("date").reset_index(drop=True)
+    if out.empty:
+        raise LoadError("The benchmark's reference file has no observations.")
+    return out
 
 
 def fetch_run_params(qid: str, doip_base: str) -> dict:

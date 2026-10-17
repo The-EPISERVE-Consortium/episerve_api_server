@@ -26,6 +26,7 @@ def score_run(
     load_predictions: Callable[[dict, Benchmark], pd.DataFrame],
     load_params: Callable[[str], dict],
     inputs: list[RunInput] | None = None,
+    manifest: dict | None = None,
 ) -> Entry:
     """Qualify and score a run, producing the entry to store.
 
@@ -38,6 +39,7 @@ def score_run(
         load_predictions: ``(run, benchmark) -> DataFrame``; may raise ``LoadError``.
         load_params: ``(run_qid) -> dict`` of run parameters.
         inputs: The run's provenance inputs; required for a benchmark pinned to a data commit.
+        manifest: The generated files of a benchmark with covariates (then ``inputs`` is not used).
 
     Returns:
         The scored entry (not yet stored).
@@ -46,9 +48,10 @@ def score_run(
         NotScorable: With the reason, if the run does not qualify, its predictions
             cannot be read, or it does not forecast every observed date.
     """
-    verdict = qualify_run(run, benchmark, inputs=inputs)
+    verdict = qualify_run(run, benchmark, inputs=inputs, manifest=manifest)
     if not verdict.relevant:
-        raise NotScorable("the run was not made from this benchmark's dataset")
+        raise NotScorable("the run did not read this benchmark's input file" if manifest
+                          else "the run was not made from this benchmark's dataset")
     if verdict.reason:
         raise NotScorable(verdict.reason)
     try:
@@ -73,8 +76,9 @@ def candidate_runs(
     benchmark: Benchmark, runs: list[dict], active_run_qids: set[str],
     load_inputs: Callable[[str], list[RunInput] | None] | None = None,
     load_params: Callable[[str], dict] | None = None,
+    manifest: dict | None = None,
 ) -> list[dict]:
-    """Runs on the benchmark's dataset, with the reason each cannot be added (None if it can).
+    """Runs on the benchmark's data, with the reason each cannot be added (None if it can).
 
     Each candidate also carries what is cheap to know before scoring: the image tag, the history window (when
     the provenance proves it) and, for runs that can be added and with ``load_params``, the run's parameters.
@@ -84,9 +88,9 @@ def candidate_runs(
     benchmark pinned to a data commit, ``load_inputs(run_qid)`` supplies the run's provenance
     inputs (for runs that are successful and not yet added; fetched in parallel); a failing loader counts as unreadable.
     """
-    relevant = [(run, qualify_run(run, benchmark)) for run in runs]
+    relevant = [(run, qualify_run(run, benchmark, manifest=manifest)) for run in runs]
     relevant = [(run, verdict) for run, verdict in relevant if verdict.relevant]
-    pinned = benchmark.data_commit is not None
+    pinned = benchmark.data_commit is not None and not manifest       # a generated input file needs no provenance fetch
     to_load = [
         run["qid"] for run, _ in relevant
         if pinned and load_inputs and run.get("status") == "success" and run["qid"] not in active_run_qids
@@ -106,7 +110,7 @@ def candidate_runs(
     candidates = []
     for run, verdict in relevant:
         if run["qid"] in loaded:
-            verdict = qualify_run(run, benchmark, inputs=loaded[run["qid"]])
+            verdict = qualify_run(run, benchmark, inputs=loaded[run["qid"]], manifest=manifest)
         reason = "already on this leaderboard" if run["qid"] in active_run_qids else verdict.reason
         candidates.append({
             "qid": run["qid"], "model_name": run.get("model_name", ""),

@@ -201,3 +201,44 @@ def read_processed_component(commit: str, qid: str, filename: str, max_bytes: in
     if len(data) > max_bytes:
         raise ValueError("The dataset file exceeds the size limit.")
     return data
+
+
+def write_benchmark_files(benchmark_id: int, files: dict[str, bytes]) -> tuple[str, str]:
+    """Store generated files of a benchmark in the benchmarks repository and commit them.
+
+    Args:
+        benchmark_id: The benchmark; its files go below ``<id>/``.
+        files: File name (no directories) to content.
+
+    Returns:
+        ``(branch, commit id)``; the files are read back at that commit.
+
+    Raises:
+        ValueError: If a file name is unsafe.
+    """
+    if any(not _FILENAME.fullmatch(name) or name in (".", "..") for name in files):
+        raise ValueError("Invalid file name.")
+    repo = lakefs.Repository(settings.lakefs_benchmarks_repo, client=_client())
+    branch = repo.branch(settings.lakefs_branch)
+    for name, data in files.items():
+        branch.object(f"{int(benchmark_id)}/{name}").upload(data=data, mode="wb", pre_sign=False)
+    branch.commit(message=f"benchmark {int(benchmark_id)}: generated input and reference files")
+    return settings.lakefs_branch, branch.head.id
+
+
+def read_benchmark_file(commit: str, path: str, max_bytes: int) -> bytes:
+    """Read a file of the benchmarks repository at a commit (``path`` like ``12/input.parquet``).
+
+    Raises:
+        ValueError: If an argument is unsafe or the file exceeds ``max_bytes``.
+    """
+    benchmark_dir, _, name = (path or "").partition("/")
+    if not _COMMIT.fullmatch(commit or "") or not benchmark_dir.isdigit() or not _FILENAME.fullmatch(name or "") \
+            or name in (".", ".."):
+        raise ValueError("Invalid commit or file.")
+    repo = lakefs.Repository(settings.lakefs_benchmarks_repo, client=_client())
+    data = repo.ref(commit).object(path).reader().read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError("The file exceeds the size limit.")
+    return data
+

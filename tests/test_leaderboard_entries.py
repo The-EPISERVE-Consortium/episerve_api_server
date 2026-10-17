@@ -176,3 +176,22 @@ def test_every_filter_of_a_benchmark_must_be_in_the_runs_sql():
     both = sql.replace("WHERE typ = 'RSV A'", "WHERE typ = 'RSV A' AND age = '35-59'")
     assert qualify_run(_run(data_transformation_sql=[both]),
                        _benchmark(filters=(("typ", "RSV A"), ("age", "35-59")))).reason is None
+
+
+def test_a_run_of_a_benchmark_with_covariates_must_read_exactly_the_generated_input_file():
+    manifest = {"repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
+                "input": {"path": "3/input.parquet", "first_date": "2021-01-06", "last_date": "2021-12-29"}}
+    uri = "lakefs://benchmarks/main/3/input.parquet"
+    run = {"qid": "Q10", "status": "success", "input_sources": [f"{uri}?version={'ee' * 32}"]}
+    ok = qualify_run(run, _benchmark(), manifest=manifest)
+    assert ok.relevant and ok.reason is None and ok.window == HistoryWindow(date(2021, 1, 6), date(2021, 12, 29))
+    stale = qualify_run({**run, "input_sources": [f"{uri}?version={'dd' * 32}"]}, _benchmark(), manifest=manifest)
+    assert stale.relevant and "dddddddddddd" in stale.reason and "eeeeeeeeeeee" in stale.reason
+    extra = qualify_run({**run, "input_sources": [*run["input_sources"], "https://doip/doip/retrieve/Q1/x"]},
+                        _benchmark(), manifest=manifest)
+    assert extra.relevant and "exactly that file" in extra.reason
+    assert qualify_run({**run, "status": "failed"}, _benchmark(), manifest=manifest).reason.startswith("run status is failed")
+    unrelated = qualify_run({"qid": "Q11", "status": "success", "input_sources": ["lakefs://benchmarks/main/4/input.parquet"]},
+                            _benchmark(), manifest=manifest)
+    assert unrelated.relevant is False
+    assert qualify_run({"qid": "Q12", "status": "success"}, _benchmark(), manifest=manifest).relevant is False

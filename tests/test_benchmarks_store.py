@@ -36,7 +36,7 @@ def test_finalize_sets_the_pin_once(monkeypatch):
                           prediction_length=27, history_end=date(2026, 3, 25)) is True
     update_sql, params = conn.executed[1]
     assert "finalized_at = NOW()" in update_sql and "data_commit" in update_sql
-    assert params == ("ab" * 32, "d.parquet", 27, 27, date(2026, 3, 25), 3)
+    assert params == ("ab" * 32, "d.parquet", 27, 27, date(2026, 3, 25), None, 3)    # no manifest without covariates
 
 
 def test_finalize_refuses_a_final_benchmark_and_reports_unknown_ids(monkeypatch):
@@ -113,3 +113,24 @@ def test_the_filters_are_stored_as_json_and_read_back():
     bench = Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30), (("typ", "a"), ("age", "35-59")))
     assert store._definition_params("n", None, bench)[5] == '[["typ", "a"], ["age", "35-59"]]'
     assert store._definition_params("n", None, Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30)))[5] is None
+
+
+def test_covariates_and_the_manifest_are_stored_as_json_and_read_back():
+    import json
+    from app.benchmarks.definition import Covariate, materialized_from_row
+    cov = Covariate("wetter", "Q2", "day", ("temp",), (("city", "Berlin"),), "sum")
+    bench = Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30), covariates=(cov,))
+    stored = store._definition_params("n", None, bench)[-1]
+    assert json.loads(stored) == [{"name": "wetter", "dataset_qid": "Q2", "date_column": "day", "columns": ["temp"],
+                                   "filters": [["city", "Berlin"]], "aggregation": "sum"}]
+    row = {"dataset_qid": "Q1", "target_column": "v", "date_column": "datum", "filters": None,
+           "test_start": date(2026, 4, 1), "test_end": date(2026, 9, 30), "covariates": stored}
+    assert store.benchmark_from_row(row).covariates == (cov,)
+    assert store._definition_params("n", None, Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30)))[-1] is None
+    conn = _use(__import__("pytest").MonkeyPatch(), ([{"finalized_at": None, "retired_at": None}], 1, None), ([], 1, None))
+    manifest = {"repo": "benchmarks", "commit": "c"}
+    store.finalize(3, data_commit="ab" * 32, component_name="d.parquet", truth_points=1, prediction_length=1,
+                   history_end=date(2026, 3, 25), materialized=manifest)
+    assert json.loads(conn.executed[1][1][-2]) == manifest
+    assert materialized_from_row({"materialized": json.dumps(manifest)}) == manifest and materialized_from_row({}) is None
+

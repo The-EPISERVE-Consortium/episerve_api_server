@@ -132,3 +132,19 @@ def test_parse_truth_with_two_filters_reads_exactly_one_series():
     assert truth["truth"].tolist() == [1.0, 4.0]                    # one row per date: no duplicates
     with pytest.raises(loaders.LoadError, match="several observations"):
         loaders.parse_truth(_parquet_bytes(source), Benchmark(**{**BENCH.__dict__, "filters": (("typ", "a"),)}))
+
+
+def test_truth_from_reference_reads_the_file_at_the_commit_and_checks_its_hash(monkeypatch):
+    import hashlib
+    source = pd.DataFrame({"datum": [date(2022, 1, 5), date(2022, 1, 12)], "value": [10.0, float("nan")]})
+    data = _parquet_bytes(source)
+    manifest = {"commit": "ee" * 32, "reference": {"path": "3/reference.parquet", "sha256": hashlib.sha256(data).hexdigest()}}
+    calls = []
+    monkeypatch.setattr(loaders.lakefs_client, "read_benchmark_file",
+                        lambda commit, path, limit: calls.append((commit, path)) or data)
+    truth = loaders.truth_from_reference(manifest, BENCH)
+    assert calls == [("ee" * 32, "3/reference.parquet")]
+    assert truth["date"].tolist() == [pd.Timestamp("2022-01-05")] and truth["truth"].tolist() == [10.0]   # NaN dropped
+    with pytest.raises(loaders.LoadError, match="hash"):
+        loaders.truth_from_reference({**manifest, "reference": {**manifest["reference"], "sha256": "0" * 64}}, BENCH)
+

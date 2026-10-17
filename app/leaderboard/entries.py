@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-from app.benchmarks.definition import Benchmark
+from app.benchmarks.definition import Benchmark, input_uri
 from app.leaderboard.run_inputs import RunInput
 
 
@@ -130,12 +130,38 @@ def _short(commit: str | None) -> str:
     return commit[:12] if commit else "unknown"
 
 
-def qualify_run(run: dict, benchmark: Benchmark, inputs: list[RunInput] | None = None) -> Qualification:
+def _qualify_materialized(run: dict, manifest: dict) -> Qualification:
+    """A run of a benchmark with covariates qualifies when it read exactly the benchmark's generated input file, in
+    the stored version, and nothing else; the catalog record lists what a run read (``input_sources``)."""
+    sources = run.get("input_sources") or []
+    base = input_uri(manifest, versioned=False)
+    ours = [source for source in sources if source.split("?")[0] == base]
+    if not ours:
+        return Qualification(relevant=False)
+    if run.get("status") != "success":
+        return Qualification(True, f"run status is {run.get('status') or 'unknown'}, not success")
+    if len(sources) != 1:
+        return Qualification(True, "the run read other inputs besides the benchmark's input file; "
+                                   "a benchmark run must use exactly that file")
+    if ours[0] != input_uri(manifest):
+        read = ours[0].partition("?version=")[2]
+        return Qualification(True, f"the input file was read at version {_short(read or None)}, the benchmark's "
+                                   f"is {_short(manifest['commit'])}")
+    first, last = manifest["input"].get("first_date"), manifest["input"].get("last_date")
+    return Qualification(True, None, HistoryWindow(date.fromisoformat(first) if first else None,
+                                                   date.fromisoformat(last)))
+
+
+def qualify_run(
+    run: dict, benchmark: Benchmark, inputs: list[RunInput] | None = None, manifest: dict | None = None,
+) -> Qualification:
     """Decide whether a catalog run can be an entry of the benchmark.
 
     Args:
         run: A record from ``ckan_client.list_model_runs()``.
         benchmark: The benchmark being evaluated.
+        manifest: The generated files of a benchmark with covariates; then the run must have read exactly the
+            generated input file (``run["input_sources"]``) and ``inputs`` is not needed.
         inputs: The run's inputs from its DOIP provenance. Needed when the benchmark is pinned
             (``benchmark.data_commit`` set): then the run must have read its input at exactly that
             commit and the SQL is taken from the provenance.
@@ -144,6 +170,8 @@ def qualify_run(run: dict, benchmark: Benchmark, inputs: list[RunInput] | None =
         ``relevant=False`` for runs on other datasets; otherwise a reason when the run cannot be
         scored, or the parsed history window when it can.
     """
+    if manifest:
+        return _qualify_materialized(run, manifest)
     qids = run.get("input_dataset_qids") or []
     if benchmark.dataset_qid not in qids:
         return Qualification(relevant=False)

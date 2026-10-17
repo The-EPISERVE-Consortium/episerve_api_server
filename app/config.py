@@ -10,6 +10,8 @@ class Settings:
     lakefs_processed_repo: str = os.environ.get("LAKEFS_PROCESSED_REPO", "data-processed")
     lakefs_model_runs_repo: str = os.environ.get("LAKEFS_MODEL_RUNS_REPO", "model-runs")
     lakefs_models_repo: str = os.environ.get("LAKEFS_MODELS_REPO", "models")
+    # the repository for the generated input and reference files of benchmarks with covariates
+    lakefs_benchmarks_repo: str = os.environ.get("LAKEFS_BENCHMARKS_REPO", "benchmarks")
     lakefs_branch: str = os.environ.get("LAKEFS_BRANCH", "main")
 
     # CKAN
