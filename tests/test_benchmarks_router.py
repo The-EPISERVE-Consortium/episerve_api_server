@@ -239,3 +239,55 @@ def test_patch_accepts_the_older_filter_pair_and_the_new_list(monkeypatch):
     assert [(f["column"], f["value"]) for f in calls[2]["filters"]] == [("a", "1"), ("b", "2")]
     assert calls[3] == {"name": "Only the name"}                      # filters untouched when not sent
 
+
+COV = {"name": "wetter", "dataset_qid": "Q2", "date_column": "day", "columns": ["temp"],
+       "filters": [{"column": "city", "value": "Berlin"}], "aggregation": "mean"}
+MANIFEST = {"repo": "benchmarks", "branch": "main", "commit": COMMIT,
+            "input": {"path": "3/input.parquet", "sha256": "a" * 64, "rows": 10, "columns": ["datum", "v", "wetter__temp"]},
+            "reference": {"path": "3/reference.parquet", "sha256": "b" * 64, "rows": 2}}
+
+
+def test_a_draft_can_be_created_with_covariates_and_the_answer_lists_them(monkeypatch):
+    import json as _json
+    calls = []
+    monkeypatch.setattr(router.bactions, "create_draft", lambda **kw: calls.append(kw) or 4)
+    row = {**DRAFT, "covariates": _json.dumps([{**COV, "filters": [["city", "Berlin"]]}]), "materialized": None}
+    monkeypatch.setattr(router.bactions, "get", lambda bid, include_draft=False: row)
+    created = client.post("/benchmarks", json={**BODY, "covariates": [COV]}, headers=AUTH)
+    assert created.status_code == 201
+    assert [(c.name, c.dataset_qid, c.columns, c.aggregation) for c in calls[0]["covariates"]] == [
+        ("wetter", "Q2", ["temp"], "mean")]
+    assert created.json()["covariates"] == [COV] and created.json()["generated_files"] is None
+
+
+def test_the_check_report_names_the_columns_of_the_generated_input(monkeypatch):
+    report = _report()
+    report.columns, report.missing, report.input_rows = ["datum", "v", "wetter__temp"], {"wetter__temp": 0.1}, 10
+    monkeypatch.setattr(router.bactions, "check", lambda bid: report)
+    out = client.post("/benchmarks/4/check", headers=AUTH).json()
+    assert out["columns"] == ["datum", "v", "wetter__temp"] and out["missing"] == {"wetter__temp": 0.1}
+    assert out["input_rows"] == 10
+
+
+def test_run_spec_and_downloads_of_a_final_benchmark_with_covariates(monkeypatch):
+    import json as _json
+    row = {**FINAL, "covariates": _json.dumps([{**COV, "filters": []}]), "materialized": _json.dumps(MANIFEST)}
+    monkeypatch.setattr(router.bactions, "get", lambda bid, include_draft=False: row)
+    assert client.get("/benchmarks/3").json()["generated_files"] == MANIFEST
+    served = []
+
+    def generated(bid, kind):
+        served.append((bid, kind))
+        if kind == "reference" and bid == 99:
+            raise router.bactions.NotFound("none")
+        return b"PARQUET", f"benchmark-{bid}-{kind}.parquet"
+
+    monkeypatch.setattr(router.bactions, "generated_file", generated)
+    resp = client.get("/benchmarks/3/data/input")                       # public, like the leaderboard
+    assert resp.status_code == 200 and resp.content == b"PARQUET"
+    assert resp.headers["content-disposition"] == 'attachment; filename="benchmark-3-input.parquet"'
+    assert client.get("/benchmarks/3/data/reference").status_code == 200
+    assert client.get("/benchmarks/99/data/reference").status_code == 404
+    assert client.get("/benchmarks/3/data/other").status_code == 422     # only input and reference exist
+    assert served == [(3, "input"), (3, "reference"), (99, "reference")]
+

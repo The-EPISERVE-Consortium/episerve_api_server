@@ -52,6 +52,7 @@ class ModelRunStatus(BaseModel):
     input_files: list[str]
     output_files: list[str]
     doip_url: str
+    input_sources: list[str] = []  # everything the run read, with versions (from its provenance)
 
 
 class FilterIn(BaseModel):
@@ -59,6 +60,17 @@ class FilterIn(BaseModel):
 
     column: str
     value: str
+
+
+class CovariateIn(BaseModel):
+    """A further data source of a benchmark; its columns are added to the model input."""
+
+    name: str
+    dataset_qid: str
+    date_column: str
+    columns: list[str]
+    filters: list[FilterIn] = []
+    aggregation: str = "mean"   # mean | sum | last
 
 
 class BenchmarkOut(BaseModel):
@@ -73,6 +85,8 @@ class BenchmarkOut(BaseModel):
     filter_column: str | None  # the first filter (kept for older clients); all of them are in ``filters``
     filter_value: str | None
     filters: list[FilterIn] = []
+    covariates: list[CovariateIn] = []
+    generated_files: dict | None = None  # with covariates, once final: the generated input and reference files
     test_start: str
     test_end: str
     history_start: str | None = None
@@ -97,7 +111,8 @@ class BenchmarkCreate(BaseModel):
     test_end: date
     filter_column: str | None = None
     filter_value: str | None = None
-    filters: list[FilterIn] | None = None  # up to 3; when given it is used instead of filter_column / filter_value
+    filters: list[FilterIn] | None = None  # any number; when given it is used instead of filter_column / filter_value
+    covariates: list[CovariateIn] = []
     history_start: date | None = None
     history_end: date | None = None
     input_filename: str = "input.parquet"
@@ -118,6 +133,7 @@ class BenchmarkPatch(BaseModel):
     filter_column: str | None = None
     filter_value: str | None = None
     filters: list[FilterIn] | None = None  # replaces all filters (an empty list removes them)
+    covariates: list[CovariateIn] | None = None  # replaces all covariates (an empty list removes them)
     history_start: date | None = None
     history_end: date | None = None
     input_filename: str | None = None
@@ -135,6 +151,9 @@ class CheckReportOut(BaseModel):
     prediction_length: int | None = None
     frequency_days: int | None = None
     input_sql: str | None = None
+    columns: list[str] | None = None          # with covariates: the columns of the generated input file
+    missing: dict[str, float] | None = None   # share of empty values per covariate column
+    input_rows: int | None = None
 
 
 class RunSpecOut(BaseModel):
@@ -146,6 +165,10 @@ class RunSpecOut(BaseModel):
     config: dict[str, Any]
     test_start: str
     test_end: str
+    input_columns: list[str] | None = None    # with covariates: the columns of the generated input file
+    date_column: str | None = None
+    target_column: str | None = None
+    covariate_columns: list[str] | None = None
 
 
 class EntryCreate(BaseModel):

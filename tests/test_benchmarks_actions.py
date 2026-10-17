@@ -357,3 +357,24 @@ def test_create_and_update_a_draft_with_covariates(world):
     with pytest.raises(DefinitionError, match="aggregation"):
         _create(covariates=[{**COVARIATES[0], "aggregation": "median"}])
 
+
+def test_the_generated_files_of_a_final_benchmark_are_served_after_a_hash_check(world, monkeypatch):
+    import hashlib
+    data = b"parquet bytes"
+    manifest = {"repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
+                "input": {"path": "3/input.parquet", "sha256": hashlib.sha256(data).hexdigest()},
+                "reference": {"path": "3/reference.parquet", "sha256": "0" * 64}}
+    world["state"]["row"] = {**_final(), "materialized": json.dumps(manifest)}
+    monkeypatch.setattr(actions.lakefs_client, "read_benchmark_file", lambda commit, path, limit: data)
+    assert actions.generated_file(3, "input") == (data, "benchmark-3-input.parquet")
+    with pytest.raises(LoadError, match="hash"):
+        actions.generated_file(3, "reference")                            # the stored file differs from its record
+    with pytest.raises(actions.NotFound):
+        actions.generated_file(3, "other")
+    world["state"]["row"] = _final()                                      # a final benchmark without generated files
+    with pytest.raises(actions.NotFound):
+        actions.generated_file(3, "input")
+    world["state"]["row"] = {**_row(), "materialized": json.dumps(manifest)}  # not final
+    with pytest.raises(actions.NotFound):
+        actions.generated_file(3, "input")
+

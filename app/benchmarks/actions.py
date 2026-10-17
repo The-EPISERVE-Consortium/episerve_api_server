@@ -5,6 +5,7 @@ head commit of ``data-processed``: the reference data is read at that commit and
 spec makes model runs read their input at the same commit.
 """
 
+import hashlib
 import json
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
@@ -402,6 +403,30 @@ def run_spec(benchmark_id: int) -> dict:
         "test_start": benchmark.test_start.isoformat(),
         "test_end": benchmark.test_end.isoformat(),
     }
+
+
+def generated_file(benchmark_id: int, kind: str) -> tuple[bytes, str]:
+    """The generated ``input`` or ``reference`` file of a final benchmark with covariates, checked against its hash.
+
+    Returns:
+        ``(Parquet bytes, download file name)``.
+
+    Raises:
+        NotFound: Unknown benchmark, not final, no generated files, or a kind other than input / reference.
+        LoadError: The stored file does not match its recorded hash.
+    """
+    row = _row(benchmark_id)
+    manifest = materialized_from_row(row)
+    if store.state(row) != "final" or not manifest or kind not in ("input", "reference"):
+        raise NotFound(f"Benchmark {benchmark_id} has no generated {kind} file")
+    entry = manifest[kind]
+    try:
+        data = lakefs_client.read_benchmark_file(manifest["commit"], entry["path"], MAX_DOWNLOAD_BYTES)
+    except NotFoundException as exc:
+        raise NotFound(f"The {kind} file of benchmark {benchmark_id} is missing") from exc
+    if hashlib.sha256(data).hexdigest() != entry["sha256"]:
+        raise LoadError(f"The {kind} file of benchmark {benchmark_id} does not match its recorded hash.")
+    return data, f"benchmark-{benchmark_id}-{kind}.parquet"
 
 
 def copy_as_draft(benchmark_id: int, created_by: int | None = None) -> int:

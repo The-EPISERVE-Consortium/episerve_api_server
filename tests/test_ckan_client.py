@@ -1,5 +1,7 @@
 """Tests for CKAN client helpers that need no network."""
 
+import json
+
 from app.clients import ckan
 
 
@@ -39,3 +41,14 @@ def test_get_datastore_records_paginates_and_strips_ids(monkeypatch):
     rows = ckan.get_datastore_records("res", page_size=2)
     assert rows == [{"datum": "a"}, {"datum": "b"}, {"datum": "c"}]
     assert calls == [("datastore_search", 0), ("datastore_search", 2)]
+
+
+def test_list_model_runs_exposes_everything_the_run_read(monkeypatch):
+    sources = ["lakefs://benchmarks/main/3/input.parquet?version=" + "ee" * 32]
+    package = {"extras": [{"key": "qid", "value": "Q1"}, {"key": "input_sources", "value": json.dumps(sources)}],
+               "resources": []}
+    monkeypatch.setattr(ckan, "_get", lambda action, params: {"results": [package]})
+    assert ckan.list_model_runs()[0]["input_sources"] == sources
+    bad = {"extras": [{"key": "input_sources", "value": "not json"}], "resources": []}
+    monkeypatch.setattr(ckan, "_get", lambda action, params: {"results": [bad]})
+    assert ckan.list_model_runs()[0]["input_sources"] == []

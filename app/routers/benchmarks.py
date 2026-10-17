@@ -6,7 +6,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from app.auth import optional_user, require_right
 from app.users import User
 from app.benchmarks import actions as bactions, store as bstore
-from app.benchmarks.definition import DefinitionError, filters_from_row
+from app.benchmarks.definition import (
+    DefinitionError, covariates_from_row, filters_from_row, materialized_from_row,
+)
 from app.leaderboard import actions as lactions
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
@@ -60,6 +62,12 @@ def _benchmark_out(row: dict) -> BenchmarkOut:
         date_column=row["date_column"], filter_column=(filters_from_row(row) or [(None, None)])[0][0],
         filter_value=(filters_from_row(row) or [(None, None)])[0][1],
         filters=[{"column": c, "value": v} for c, v in filters_from_row(row)],
+        covariates=[
+            {"name": c.name, "dataset_qid": c.dataset_qid, "date_column": c.date_column, "columns": list(c.columns),
+             "filters": [{"column": col, "value": val} for col, val in c.filters], "aggregation": c.aggregation}
+            for c in covariates_from_row(row)
+        ],
+        generated_files=materialized_from_row(row),
         test_start=row["test_start"].isoformat(),
         test_end=row["test_end"].isoformat(), history_start=_iso(row.get("history_start")),
         history_end=_iso(row.get("history_end")), input_filename=row.get("input_filename") or "input.parquet",
@@ -97,13 +105,24 @@ def get_benchmark(benchmark_id: int, user=Depends(optional_user)):
         raise _http(e)
 
 
-@router.get("/{benchmark_id}/run-spec", response_model=RunSpecOut)
+@router.get("/{benchmark_id}/run-spec", response_model=RunSpecOut, response_model_exclude_none=True)
 def get_run_spec(benchmark_id: int):
     """Everything needed to run a model on a final benchmark."""
     try:
         return bactions.run_spec(benchmark_id)
     except Exception as e:
         raise _http(e)
+
+
+@router.get("/{benchmark_id}/data/{kind}")
+def get_generated_file(benchmark_id: int, kind: Literal["input", "reference"]):
+    """Download the generated input or reference file of a final benchmark with covariates (Parquet)."""
+    try:
+        data, filename = bactions.generated_file(benchmark_id, kind)
+    except Exception as e:
+        raise _http(e)
+    return Response(content=data, media_type="application/vnd.apache.parquet",
+                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @router.get("/{benchmark_id}/leaderboard", response_model=BenchmarkLeaderboardOut)
@@ -146,6 +165,7 @@ def create_benchmark(request: BenchmarkCreate, user: User = Depends(require_righ
             test_start=request.test_start, test_end=request.test_end, filters=filters,
             history_start=request.history_start,
             history_end=request.history_end, input_filename=request.input_filename, created_by=user.id,
+            covariates=request.covariates,
         )
         return _benchmark_out(bactions.get(benchmark_id, include_draft=True))
     except Exception as e:
@@ -184,7 +204,7 @@ def check_benchmark(benchmark_id: int):
         component_name=report.component_name, truth_points=report.truth_points,
         history_end=_iso(report.history_end), last_history_date=_iso(report.last_history_date),
         prediction_length=report.prediction_length, frequency_days=report.frequency_days,
-        input_sql=report.input_sql,
+        input_sql=report.input_sql, columns=report.columns, missing=report.missing, input_rows=report.input_rows,
     )
 
 

@@ -93,6 +93,11 @@ def list_model_runs() -> list[dict]:
             input_dataset_qids = json.loads(raw_qids) if raw_qids else []
         except Exception:
             input_dataset_qids = []
+        raw_sources = extras.get("input_sources", "")
+        try:
+            input_sources = json.loads(raw_sources) if raw_sources else []
+        except Exception:
+            input_sources = []
         raw_sql = extras.get("data_transformation_sql", "")
         try:
             data_transformation_sql = json.loads(raw_sql) if raw_sql else []
@@ -111,6 +116,7 @@ def list_model_runs() -> list[dict]:
             "output_files":            output_files,
             "predictions_resource_id": predictions_resource_id,
             "input_dataset_qids":      input_dataset_qids,
+            "input_sources":           input_sources,
             "data_transformation_sql": data_transformation_sql,
             "doip_url":                _doip_url(qid) if qid else "",
         })
