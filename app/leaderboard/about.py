@@ -34,23 +34,35 @@ def description_text(row: dict) -> str:
     return f"Forecast of {subject} over a test window of {row['test_start']} → {row['test_end']}."
 
 
-def data_facts(row: dict) -> list[tuple[str, str]]:
-    """Caption/value pairs describing the series and the data version of a benchmark."""
+def overview_facts(row: dict) -> list[tuple[str, str]]:
+    """What is forecast and how much has been run; the data details are on the Data tab."""
+    series = f"{row['target_column']} · {_filter_text(row)}" if row.get("filter_column") else row["target_column"]
+    length = row.get("prediction_length")
+    facts = [("Series", series), ("Forecast horizon", f"{length} steps" if length else "—")]
+    if row.get("entry_count") is not None:
+        facts.append(("Runs", str(row["entry_count"])))
+    return facts
+
+
+def training_facts(row: dict) -> list[tuple[str, str]]:
+    """What a model sees: the dataset and the input range."""
     start = row.get("history_start") or "first date"
     end = row.get("history_end") or "last date before the test start"
-    length = row.get("prediction_length")
-    points = row.get("truth_points")
     return [
         ("Dataset", row["dataset_qid"]),
         ("Component", row.get("component_name") or "—"),
-        ("Target column", row["target_column"]),
         ("Date column", row["date_column"]),
-        ("Filter", _filter_text(row)),
         ("Input range", f"{start} → {end}"),
+        ("Input file name", row.get("input_filename") or "input.parquet"),
+    ]
+
+
+def evaluation_facts(row: dict) -> list[tuple[str, str]]:
+    """What forecasts are scored against and the data version it is pinned to."""
+    points = row.get("truth_points")
+    return [
         ("Test window", f"{row['test_start']} → {row['test_end']}"),
         ("Observations in the test window", str(points) if points is not None else "—"),
-        ("Forecast length", f"{length} steps" if length else "—"),
-        ("Input file name", row.get("input_filename") or "input.parquet"),
         ("Data commit", row.get("data_commit") or "—"),
         ("Pinned", str(row.get("finalized_at") or "—")),
     ]

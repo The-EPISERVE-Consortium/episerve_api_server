@@ -8,7 +8,9 @@ from starlette.requests import Request
 from app.auth import _daily_token
 from app.benchmarks import actions as bactions
 from app.leaderboard import actions
-from app.leaderboard.about import METRIC_DOCS, data_facts, description_text, entry_rules
+from app.leaderboard.about import (
+    METRIC_DOCS, description_text, entry_rules, evaluation_facts, overview_facts, training_facts,
+)
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
 from app.leaderboard.present import (
@@ -98,9 +100,10 @@ async def _add_run_dialog(benchmark_id: int) -> None:
                     ui.label(f"{c['model_name']} ({c['qid']}): {c['reason']}").classes("text-sm text-gray-600")
 
 
-_TABS = [("leaderboard", "Leaderboard"), ("get-started", "Get Started")]
-_SECTIONS = [("overview", "Overview"), ("data", "Data"), ("evaluation", "Evaluation"), ("run", "Run a model")]
-_DEFAULT_TAB = "leaderboard"
+_TABS = [("overview", "Overview"), ("data", "Data"), ("leaderboard", "Leaderboard")]
+_DEFAULT_TAB = "overview"
+# earlier tab names open the tab that now holds their content
+_FORMER_TABS = {"get-started": "overview", "evaluation": "data", "run": "leaderboard"}
 _MODEL_CELL = (
     "<q-td :props='props'>{{ props.value.split('__').join('__\\u200b') }}"
     "<q-badge v-if='props.row.baseline' color='grey-7' class='q-ml-sm'>baseline</q-badge></q-td>"
@@ -166,28 +169,24 @@ def _entry_detail(entry, benchmark_id: int, logged_in: bool) -> None:
         ui.button("Remove from leaderboard", on_click=remove).props("flat color=negative")
 
 
-def _overview_section(row: dict) -> None:
-    ui.label(description_text(row)).classes("text-sm text-gray-600")
-
-
-def _run_section(benchmark_id: int) -> None:
-    ui.label("Start a run on the Leaderboard tab, or from the command line:").classes("text-sm text-gray-700")
-    ui.code(
-        f"episerve benchmark run-spec {benchmark_id} > spec.json\n"
-        "# add model_image and the model's own config keys (e.g. history_length), keep input and SQL as they are\n"
-        "episerve trigger-model-run spec.json\n"
-        f"episerve benchmark add-entry {benchmark_id} <run-QID>      # after the run has finished (needs a login)\n"
-        f"episerve benchmark leaderboard {benchmark_id}",
-        language="bash",
-    ).classes("w-full max-w-4xl")
-
-
-def _data_section(row: dict, benchmark_id: int) -> None:
+def _facts_table(facts: list[tuple[str, str]]) -> None:
     ui.table(
         columns=[{"name": "property", "label": "", "field": "property", "align": "left"},
                  {"name": "value", "label": "", "field": "value", "align": "left"}],
-        rows=[{"property": k, "value": v} for k, v in data_facts(row)], row_key="property",
+        rows=[{"property": k, "value": v} for k, v in facts], row_key="property",
     ).props("dense flat hide-header").classes("w-full max-w-4xl")
+
+
+def _overview_tab(row: dict) -> None:
+    ui.label(description_text(row)).classes("text-sm text-gray-600")
+    with ui.column().classes("gap-1"):
+        for caption, value in overview_facts(row):
+            ui.label(f"{caption}: {value}").classes("text-sm text-gray-700")
+
+
+def _data_tab(row: dict, benchmark_id: int) -> None:
+    ui.label("Training data").classes("text-xl font-semibold text-gray-900")
+    _facts_table(training_facts(row))
     try:
         spec = bactions.run_spec(benchmark_id)
         url = spec["input_data_files"][0][0]
@@ -195,15 +194,14 @@ def _data_section(row: dict, benchmark_id: int) -> None:
     except Exception:
         logger.exception("could not build the run spec for the data tab")
         ui.label("The input URL and SQL are not available right now.").classes("text-sm text-gray-500")
-        return
-    ui.label("Input").classes("text-lg font-semibold text-gray-900")
-    ui.link(url, url, new_tab=True).classes("text-sm break-all")
-    ui.label("Input SQL (applied to the file before the model sees it)").classes("text-sm text-gray-600")
-    ui.code(sql, language="sql").classes("w-full max-w-4xl").style("white-space: pre-wrap; word-break: break-word")
-    ui.add_css(".nicegui-code pre, .nicegui-code code { white-space: pre-wrap !important; word-break: break-word; }")
+    else:
+        ui.link(url, url, new_tab=True).classes("text-sm break-all")
+        ui.label("Input SQL (applied to the file before the model sees it)").classes("text-sm text-gray-600")
+        ui.code(sql, language="sql").classes("w-full max-w-4xl").style("white-space: pre-wrap; word-break: break-word")
+        ui.add_css(".nicegui-code pre, .nicegui-code code { white-space: pre-wrap !important; word-break: break-word; }")
 
-
-def _evaluation_section(row: dict) -> None:
+    ui.label("Evaluation").classes("text-xl font-semibold text-gray-900 mt-4")
+    _facts_table(evaluation_facts(row))
     ui.label("Metrics").classes("text-lg font-semibold text-gray-900")
     ui.table(
         columns=[{"name": "metric", "label": "Metric", "field": "metric", "align": "left"},
@@ -225,6 +223,18 @@ def _evaluation_section(row: dict) -> None:
     with ui.column().classes("gap-1 text-sm text-gray-700"):
         for rule in entry_rules(row):
             ui.label("• " + rule)
+
+
+def _command_line_steps(benchmark_id: int) -> None:
+    with ui.expansion("Run from the command line").classes("w-full max-w-4xl"):
+        ui.code(
+            f"episerve benchmark run-spec {benchmark_id} > spec.json\n"
+            "# add model_image and the model's own config keys (e.g. history_length), keep input and SQL as they are\n"
+            "episerve trigger-model-run spec.json\n"
+            f"episerve benchmark add-entry {benchmark_id} <run-QID>      # after the run has finished (needs a login)\n"
+            f"episerve benchmark leaderboard {benchmark_id}",
+            language="bash",
+        ).classes("w-full")
 
 
 def register_leaderboard_page() -> None:
@@ -280,9 +290,8 @@ def register_leaderboard_page() -> None:
                 _error_label("Benchmark not found.")
             return
         state = {"rank_by": "interval_score", "all_runs": False, "model": None, "min_days": 0, "text": ""}
-        # a section name (the former tab names) opens Get Started at that section
-        section = tab if tab in dict(_SECTIONS) else "overview"
-        open_tab = tab if tab in dict(_TABS) else ("get-started" if tab in dict(_SECTIONS) else _DEFAULT_TAB)
+        tab = _FORMER_TABS.get(tab, tab)
+        open_tab = tab if tab in dict(_TABS) else _DEFAULT_TAB
 
         with ui.column().classes("px-8 py-6 w-full gap-4"):
             ui.link("← All benchmarks", "/ui/benchmarks").classes("text-sm")
@@ -291,20 +300,10 @@ def register_leaderboard_page() -> None:
                 for key, label in _TABS:
                     ui.tab(key, label=label)
             with ui.tab_panels(tabs, value=open_tab).classes("w-full"):
-                with ui.tab_panel("get-started"):
-                    with ui.row().classes("w-full no-wrap items-start gap-6"):
-                        with ui.tabs(value=section).props("vertical").classes("shrink-0 w-44") as sections:
-                            for key, label in _SECTIONS:
-                                ui.tab(key, label=label)
-                        with ui.tab_panels(sections, value=section).props("vertical").classes("flex-1"):
-                            with ui.tab_panel("overview").classes("gap-3"):
-                                _overview_section(row)
-                            with ui.tab_panel("data").classes("gap-3"):
-                                _data_section(row, selected)
-                            with ui.tab_panel("evaluation").classes("gap-3"):
-                                _evaluation_section(row)
-                            with ui.tab_panel("run").classes("gap-3"):
-                                _run_section(selected)
+                with ui.tab_panel("overview").classes("gap-3"):
+                    _overview_tab(row)
+                with ui.tab_panel("data").classes("gap-3"):
+                    _data_tab(row, selected)
                 with ui.tab_panel("leaderboard").classes("gap-3"):
                     with ui.row().classes("items-center gap-3"):
                         ui.button("Start a run from this benchmark",
@@ -312,6 +311,7 @@ def register_leaderboard_page() -> None:
                                   ).props("no-caps outline")
                         if logged_in:
                             ui.button("Add run", on_click=lambda: _add_run_dialog(selected))
+                    _command_line_steps(selected)
                     with ui.row().classes("items-end gap-3"):
                         def set_rank(e):
                             state["rank_by"] = e.value

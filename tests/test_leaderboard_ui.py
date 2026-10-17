@@ -2,6 +2,7 @@
 
 from datetime import date
 
+import pytest
 from nicegui import ui
 
 from app.leaderboard.entries import Benchmark
@@ -311,12 +312,12 @@ def test_data_tab_lists_the_facts_the_pin_the_input_link_and_the_sql(monkeypatch
     def grab(out, client, find, drain):
         out["code"] = [e.content for e in find(ui.code)]
         out["links"] = [(e.text, e.props.get("href")) for e in find(ui.link)]
-        out["facts"] = [dict((r["property"], r["value"]) for r in t.rows) for t in find(ui.table)
-                        if t.props.get("row-key") == "property"]
+        out["facts"] = {r["property"]: r["value"] for t in find(ui.table) if t.props.get("row-key") == "property"
+                        for r in t.rows}
 
     out = _render(monkeypatch, board=_board([_entry()]), after=grab)
-    facts = out["facts"][0]
-    assert facts["Data commit"] == COMMIT and facts["Filter"] == "region = DE" and facts["Dataset"] == "Q1"
+    facts = out["facts"]
+    assert facts["Data commit"] == COMMIT and facts["Dataset"] == "Q1" and facts["Test window"].startswith("2022-01-01")
     assert "SELECT 1 FROM df" in out["code"]
     url = f"https://doip.example/doip/retrieve/Q1/d.parquet?version={COMMIT}"
     assert (url, url) in out["links"]
@@ -328,26 +329,68 @@ def test_data_tab_survives_a_missing_run_spec(monkeypatch):
         out["facts"] = [t for t in find(ui.table) if t.props.get("row-key") == "property"]
 
     out = _render(monkeypatch, board=_board([_entry()]), spec=RuntimeError("db down"), after=grab)
-    assert out["status"] == 200 and len(out["facts"]) == 1
+    assert out["status"] == 200 and len(out["facts"]) == 2          # training and evaluation facts still shown
     assert not any("SELECT" in c for c in out["code"])
     assert "The input URL and SQL are not available right now." in out["labels"]
 
 
-# --- two tabs: Leaderboard (default) and Get Started with a section menu ---------------------------------------
+# --- three tabs: Overview (default), Data and Leaderboard ----------------------------------------------------
 
 
-def test_page_opens_on_the_leaderboard_and_has_a_get_started_tab_with_sections(monkeypatch):
+def _panel_of(element):
+    node = element
+    while node is not None:
+        if isinstance(node, ui.tab_panel):
+            return node.props.get("name")
+        slot = getattr(node, "parent_slot", None)
+        node = slot.parent if slot else None
+    return None
+
+
+def test_page_has_overview_data_and_leaderboard_tabs_and_opens_on_the_overview(monkeypatch):
     out = _render(monkeypatch, board=_board([_entry()]))
-    tabs = out["find"](ui.tabs)
-    names = [t.props.get("name") for t in out["find"](ui.tab)]
-    assert names == ["leaderboard", "get-started", "overview", "data", "evaluation", "run"]
-    assert tabs[0].value == "leaderboard"
+    assert [t.props.get("name") for t in out["find"](ui.tab)] == ["overview", "data", "leaderboard"]
+    assert out["find"](ui.tabs)[0].value == "overview"
 
 
-def test_a_section_name_in_the_query_opens_get_started_at_that_section(monkeypatch):
-    out = _render(monkeypatch, board=_board([_entry()]), path="/ui/benchmarks/3?tab=evaluation")
-    outer, inner = out["find"](ui.tabs)
-    assert (outer.value, inner.value) == ("get-started", "evaluation")
+@pytest.mark.parametrize("query,expected", [("?tab=leaderboard", "leaderboard"), ("?tab=evaluation", "data"),
+                                            ("?tab=get-started", "overview"), ("?tab=run", "leaderboard")])
+def test_the_query_picks_the_tab_and_former_names_map_to_the_new_ones(monkeypatch, query, expected):
+    out = _render(monkeypatch, board=_board([_entry()]), path=f"/ui/benchmarks/3{query}")
+    assert out["find"](ui.tabs)[0].value == expected
+
+
+def test_overview_has_the_general_facts_but_no_how_to_run(monkeypatch):
+    row = {**ROW, "description": "Weekly wastewater viral load.", "entry_count": 4}
+
+    def grab(out, client, find, drain):
+        out["code"] = [_panel_of(e) for e in find(ui.code)]
+        out["buttons"] = [(b.props.get("label"), _panel_of(b)) for b in find(ui.button)]
+
+    out = _render(monkeypatch, row=row, board=_board([_entry()]), after=grab)
+    for text in ("Weekly wastewater viral load.", "Series: v · region = DE", "Forecast horizon: 5 steps", "Runs: 4"):
+        assert text in out["labels"]
+    assert "overview" not in out["code"]
+    assert [b for b, panel in out["buttons"] if panel == "overview" and b] == []
+
+
+def test_data_tab_has_training_data_and_evaluation_with_metrics_and_rules(monkeypatch):
+    def grab(out, client, find, drain):
+        out["metrics"] = [t for t in find(ui.table) if t.props.get("row-key") == "metric"]
+        out["panels"] = {t.props.get("row-key"): _panel_of(t) for t in find(ui.table)}
+
+    out = _render(monkeypatch, board=_board([_entry()]), after=grab)
+    assert "Training data" in out["labels"] and "Evaluation" in out["labels"]
+    assert len(out["metrics"]) == 1 and out["panels"]["metric"] == "data"
+    assert any("Which runs are accepted" in t for t in out["labels"])
+
+
+def test_the_command_line_steps_sit_on_the_leaderboard_tab(monkeypatch):
+    def grab(out, client, find, drain):
+        out["code"] = [(e.content, _panel_of(e)) for e in find(ui.code)]
+
+    out = _render(monkeypatch, board=_board([_entry()]), after=grab)
+    assert [panel for content, panel in out["code"] if "episerve benchmark run-spec 3" in content] == ["leaderboard"]
 
 
 def test_the_header_of_the_page_holds_only_the_title_and_the_api_box(monkeypatch):
