@@ -331,44 +331,50 @@ def test_unexpected_write_errors_are_generic_and_logged(monkeypatch, caplog):
 # --- tabs: Overview | Data | Evaluation | Leaderboard -------------------------------------------------------------
 
 
-def test_data_tab_has_only_the_generated_data_and_the_evaluation_criteria(monkeypatch):
+def test_data_tab_has_the_files_the_sources_the_steps_and_the_evaluation_criteria(monkeypatch):
     def grab(out, client, find, drain):
         out["tables"] = {t.props.get("row-key"): _panel_of(t) for t in find(ui.table)}
 
     out = _render(monkeypatch, board=_board([_entry()]), after=grab)
-    for heading in ("Training data", "Evaluation data", "Evaluation criteria"):
+    for heading in ("The two data files", "Source datasets", "How the files are generated", "Evaluation criteria"):
         assert heading in out["labels"]
     assert out["tables"]["metric"] == "data" and "property" not in out["tables"]        # no fact tables
     assert not any(t in out["labels"] for t in ("Ranking", "Which runs are accepted", "Metrics"))
 
 
-def test_data_tab_of_a_benchmark_with_covariates_links_the_two_generated_files_and_shows_no_sql(monkeypatch):
-    import json
-    manifest = {"repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
-                "input": {"qid": "Q1791000000001", "component": "input.parquet", "sha256": "a" * 64, "rows": 120, "first_date": "2021-01-06",
-                          "last_date": "2021-12-29", "columns": ["datum", "v", "wetter__temp"]},
-                "reference": {"qid": "Q1791000000002", "component": "reference.parquet", "sha256": "b" * 64, "rows": 4}}
+def test_data_tab_describes_layout_sources_and_steps_of_a_benchmark_with_covariates(monkeypatch):
+    manifest = {"repo": "benchmarks", "branch": "main", "commit": "ee" * 32, "qid": "Q1791000000001",
+                "sources": [{"role": "target", "qid": "Q1", "component": "d.parquet"},
+                            {"role": "wetter", "qid": "Q2", "component": "w.parquet"}],
+                "input": {"qid": "Q1791000000001", "component": "input.parquet", "sha256": "a" * 64, "rows": 120,
+                          "first_date": "2021-01-06", "last_date": "2021-12-29",
+                          "columns": ["datum", "v", "wetter__temp"]},
+                "reference": {"qid": "Q1791000000001", "component": "reference.parquet", "sha256": "b" * 64, "rows": 4,
+                              "columns": ["datum", "v"]}}
     cov = [{"name": "wetter", "dataset_qid": "Q2", "date_column": "day", "columns": ["temp"],
             "filters": [["city", "Berlin"]], "aggregation": "mean"}]
-    row = {**ROW, "covariates": json.dumps(cov), "materialized": json.dumps(manifest)}
+    row = {**ROW, "covariates": json.dumps(cov), "materialized": json.dumps(manifest), "history_end": date(2021, 12, 29)}
 
     def grab(out, client, find, drain):
-        out["code"] = [e.content for e in find(ui.code) if _panel_of(e) == "data"]
         out["links"] = [(e.text, e.props.get("href")) for e in find(ui.link)]
-        out["tables"] = {t.props.get("row-key"): t.rows for t in find(ui.table) if _panel_of(t) == "data"}
+        out["tables"] = [(t.props.get("row-key"), t.rows) for t in find(ui.table) if _panel_of(t) == "data"]
 
     out = _render(monkeypatch, row=row, board=_board([_entry()]), after=grab)
-    assert out["code"] == []                                                       # no SQL: the files are generated
     urls = dict(out["links"])
-    assert urls["Download the input file (Parquet)"].endswith(f"/doip/retrieve/Q1791000000001/input.parquet?version={'ee' * 32}")
-    assert urls["Download the reference file (Parquet)"].endswith("/doip/retrieve/Q1791000000002/reference.parquet?version=" + "ee" * 32)
-    assert out["tables"]["column"] == [
-        {"column": "datum", "role": "date"}, {"column": "v", "role": "target"},
-        {"column": "wetter__temp", "role": "covariate (wetter)"}]
-    assert out["tables"]["name"][0]["filters"] == "city = Berlin" and out["tables"]["name"][0]["dataset"] == "Q2"
-    assert "metric" in out["tables"]                                               # the evaluation criteria stay
-    for text in ("120 rows, 2021-01-06 → 2021-12-29; SHA-256 aaaaaaaaaaaaaaaa…", "4 rows; SHA-256 bbbbbbbbbbbbbbbb…"):
-        assert text in out["labels"]
+    assert urls["input.parquet"].endswith(f"/doip/retrieve/Q1791000000001/input.parquet?version={'ee' * 32}")
+    assert urls["reference.parquet"].endswith(f"/doip/retrieve/Q1791000000001/reference.parquet?version={'ee' * 32}")
+    layouts = [rows for key, rows in out["tables"] if key == "column"]
+    assert layouts[0] == [{"column": "datum", "role": "date"}, {"column": "v", "role": "target"},
+                          {"column": "wetter__temp", "role": "covariate (wetter)"}]
+    assert layouts[1] == [{"column": "datum", "role": "date"}, {"column": "v", "role": "target"}]
+    sources = next(rows for key, rows in out["tables"] if key == "role")
+    assert [(r["role"], r["qid"], r["file"]) for r in sources] == [("target", "Q1", "d.parquet"), ("wetter", "Q2", "w.parquet")]
+    assert sources[1]["url"].endswith(f"/doip/retrieve/Q2/w.parquet?version={COMMIT}")
+    assert sources[1]["catalog"].endswith("/dataset/q2")
+    steps = [t for t in out["labels"] if t[:2] in ("1.", "2.", "3.", "4.", "5.", "6.")]
+    assert len(steps) == 6 and "city = 'Berlin'" in steps[3] and "wetter__temp" in steps[3]
+    assert "120 rows, 2021-01-06 → 2021-12-29" in " ".join(out["labels"])
+    assert "metric" in dict(out["tables"])                                         # the evaluation criteria stay
 
 
 # --- three tabs: Overview (default), Data and Leaderboard ----------------------------------------------------

@@ -49,6 +49,7 @@ class CheckReport:
     missing: dict | None = None                 # share of empty values per covariate column
     input_rows: int | None = None
     built: object = field(default=None, repr=False)      # the generated tables, kept for finalize
+    sources: list = field(default_factory=list)           # the datasets (QID, file) the tables were built from
 
 
 def _dataset(qid: str) -> dict:
@@ -171,7 +172,9 @@ def _evaluate(benchmark: Benchmark, dataset: dict, commit: str, component_name: 
             raise LoadError("The history must end before the test start.")
         report.history_end = history_end
         resolved = replace(benchmark, history_end=history_end)
-        built = materialize.build(resolved, history_end, data, _covariate_data(benchmark, commit))
+        sources = [{"role": "target", "qid": dataset["qid"], "component": report.component_name}]
+        built = materialize.build(resolved, history_end, data, _covariate_data(benchmark, commit, sources))
+        report.sources = sources
     except LoadError as exc:
         report.problems.append(str(exc))
         return report
@@ -194,8 +197,10 @@ def _evaluate(benchmark: Benchmark, dataset: dict, commit: str, component_name: 
     return report
 
 
-def _covariate_data(benchmark: Benchmark, commit: str) -> dict[str, bytes]:
-    """The Parquet bytes of every covariate's dataset at ``commit``; raises ``LoadError`` with the reason."""
+def _covariate_data(benchmark: Benchmark, commit: str, sources: list | None = None) -> dict[str, bytes]:
+    """The Parquet bytes of every covariate's dataset at ``commit``; raises ``LoadError`` with the reason.
+
+    ``sources`` (when given) collects ``{"role", "qid", "component"}`` for every covariate read."""
     out = {}
     for covariate in benchmark.covariates:
         try:
@@ -211,6 +216,9 @@ def _covariate_data(benchmark: Benchmark, commit: str) -> dict[str, bytes]:
         try:
             out[covariate.name] = lakefs_client.read_processed_component(
                 commit, covariate.dataset_qid, components[0]["name"], MAX_DOWNLOAD_BYTES)
+            if sources is not None:
+                sources.append({"role": covariate.name, "qid": covariate.dataset_qid,
+                                "component": components[0]["name"]})
         except NotFoundException as exc:
             raise LoadError(f"covariate {covariate.name!r}: the dataset file does not exist at the pinned commit") from exc
         except ValueError as exc:
@@ -218,7 +226,8 @@ def _covariate_data(benchmark: Benchmark, commit: str) -> dict[str, bytes]:
     return out
 
 
-def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materialize.Built") -> dict:
+def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materialize.Built",
+              sources: list | None = None) -> dict:
     """Store the generated files as one FDO object and return the manifest recorded with the finalized benchmark."""
     input_bytes, input_sha = materialize.to_parquet(built.input)
     reference_bytes, reference_sha = materialize.to_parquet(built.reference)
@@ -228,7 +237,7 @@ def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materi
         "input": ("input.parquet", input_bytes, input_sha, built.input),
         "reference": ("reference.parquet", reference_bytes, reference_sha, built.reference),
     }
-    manifest = {"version": 3, "repo": settings.lakefs_benchmarks_repo, "qid": qid}
+    manifest = {"version": 3, "repo": settings.lakefs_benchmarks_repo, "qid": qid, "sources": sources or []}
     files = {}
     for role, (component, data, sha, frame) in parts.items():
         files[fdo.component_path(qid, component)] = data
@@ -295,7 +304,8 @@ def finalize(benchmark_id: int, expected_commit: str | None = None, *, by: User)
     again = _row(benchmark_id)
     if (again["name"], store.benchmark_from_row(again)) != (row["name"], benchmark):
         raise Conflict("The draft changed while it was being finalized; check it again.")
-    manifest = _manifest(benchmark_id, row["name"], replace(benchmark, data_commit=commit), report.built)
+    manifest = _manifest(benchmark_id, row["name"], replace(benchmark, data_commit=commit), report.built,
+                         report.sources)
     done = store.finalize(
         benchmark_id, data_commit=commit, component_name=report.component_name, truth_points=report.truth_points,
         prediction_length=report.prediction_length, history_end=report.history_end, materialized=manifest,
@@ -322,7 +332,7 @@ def materialize_final(benchmark_id: int) -> dict:
     report = _evaluate(benchmark, _dataset(benchmark.dataset_qid), benchmark.data_commit, row["component_name"])
     if not report.ok:
         raise LoadError("; ".join(report.problems))
-    manifest = _manifest(benchmark_id, row["name"], benchmark, report.built)
+    manifest = _manifest(benchmark_id, row["name"], benchmark, report.built, report.sources)
     store.set_materialized(benchmark_id, manifest)
     return manifest
 

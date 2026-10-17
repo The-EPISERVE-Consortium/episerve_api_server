@@ -9,8 +9,8 @@ from starlette.requests import Request
 from app.ui import session
 from app.benchmarks import actions as bactions
 from app.leaderboard import actions
-from app.benchmarks.definition import covariates_from_row, materialized_from_row, object_url
-from app.benchmarks.store import benchmark_from_row
+from app.benchmarks import recipe
+from app.benchmarks.definition import materialized_from_row
 from app.leaderboard.about import COLUMN_HELP, METRIC_DOCS, description_text, overview_facts
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
@@ -148,56 +148,51 @@ def _overview_tab(row: dict) -> None:
         "body-cell-caption", '''<q-td :props="props" class="text-gray-500" style="width: 11rem">{{ props.value }}</q-td>''')
 
 
-def _generated_data_sections(row: dict, manifest: dict, benchmark_id: int) -> None:
-    """Training and evaluation data of a benchmark with covariates: two generated files, no SQL."""
-    sources = covariates_from_row(row)
-    inp, ref = manifest["input"], manifest["reference"]
-    ui.label("Training data").classes("text-xl font-semibold text-gray-900")
-    ui.label("One file, generated once from the sources below when the benchmark was finalized. "
-             "A model run reads exactly this file, as it is.").classes("text-sm text-gray-600")
-    ui.link("Download the input file (Parquet)", object_url(manifest, "input", versioned=True), new_tab=True).classes("text-sm")
-    ui.label(f"Object {inp['qid']} (both files), served by the DOIP server").classes("text-xs text-gray-500")
-    ui.label(f"{inp['rows']} rows, {inp.get('first_date', '?')} → {inp.get('last_date', '?')}; "
-             f"SHA-256 {inp['sha256'][:16]}…").classes("text-xs text-gray-500")
-    owner = {name: covariate.name for covariate in sources for name in covariate.output_columns()}
-    ui.table(
-        columns=[{"name": "column", "label": "Column", "field": "column", "align": "left"},
-                 {"name": "role", "label": "Role", "field": "role", "align": "left"}],
-        rows=[{"column": name, "role": "date" if name == row["date_column"] else "target" if name == row["target_column"]
-               else f"covariate ({owner.get(name, '?')})"} for name in inp["columns"]],
-        row_key="column",
-    ).props("dense flat bordered").classes("w-full max-w-xl")
-    if sources:
-        ui.label("Sources").classes("text-sm font-semibold text-gray-800 mt-2")
+def _generated_data_sections(row: dict, manifest: dict) -> None:
+    """The Data tab of a final benchmark: the layout of the two generated files, the sources they were built from
+    and the steps that turn the sources into the files."""
+    ui.label("The two data files").classes("text-xl font-semibold text-gray-900")
+    ui.label("Both files are Parquet, generated once when the benchmark was finalized and stored as one open object "
+             f"({manifest.get('qid') or manifest['input'].get('qid')}) that the DOIP server serves. A model run reads "
+             "exactly the input file, as it is; forecasts are scored against the reference file, which is never "
+             "given to a model.").classes("text-sm text-gray-600")
+    for layout in recipe.file_layouts(row, manifest):
+        ui.link(layout["title"], layout["url"], new_tab=True).classes("text-base font-semibold mt-3")
+        span = (f", {layout['first_date']} → {layout['last_date']}"
+                if layout["first_date"] and layout["last_date"] else "")
+        ui.label(f"A row is {layout['meaning']}. {layout['rows']} rows{span}; SHA-256 {layout['sha256'][:16]}…"
+                 ).classes("text-sm text-gray-600")
         ui.table(
-            columns=[{"name": "name", "label": "Name", "field": "name", "align": "left"},
-                     {"name": "dataset", "label": "Dataset", "field": "dataset", "align": "left"},
-                     {"name": "columns", "label": "Columns", "field": "columns", "align": "left",
-                      "style": "white-space: normal"},
-                     {"name": "filters", "label": "Filters", "field": "filters", "align": "left",
-                      "style": "white-space: normal"},
-                     {"name": "aggregation", "label": "Per time step", "field": "aggregation", "align": "left"}],
-            rows=[{"name": c.name, "dataset": c.dataset_qid, "columns": ", ".join(c.columns),
-                   "filters": ", ".join(f"{col} = {val}" for col, val in c.filters) or "none",
-                   "aggregation": c.aggregation} for c in sources],
-            row_key="name",
-        ).props("dense flat bordered").classes("w-full max-w-4xl")
-        ui.label("The target series sets the time steps; the rows of a source between two steps are combined "
-                 "(mean, sum or last value) into the later one. Empty stays empty, nothing is filled in.").classes(
-            "text-xs text-gray-500")
-    ui.label("Evaluation data").classes("text-xl font-semibold text-gray-900 mt-4")
-    ui.label("Forecasts are scored against this file (date and target value only); it is never given to a model."
+            columns=[{"name": "column", "label": "Column", "field": "column", "align": "left"},
+                     {"name": "role", "label": "Role", "field": "role", "align": "left"}],
+            rows=layout["columns"], row_key="column",
+        ).props("dense flat bordered").classes("w-full max-w-xl")
+    ui.label("Source datasets").classes("text-xl font-semibold text-gray-900 mt-4")
+    ui.label("Every source is read at the same pinned version of the data (the lakeFS commit "
+             f"{(row.get('data_commit') or '?')[:12]}…), so later updates of a source never change the files."
              ).classes("text-sm text-gray-600")
-    ui.link("Download the reference file (Parquet)", object_url(manifest, "reference", versioned=True),
-            new_tab=True).classes("text-sm")
-    ui.label(f"{ref['rows']} rows; SHA-256 {ref['sha256'][:16]}…").classes("text-xs text-gray-500")
+    sources = recipe.source_rows(row, manifest)
+    table = ui.table(
+        columns=[{"name": "role", "label": "Used as", "field": "role", "align": "left"},
+                 {"name": "qid", "label": "Dataset", "field": "qid", "align": "left"},
+                 {"name": "file", "label": "File at the pinned version", "field": "file", "align": "left"}],
+        rows=sources, row_key="role",
+    ).props("dense flat bordered").classes("w-full max-w-4xl")
+    table.add_slot(
+        "body-cell-qid", """<q-td :props="props"><a :href="props.row.catalog" target="_blank">{{ props.value }}</a></q-td>""")
+    table.add_slot(
+        "body-cell-file", """<q-td :props="props"><a v-if="props.row.url" :href="props.row.url" target="_blank">"""
+                          """{{ props.value }}</a><span v-else>-</span></q-td>""")
+    ui.label("How the files are generated").classes("text-xl font-semibold text-gray-900 mt-4")
+    for number, step in enumerate(recipe.steps(row, manifest), start=1):
+        ui.label(f"{number}. {step}").classes("text-sm text-gray-700 max-w-4xl")
 
 
 def _data_tab(row: dict, benchmark_id: int) -> None:
     ui.add_css(".nicegui-code pre, .nicegui-code code { white-space: pre-wrap !important; word-break: break-word; }")
     manifest = materialized_from_row(row)
     if manifest:
-        _generated_data_sections(row, manifest, benchmark_id)
+        _generated_data_sections(row, manifest)
     _criteria_section()
 
 
