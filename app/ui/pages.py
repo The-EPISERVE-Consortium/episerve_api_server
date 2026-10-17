@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 from nicegui import context, ui, run, app as _napp
 from starlette.requests import Request
 
-from app import password_reset, users
+from app import login_guard, password_reset, users
 from app.benchmarks import actions as bactions
 from app.benchmarks.errors import NotFound as BenchmarkNotFound
 from app.benchmarks.workflow import apply_benchmark, clear_benchmark, overlay_config, workflow_problems
@@ -299,7 +299,14 @@ def register_pages():
         _login_styles()
 
         def do_login():
-            user = users.authenticate(email_inp.value or "", password_inp.value or "")
+            request = context.client.request
+            ip = login_guard.client_ip(request.headers.get("x-forwarded-for") if request else None,
+                                       request.client.host if request and request.client else None)
+            try:
+                user = login_guard.authenticate(email_inp.value or "", password_inp.value or "", ip)
+            except login_guard.Locked as locked:
+                error.set_text(f"Too many failed attempts. Try again in {max(1, round(locked.retry_after / 60))} minutes.")
+                return
             if user:
                 _napp.storage.user["token"] = users.issue_token(user)
                 ui.navigate.to("/ui")

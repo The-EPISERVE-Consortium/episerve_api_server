@@ -19,3 +19,11 @@ ADMIN = make_user()
 def _known_users(monkeypatch):
     """Without a database: user 1 is an admin (the tests' AUTH headers belong to it)."""
     install_users(monkeypatch, ADMIN)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_login_guard():
+    from app import login_guard
+    login_guard._failures.clear()
+    yield
+    login_guard._failures.clear()

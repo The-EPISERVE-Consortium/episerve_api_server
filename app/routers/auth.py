@@ -1,9 +1,9 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from app import users
+from app import login_guard, users
 from app.auth import require_auth
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -28,8 +28,13 @@ class TokenStatus(BaseModel):
 
 
 @router.post("/token", response_model=TokenResponse)
-def get_token(request: TokenRequest) -> TokenResponse:
-    user = users.authenticate(request.username, request.password)
+def get_token(request: TokenRequest, http: Request) -> TokenResponse:
+    ip = login_guard.client_ip(http.headers.get("x-forwarded-for"), http.client.host if http.client else None)
+    try:
+        user = login_guard.authenticate(request.username, request.password, ip)
+    except login_guard.Locked as locked:
+        raise HTTPException(status_code=429, detail="Too many failed logins; try again later",
+                            headers={"Retry-After": str(locked.retry_after)})
     if user is None:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return TokenResponse(token=users.issue_token(user), expires_at=users.token_expires_at())
