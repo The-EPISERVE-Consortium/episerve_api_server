@@ -65,6 +65,11 @@ def column_rows(layouts: list[dict]) -> list[dict]:
              "reference": "yes" if c["column"] in in_files.get("reference", set()) else "-"} for c in first]
 
 
+def _ident(name: str) -> str:
+    """A column name as a quoted SQL identifier (names can contain hyphens, spaces and brackets)."""
+    return '"' + name.replace('"', '""') + '"'
+
+
 def _sql_text(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -88,40 +93,42 @@ def steps(row: dict, manifest: dict) -> list[dict]:
         "language": "python",
         "code": f"df = pd.read_parquet({(target or {}).get('url') or '<file URL>'!r})",
     }]
-    where = "".join(f" AND {column} = {_sql_text(value)}" for column, value in filters)
+    where = "".join(f" AND CAST({_ident(column)} AS VARCHAR) = {_sql_text(value)}" for column, value in filters)
+    date_id, target_id = _ident(date_column), _ident(target_column)
     out.append({
         "text": "Select the series: apply the filters, keep valid dates and finite values (at most one row per date "
                 "is allowed).",
         "language": "sql",
-        "code": f"CREATE VIEW series AS SELECT TRY_CAST({date_column} AS DATE) AS {date_column}, "
-                f"TRY_CAST({target_column} AS DOUBLE) AS {target_column} FROM df\n"
-                f"WHERE isfinite(TRY_CAST({target_column} AS DOUBLE)){where};",
+        "code": f"CREATE VIEW series AS SELECT TRY_CAST({date_id} AS DATE) AS {date_id}, "
+                f"TRY_CAST({target_id} AS DOUBLE) AS {target_id} FROM df\n"
+                f"WHERE isfinite(TRY_CAST({target_id} AS DOUBLE)){where};",
     })
-    lower = f" AND {date_column} >= DATE {_sql_text(str(start))}" if start else ""
+    lower = f" AND {date_id} >= DATE {_sql_text(str(start))}" if start else ""
     out.append({
         "text": f"Cut the windows. The first query is the input (it ends at the last observation before the test "
                 f"start {row['test_start']}), the second the reference (the test window).",
         "language": "sql",
-        "code": f"SELECT * FROM series WHERE {date_column} <= DATE {_sql_text(str(history_end))}{lower} "
-                f"ORDER BY {date_column};\n"
-                f"SELECT * FROM series WHERE {date_column} BETWEEN DATE {_sql_text(str(row['test_start']))} "
-                f"AND DATE {_sql_text(str(row['test_end']))} ORDER BY {date_column};",
+        "code": f"SELECT * FROM series WHERE {date_id} <= DATE {_sql_text(str(history_end))}{lower} "
+                f"ORDER BY {date_id};\n"
+                f"SELECT * FROM series WHERE {date_id} BETWEEN DATE {_sql_text(str(row['test_start']))} "
+                f"AND DATE {_sql_text(str(row['test_end']))} ORDER BY {date_id};",
     })
     for covariate in covariates_from_row(row):
         source = next((s for s in sources if s["role"] == covariate.name), None)
-        cond = "".join(f' & (cov["{c}"] == {v!r})' for c, v in covariate.filters)
+        cond = "".join(f' & (cov["{c}"].astype(str) == {v!r})' for c, v in covariate.filters)
         cols = list(covariate.columns)
         how = "sum(min_count=1)" if covariate.aggregation == "sum" else f"{covariate.aggregation}()"
+        url = (source or {}).get("url") or "<file URL>"
         out.append({
-            "text": f"Covariate {covariate.name} (dataset {covariate.dataset_qid}): the rows between two input dates "
-                    f"are combined by {covariate.aggregation} into the later date (cov is read like df in step 1"
-                    f"{', from ' + source['file'] if source and source.get('file') else ''}); dates without rows stay empty, "
-                    f"nothing is filled in, and rows after {history_end} are never used. Output columns: "
-                    f"{', '.join(covariate.output_columns())}.",
+            "text": f"Covariate {covariate.name} (dataset {covariate.dataset_qid}, read like the target): the rows "
+                    f"between two input dates are combined by {covariate.aggregation} into the later date; dates "
+                    f"without rows stay empty, nothing is filled in, and rows after {history_end} are never used. "
+                    f"Output columns: {', '.join(covariate.output_columns())}.",
             "language": "python",
-            "code": f"d = pd.to_datetime(cov[\"{covariate.date_column}\"])\n"
-                    f"rows = cov[(d > grid[0] - grid.to_series().diff().median()) & (d <= \"{history_end}\"){cond}]\n"
-                    f"aligned = rows.groupby(np.searchsorted(grid, d[rows.index], side=\"left\"))"
+            "code": f"cov = pd.read_parquet({url!r}).assign(_date=lambda x: pd.to_datetime(x[\"{covariate.date_column}\"]))\n"
+                    f"rows = cov[(cov[\"_date\"] > grid[0] - grid.to_series().diff().median()) "
+                    f"& (cov[\"_date\"] <= \"{history_end}\"){cond}]\n"
+                    f"aligned = rows.groupby(np.searchsorted(grid, rows[\"_date\"], side=\"left\"))"
                     f"[{cols!r}].{how}.reindex(range(len(grid)))",
         })
     columns = manifest["input"].get("columns") or [date_column, target_column]

@@ -35,9 +35,10 @@ def test_the_steps_carry_short_sql_and_python_for_the_core_of_each_step():
     assert [s["language"] for s in steps] == ["python", "sql", "sql", "python", ""]
     assert "pd.read_parquet('https://doip" in steps[0]["code"] and "version=" + "c" * 64 in steps[0]["code"]
     view = steps[1]["code"]
-    assert "typ = 'a' AND age = '35-59'" in view and "isfinite(TRY_CAST(v AS DOUBLE))" in view
+    assert 'CAST("typ" AS VARCHAR) = \'a\' AND CAST("age" AS VARCHAR) = \'35-59\'' in view
+    assert 'isfinite(TRY_CAST("v" AS DOUBLE))' in view
     windows = steps[2]["code"]
-    assert "datum <= DATE '2026-08-12'" in windows and "BETWEEN DATE '2026-08-19' AND DATE '2026-10-07'" in windows
+    assert '"datum" <= DATE \'2026-08-12\'' in windows and "BETWEEN DATE '2026-08-19' AND DATE '2026-10-07'" in windows
     assert all(len(s["code"].splitlines()) <= 3 for s in steps)
     assert "ee" * 6 in steps[-1]["text"] and "Q1791000000001" in steps[-1]["text"]
 
@@ -49,9 +50,9 @@ def test_a_covariate_step_aligns_with_the_grid_in_three_lines():
     manifest = {**MANIFEST, "sources": [{"role": "target", "qid": "Q1", "component": "d.parquet"},
                                         {"role": "wetter", "qid": "Q2", "component": "w.parquet"}]}
     step = recipe.steps(row, manifest)[3]
-    assert len(step["code"].splitlines()) == 3 and 'cov["city"] == \'Berlin\'' in step["code"]
-    assert "np.searchsorted(grid" in step["code"] and ".mean()" in step["code"]
-    assert "from w.parquet" in step["text"] and "wetter__temp" in step["text"]
+    assert len(step["code"].splitlines()) == 3 and 'cov["city"].astype(str) == \'Berlin\'' in step["code"]
+    assert step["code"].startswith("cov = pd.read_parquet('https://doip") and "/Q2/w.parquet?version=" in step["code"]
+    assert "np.searchsorted(grid" in step["code"] and ".mean()" in step["code"] and "wetter__temp" in step["text"]
 
 
 # --- the description must do what the code does ---------------------------------------------------------------
@@ -61,10 +62,10 @@ def _frames():
     import numpy as np
     import pandas as pd
     days = pd.date_range("2025-01-01", periods=80, freq="7D")
-    target = pd.DataFrame({"datum": days.strftime("%Y-%m-%d"), "v": np.arange(80, dtype=float), "typ": "a",
-                           "age": "35-59"})
-    other = target.assign(typ="b", v=-1.0)                                  # a different series that the filters drop
-    noisy = pd.DataFrame({"datum": ["2025-01-01"], "v": [float("nan")], "typ": "a", "age": "35-59"})
+    target = pd.DataFrame({"datum": days.strftime("%Y-%m-%d"), "Inz-7": np.arange(80, dtype=float), "typ": "a",
+                           "age": "35-59", "bl": 11})                       # a hyphenated name and a numeric filter
+    other = target.assign(typ="b", **{"Inz-7": -1.0, "bl": 12})              # other series that the filters drop
+    noisy = pd.DataFrame({"datum": ["2025-01-01"], "Inz-7": [float("nan")], "typ": "a", "age": "35-59", "bl": 11})
     target = pd.concat([target, other, noisy], ignore_index=True)
     daily = pd.date_range("2024-12-01", periods=600, freq="D")
     cov = pd.DataFrame({"day": daily.strftime("%Y-%m-%d"), "temp": np.arange(600, dtype=float) % 17,
@@ -91,7 +92,8 @@ def test_the_sql_and_python_of_the_steps_give_what_the_builder_gives():
 
     target, cov = _frames()
     for aggregation in ("mean", "sum", "last"):
-        row = {**ROW, "filters": json.dumps([["typ", "a"], ["age", "35-59"]]), "history_end": date(2026, 4, 1),
+        row = {**ROW, "target_column": "Inz-7", "filters": json.dumps([["typ", "a"], ["age", "35-59"], ["bl", "11"]]),
+               "history_end": date(2026, 4, 1),
                "test_start": date(2026, 4, 8), "test_end": date(2026, 6, 24), "history_start": date(2025, 2, 5),
                "dataset_qid": "Q1", "covariates": json.dumps([
                    {"name": "wetter", "dataset_qid": "Q2", "date_column": "day", "columns": ["temp"],
@@ -107,11 +109,13 @@ def test_the_sql_and_python_of_the_steps_give_what_the_builder_gives():
         input_sql, reference_sql = (q for q in steps[2]["code"].split(";\n") if q.strip())
         input_table = connection.execute(input_sql.rstrip(";")).df()
         reference_table = connection.execute(reference_sql.rstrip(";")).df()
-        assert input_table["v"].tolist() == built.input["v"].tolist()
+        assert input_table["Inz-7"].tolist() == built.input["Inz-7"].tolist()
         assert pd.to_datetime(input_table["datum"]).dt.date.tolist() == built.input["datum"].tolist()
-        assert reference_table["v"].tolist() == built.reference["v"].tolist()
+        assert reference_table["Inz-7"].tolist() == built.reference["Inz-7"].tolist()
 
-        scope = {"pd": pd, "np": np, "cov": cov, "grid": pd.DatetimeIndex(pd.to_datetime(input_table["datum"]))}
+        reader = type("pd_", (), {"read_parquet": staticmethod(lambda url: cov.copy()),     # the file read, faked
+                                  "to_datetime": staticmethod(pd.to_datetime)})
+        scope = {"pd": reader, "np": np, "grid": pd.DatetimeIndex(pd.to_datetime(input_table["datum"]))}
         exec(steps[3]["code"], scope)                                                  # noqa: S102 (our own text)
         expected = built.input["wetter__temp"].to_numpy()
         np.testing.assert_allclose(scope["aligned"].to_numpy().ravel(), expected, equal_nan=True)
