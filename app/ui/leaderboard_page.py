@@ -134,8 +134,8 @@ def _edit_description_dialog(row: dict) -> None:
 
 
 def _overview_tab(row: dict) -> None:
-    with ui.row().classes("items-start gap-2 w-full"):
-        ui.label(description_text(row)).classes("text-sm text-gray-600 max-w-3xl whitespace-pre-line")
+    with ui.row().classes("items-start gap-2 w-full no-wrap"):
+        ui.label(description_text(row)).classes("text-sm text-gray-600 flex-1 whitespace-pre-line")
         if _is_admin():
             ui.button(icon="edit", on_click=lambda: _edit_description_dialog(row)).props(
                 "flat round dense size=sm aria-label='Edit description'").classes("text-gray-500")
