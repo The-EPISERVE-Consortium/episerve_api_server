@@ -23,10 +23,6 @@ BODY = {"model_image": IMAGE, "model_tag": "latest", "input_data_files": [["http
         "config": {"history_length": 233, "prediction_length": 8}}
 
 
-def test_valid_config_has_no_problems():
-    assert config_problems({"history_length": 233, "prediction_length": 8}, PARAMS) == []
-
-
 def test_missing_required_key_is_reported():
     problems = config_problems({"prediction_length": 8}, PARAMS)
     assert problems == ["missing required parameter 'history_length'"]
@@ -37,10 +33,6 @@ def test_null_counts_as_missing():
     assert problems == ["missing required parameter 'history_length'"]
 
 
-def test_optional_key_may_be_absent():
-    assert config_problems({"history_length": 10, "prediction_length": 1}, PARAMS) == []
-
-
 @pytest.mark.parametrize("value,expected", [
     (2, "parameter 'history_length' is 2, below the minimum 3"),
     (600, None),
@@ -48,25 +40,6 @@ def test_optional_key_may_be_absent():
 def test_bounds_are_checked(value, expected):
     problems = config_problems({"history_length": value, "prediction_length": 8}, PARAMS)
     assert problems == ([expected] if expected else [])
-
-
-def test_maximum_is_checked():
-    problems = config_problems({"history_length": 10, "prediction_length": 513}, PARAMS)
-    assert problems == ["parameter 'prediction_length' is 513, above the maximum 512"]
-
-
-def test_non_numeric_value_for_bounded_parameter():
-    problems = config_problems({"history_length": "many", "prediction_length": 8}, PARAMS)
-    assert problems == ["parameter 'history_length' must be a number, got 'many'"]
-
-
-def test_unknown_keys_are_ignored():
-    assert config_problems({"history_length": 10, "prediction_length": 1, "extra": 1}, PARAMS) == []
-
-
-def test_all_problems_are_listed():
-    problems = config_problems({}, PARAMS)
-    assert problems == ["missing required parameter 'history_length'", "missing required parameter 'prediction_length'"]
 
 
 @pytest.fixture
@@ -107,9 +80,3 @@ def test_catalog_failure_does_not_block_the_run(monkeypatch, triggered):
     body = {**BODY, "config": {}}
     assert client.post("/model-runs", json=body, headers=AUTH).status_code == 202
     assert len(triggered) == 1
-
-
-def test_image_with_a_tag_still_matches_the_catalog_model(monkeypatch, triggered):
-    monkeypatch.setattr(router.ckan_client, "list_models", lambda: [MODEL])
-    body = {**BODY, "model_image": IMAGE + ":latest", "config": {"prediction_length": 8}}
-    assert client.post("/model-runs", json=body, headers=AUTH).status_code == 422

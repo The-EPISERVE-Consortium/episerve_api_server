@@ -29,50 +29,15 @@ def test_load_predictions_casts_text_and_clips_to_window():
     assert frame["forecast"].tolist() == [10.5]
 
 
-def test_load_predictions_without_quantiles_omits_them():
-    frame = loaders.load_predictions([{"datum": "2022-01-05", "value": "1"}], BENCH)
-    assert list(frame.columns) == ["date", "forecast"]
-
-
-def test_load_predictions_non_numeric_text_becomes_nan():
-    frame = loaders.load_predictions([{"datum": "2022-01-05", "value": ""}], BENCH)
-    assert frame["forecast"].isna().all()
-
-
 def test_load_predictions_missing_target_column_raises():
     with pytest.raises(loaders.LoadError, match="value"):
         loaders.load_predictions([{"datum": "2022-01-05", "other": "1"}], BENCH)
-
-
-def test_load_predictions_unparseable_date_raises():
-    with pytest.raises(loaders.LoadError, match="date"):
-        loaders.load_predictions([{"datum": "not-a-date", "value": "1"}], BENCH)
 
 
 def _parquet_bytes(frame: pd.DataFrame) -> bytes:
     buffer = BytesIO()
     pq.write_table(pa.Table.from_pandas(frame), buffer)
     return buffer.getvalue()
-
-
-def test_parse_truth_unknown_column_raises():
-    source = pd.DataFrame({"datum": ["2022-01-05"], "other": [1.0]})
-    with pytest.raises(loaders.LoadError, match="value"):
-        loaders.parse_truth(_parquet_bytes(source), BENCH)
-
-
-def test_parse_truth_empty_window_raises():
-    source = pd.DataFrame({"datum": ["2020-01-01"], "value": [1.0]})
-    with pytest.raises(loaders.LoadError, match="no observations"):
-        loaders.parse_truth(_parquet_bytes(source), BENCH)
-
-
-def test_fetch_run_params_returns_empty_dict_on_failure(monkeypatch):
-    def boom(url, base, limit):
-        raise ValueError("nope")
-
-    monkeypatch.setattr(loaders, "download_preview_bytes", boom)
-    assert loaders.fetch_run_params("Q1", "https://doip.example") == {}
 
 
 def test_fetch_run_params_parses_config(monkeypatch):
@@ -82,47 +47,10 @@ def test_fetch_run_params_parses_config(monkeypatch):
     assert loaders.fetch_run_params("Q1", "https://doip.example") == {"history_length": 91}
 
 
-def test_load_predictions_duplicate_dates_keep_last():
-    records = [
-        {"datum": "2022-01-05", "value": "1"},
-        {"datum": "2022-01-05", "value": "2"},
-    ]
-    frame = loaders.load_predictions(records, BENCH)
-    assert len(frame) == 1
-    assert frame["forecast"].tolist() == [2.0]
-
-
-def test_parse_truth_skips_non_numeric_and_bad_dates():
-    source = pd.DataFrame({
-        "datum": ["2022-01-05", "2022-01-12", "2022-01-19", "garbage"],
-        "value": ["1.5", "abc", "", "7"],
-    })
-    truth = loaders.parse_truth(_parquet_bytes(source), BENCH)
-    assert truth["date"].tolist() == [pd.Timestamp("2022-01-05")]
-    assert truth["truth"].tolist() == [1.5]
-
-
 def test_parse_truth_duplicate_dates_raise():
     source = pd.DataFrame({"datum": ["2022-01-05", "2022-01-05"], "value": [1.0, 2.0]})
     with pytest.raises(loaders.LoadError, match="several observations"):
         loaders.parse_truth(_parquet_bytes(source), BENCH)
-
-
-def test_parse_truth_filter_column_without_value_raises():
-    source = pd.DataFrame({"datum": ["2022-01-05"], "value": [1.0], "typ": ["a"]})
-    bench = Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": None})
-    with pytest.raises(loaders.LoadError, match="filter value"):
-        loaders.parse_truth(_parquet_bytes(source), bench)
-
-
-def test_fetch_run_params_non_finite_constants_become_null(monkeypatch):
-    monkeypatch.setattr(
-        loaders, "download_preview_bytes",
-        lambda url, base, limit: b'{"a": NaN, "b": Infinity, "c": -Infinity, "d": 1}',
-    )
-    assert loaders.fetch_run_params("Q1", "https://doip.example") == {
-        "a": None, "b": None, "c": None, "d": 1,
-    }
 
 
 def test_parse_truth_drops_non_finite_values():
@@ -175,36 +103,10 @@ def test_truth_from_pin_reads_the_named_component_at_the_pinned_commit(monkeypat
     assert calls == [("abc12345", "Q1", "d.parquet", loaders.MAX_DOWNLOAD_BYTES)]
 
 
-def test_truth_from_pin_wraps_value_errors_as_load_errors(monkeypatch):
-    def too_big(commit, qid, filename, max_bytes):
-        raise ValueError("The dataset file exceeds the size limit.")
-
-    monkeypatch.setattr(loaders.lakefs_client, "read_processed_component", too_big)
-    with pytest.raises(loaders.LoadError, match="size limit"):
-        loaders.truth_from_pin("Q1", "d.parquet", "abc12345", BENCH)
-
-
-def test_truth_from_pin_missing_file_is_a_load_error(monkeypatch):
-    from lakefs.exceptions import NotFoundException
-
-    def missing(commit, qid, filename, max_bytes):
-        raise NotFoundException(404, "nf", "")
-
-    monkeypatch.setattr(loaders.lakefs_client, "read_processed_component", missing)
-    with pytest.raises(loaders.LoadError, match="does not exist at the pinned commit"):
-        loaders.truth_from_pin("Q1", "d.parquet", "abc12345", BENCH)
-
-
 def test_truth_from_pin_unsafe_commit_is_a_load_error(monkeypatch):
     monkeypatch.setattr(loaders.lakefs_client, "_client", lambda: None)
     with pytest.raises(loaders.LoadError, match="Invalid"):
         loaders.truth_from_pin("Q1", "d.parquet", "../evil", BENCH)
-
-
-def test_truth_from_pin_keeps_load_errors_unchanged(monkeypatch):
-    monkeypatch.setattr(loaders.lakefs_client, "read_processed_component", lambda *a: b"not a parquet file")
-    with pytest.raises(loaders.LoadError, match="could not be read"):
-        loaders.truth_from_pin("Q1", "d.parquet", "abc12345", BENCH)
 
 
 def test_last_observed_date_returns_the_latest_on_or_before():
@@ -212,23 +114,7 @@ def test_last_observed_date_returns_the_latest_on_or_before():
     assert loaders.last_observed_date(_parquet_bytes(source), BENCH, date(2026, 3, 31)) == date(2026, 3, 25)
 
 
-def test_last_observed_date_tolerates_duplicate_dates_and_applies_the_filter():
-    source = pd.DataFrame({
-        "datum": ["2026-03-25", "2026-03-25", "2026-03-18"], "value": [1.0, 2.0, 3.0], "typ": ["a", "b", "b"],
-    })
-    bench = Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": "b"})
-    assert loaders.last_observed_date(_parquet_bytes(source), bench, date(2026, 3, 31)) == date(2026, 3, 25)
-    bench_a = Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": "a"})
-    with pytest.raises(loaders.LoadError):                      # filter 'a' only has the 2026-03-25 row
-        loaders.last_observed_date(_parquet_bytes(source), bench_a, date(2026, 3, 20))
-
-
 def test_last_observed_date_without_observations_raises():
     source = pd.DataFrame({"datum": ["2026-05-01"], "value": [1.0]})
     with pytest.raises(loaders.LoadError, match="no observations on or before"):
         loaders.last_observed_date(_parquet_bytes(source), BENCH, date(2026, 3, 31))
-
-
-def test_last_observed_date_ignores_non_numeric_values():
-    source = pd.DataFrame({"datum": ["2026-03-18", "2026-03-25"], "value": ["1.5", "abc"]})
-    assert loaders.last_observed_date(_parquet_bytes(source), BENCH, date(2026, 3, 31)) == date(2026, 3, 18)

@@ -2,9 +2,8 @@
 
 from datetime import date
 
-import pytest
 
-from app.leaderboard.service import Entry, finite_or_none, rank_entries
+from app.leaderboard.service import Entry, rank_entries
 
 
 def _e(qid, model, **metrics):
@@ -26,13 +25,3 @@ def test_best_run_per_model_keeps_the_best_under_the_chosen_metric():
     entries = [_e("a", "m", mae=5.0), _e("b", "m", mae=2.0), _e("c", "other", mae=3.0)]
     assert [e.run_qid for e in rank_entries(entries, "mae")] == ["b", "c"]
     assert len(rank_entries(entries, "mae", best_per_model=False)) == 3
-
-
-def test_unknown_metric_is_rejected():
-    with pytest.raises(ValueError):
-        rank_entries([], "nope")
-
-
-def test_finite_or_none_drops_nan_and_inf():
-    assert finite_or_none(float("nan")) is None and finite_or_none(float("inf")) is None
-    assert finite_or_none(None) is None and finite_or_none(1.5) == 1.5

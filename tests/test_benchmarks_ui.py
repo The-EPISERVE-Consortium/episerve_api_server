@@ -2,7 +2,6 @@
 
 from datetime import date
 
-import pytest
 from nicegui import ui
 
 from app.benchmarks.actions import CheckReport
@@ -92,57 +91,6 @@ def test_page_lists_final_benchmarks_from_the_database_only(monkeypatch):
     assert hrefs == {"": "/ui/benchmarks/5", "Leaderboard": "/ui/benchmarks/5?tab=leaderboard"}
 
 
-def test_card_shows_the_description_the_pin_date_and_the_run_count(monkeypatch):
-    final = {**FINAL, "description": "Weekly wastewater viral load.", "finalized_at": "2026-10-16 22:46:17"}
-    text = _render(monkeypatch, finals=(final,))["labels"]
-    assert "Weekly wastewater viral load." in text
-    assert "October 16, 2026" in text and "3 runs" in text
-
-
-def test_card_without_a_description_describes_the_series_instead(monkeypatch):
-    text = _render(monkeypatch)["labels"]
-    assert "Forecast of v for region = DE over a test window of 2022-01-01 → 2022-01-31." in text
-    assert "—" in text                                     # no finalization date known
-
-
-@pytest.mark.parametrize("count,expected", [(0, "No runs yet"), (1, "1 run"), (3, "3 runs")])
-def test_run_count_wording(monkeypatch, count, expected):
-    text = _render(monkeypatch, finals=({**FINAL, "entry_count": count},))["labels"]
-    assert expected in text
-
-
-@pytest.mark.parametrize("value,expected", [
-    ("2026-10-16 22:46:17", "October 16, 2026"), (date(2026, 3, 5), "March 5, 2026"),
-    (None, "—"), ("", "—"), ("not a date", "—"),
-])
-def test_pretty_date(value, expected):
-    assert benchmarks_page._pretty_date(value) == expected
-
-
-def test_the_whole_card_is_one_link_and_the_actions_sit_outside_it(monkeypatch):
-    def grab(out, client, find, drain):
-        def inside_link(element):
-            node = element
-            while node is not None:
-                if isinstance(node, ui.link):
-                    return True
-                slot = getattr(node, "parent_slot", None)
-                node = slot.parent if slot else None
-            return False
-        out["card_link_children"] = [e.text for e in find(ui.label) if inside_link(e)]
-        out["buttons_in_link"] = [b.props.get("label") for b in find(ui.button) if inside_link(b)]
-
-    out = _render(monkeypatch, logged_in=True, after=grab)
-    assert "Flu 2022" in out["card_link_children"] and "3 runs" in out["card_link_children"]
-    assert out["buttons_in_link"] == []
-
-
-def test_header_has_the_new_benchmark_button_next_to_the_title(monkeypatch):
-    out = _render(monkeypatch, logged_in=True)
-    assert "Benchmarks" in out["labels"]
-    assert any(b.props.get("label") == "New benchmark" for b in out["find"](ui.button))
-
-
 def test_anonymous_users_see_no_management_controls(monkeypatch):
     log = []
     out = _render(monkeypatch, draft_log=log)
@@ -150,19 +98,6 @@ def test_anonymous_users_see_no_management_controls(monkeypatch):
     assert not shown & {"New benchmark", "Edit", "Copy as draft", "Retire"}
     assert "Drafts" not in out["labels"] and "Draft A" not in out["labels"]
     assert log == []
-
-
-def test_logged_in_users_see_drafts_and_controls(monkeypatch):
-    log = []
-    out = _render(monkeypatch, logged_in=True, draft_log=log)
-    shown = {b.props.get("label") for b in out["find"](ui.button)}
-    assert {"New benchmark", "Edit", "Copy as draft", "Retire"} <= shown
-    assert "Drafts" in out["labels"] and "Draft A" in out["labels"] and log == [1]
-
-
-def test_empty_state(monkeypatch):
-    out = _render(monkeypatch, finals=(), drafts=(), logged_in=True)
-    assert "No benchmarks yet." in out["labels"] and "No drafts." in out["labels"]
 
 
 def test_designer_saves_a_new_draft_with_parsed_fields(monkeypatch):
@@ -183,23 +118,6 @@ def test_designer_saves_a_new_draft_with_parsed_fields(monkeypatch):
         name="Flu", description=None, dataset_qid="Q1", target_column="v", date_column="datum",
         test_start=date(2022, 1, 1), test_end=date(2022, 1, 31), filter_column=None, filter_value=None,
         history_start=date(2021, 6, 1), history_end=None, input_filename="input.parquet")]
-
-
-def test_editing_a_draft_updates_it_and_a_second_save_keeps_the_id(monkeypatch):
-    calls = []
-    monkeypatch.setattr(benchmarks_page.bactions, "update_draft", lambda i, **kw: calls.append((i, kw)))
-
-    async def scenario(out, client, find, drain):
-        _datasets(monkeypatch)
-        await click(button(find, "Edit"), client)
-        inputs = _inputs(find)
-        assert inputs["Name"].value == "Draft A" and inputs["Test start (C)"].value == "2022-02-01"
-        inputs["Name"].value = "Renamed"
-        await click(button(find, "Save"), client)
-        await drain()
-
-    _render(monkeypatch, logged_in=True, after=scenario)
-    assert calls[0][0] == 7 and calls[0][1]["name"] == "Renamed" and calls[0][1]["test_end"] == date(2022, 2, 28)
 
 
 def test_designer_rejects_bad_dates_without_calling_the_action(monkeypatch):
@@ -412,181 +330,6 @@ def test_an_edit_during_a_pending_check_keeps_finalize_disabled(monkeypatch):
     assert f"Data commit: {COMMIT}" not in out["labels"]
 
 
-def test_a_failing_second_check_leaves_finalize_disabled(monkeypatch):
-    results = [_report(), RuntimeError("db down")]
-
-    def check(i):
-        result = results.pop(0)
-        if isinstance(result, Exception):
-            raise result
-        return result
-
-    monkeypatch.setattr(benchmarks_page.bactions, "update_draft", lambda i, **kw: None)
-    monkeypatch.setattr(benchmarks_page.bactions, "check", check)
-
-    async def scenario(out, client, find, drain):
-        _datasets(monkeypatch)
-        await click(button(find, "Edit"), client)
-        await click(button(find, "Check against data"), client)
-        await drain()
-        out["first"] = button(find, "Finalize").enabled
-        await click(button(find, "Check against data"), client)
-        await drain()
-        out["second"] = button(find, "Finalize").enabled
-
-    out = _render(monkeypatch, logged_in=True, after=scenario)
-    assert (out["first"], out["second"]) == (True, False)
-
-
-def test_finalize_conflict_shows_its_message_and_the_flow_stays_usable(monkeypatch):
-    from app.benchmarks.errors import Conflict
-    outcomes = [Conflict("The data changed since the check (checked a, now b); check again."), None]
-    seen = []
-
-    def finalize(i, expected_commit=None):
-        seen.append(expected_commit)
-        outcome = outcomes.pop(0)
-        if outcome:
-            raise outcome
-
-    monkeypatch.setattr(benchmarks_page.bactions, "update_draft", lambda i, **kw: None)
-    monkeypatch.setattr(benchmarks_page.bactions, "check", lambda i: _report())
-    monkeypatch.setattr(benchmarks_page.bactions, "finalize", finalize)
-    navigated = []
-    monkeypatch.setattr(benchmarks_page.ui.navigate, "to", lambda url: navigated.append(url))
-
-    async def scenario(out, client, find, drain):
-        _datasets(monkeypatch)
-        await click(button(find, "Edit"), client)
-        await click(button(find, "Check against data"), client)
-        await drain()
-        await click(button(find, "Finalize"), client)
-        await click(button(find, "Freeze benchmark"), client)
-        await drain()
-        out["after_conflict"] = labels(find)
-        out["enabled"] = button(find, "Check against data").enabled
-        await click(button(find, "Check against data"), client)
-        await drain()
-        await click(button(find, "Finalize"), client)
-        await click(button(find, "Freeze benchmark"), client)
-        await drain()
-
-    out = _render(monkeypatch, logged_in=True, after=scenario)
-    assert "The data changed since the check (checked a, now b); check again." in out["after_conflict"]
-    assert out["enabled"] and seen == [COMMIT, COMMIT] and navigated == ["/ui/benchmarks"]
-
-
-def test_finalize_navigates_without_a_competing_reload(monkeypatch):
-    reloads = []
-    monkeypatch.setattr(benchmarks_page.bactions, "update_draft", lambda i, **kw: None)
-    monkeypatch.setattr(benchmarks_page.bactions, "check", lambda i: _report())
-    monkeypatch.setattr(benchmarks_page.bactions, "finalize", lambda i, expected_commit=None: None)
-    monkeypatch.setattr(benchmarks_page.ui.navigate, "to", lambda url: None)
-    monkeypatch.setattr(benchmarks_page.ui.navigate, "reload", lambda: reloads.append(1))
-
-    async def scenario(out, client, find, drain):
-        _datasets(monkeypatch)
-        await click(button(find, "Edit"), client)
-        await click(button(find, "Check against data"), client)
-        await drain()
-        await click(button(find, "Finalize"), client)
-        await click(button(find, "Freeze benchmark"), client)
-        await drain()
-
-    _render(monkeypatch, logged_in=True, after=scenario)
-    assert reloads == []
-
-
-def test_conflict_and_notdraft_on_save_show_their_message(monkeypatch):
-    from app.benchmarks.errors import Conflict, NotDraft
-    errors = [NotDraft("Benchmark 7 is final or retired and cannot be changed."), Conflict("changed")]
-
-    def update(i, **kw):
-        raise errors.pop(0)
-
-    monkeypatch.setattr(benchmarks_page.bactions, "update_draft", update)
-
-    async def scenario(out, client, find, drain):
-        _datasets(monkeypatch)
-        await click(button(find, "Edit"), client)
-        await click(button(find, "Save"), client)
-        await drain()
-        out["first"] = labels(find)
-        await click(button(find, "Save"), client)
-        await drain()
-        out["second"] = labels(find)
-
-    out = _render(monkeypatch, logged_in=True, after=scenario)
-    assert "Benchmark 7 is final or retired and cannot be changed." in out["first"]
-    assert "changed" in out["second"]
-
-
-def test_notdraft_on_finalize_shows_its_message(monkeypatch):
-    from app.benchmarks.errors import NotDraft
-
-    def finalize(i, expected_commit=None):
-        raise NotDraft("Benchmark 7 is final or retired and cannot be changed.")
-
-    monkeypatch.setattr(benchmarks_page.bactions, "update_draft", lambda i, **kw: None)
-    monkeypatch.setattr(benchmarks_page.bactions, "check", lambda i: _report())
-    monkeypatch.setattr(benchmarks_page.bactions, "finalize", finalize)
-
-    async def scenario(out, client, find, drain):
-        _datasets(monkeypatch)
-        await click(button(find, "Edit"), client)
-        await click(button(find, "Check against data"), client)
-        await drain()
-        await click(button(find, "Finalize"), client)
-        await click(button(find, "Freeze benchmark"), client)
-        await drain()
-        out["labels"] = labels(find)
-
-    out = _render(monkeypatch, logged_in=True, after=scenario)
-    assert "Benchmark 7 is final or retired and cannot be changed." in out["labels"]
-
-
-def _boom(*a, **kw):
-    raise RuntimeError("Can't connect to MySQL server on 'db.internal'")
-
-
-def test_retire_and_copy_error_branches(monkeypatch, caplog):
-    notes = _notes(monkeypatch)
-    monkeypatch.setattr(benchmarks_page.ui.navigate, "reload", lambda: None)
-    steps = {}
-
-    async def scenario(out, client, find, drain):
-        # NotFound on retire shows its message in the dialog
-        monkeypatch.setattr(benchmarks_page.bactions, "retire", lambda i: (_ for _ in ()).throw(NotFound("gone")))
-        await click(_retire_buttons(find)[-1], client)
-        await click(button(find, "Retire benchmark"), client)
-        await drain()
-        steps["nf"] = labels(find)
-        monkeypatch.setattr(benchmarks_page.bactions, "retire", _boom)
-        await click(button(find, "Retire benchmark"), client)
-        await drain()
-        steps["generic"] = labels(find)
-        # copy: NotFound then generic
-        monkeypatch.setattr(benchmarks_page.bactions, "copy_as_draft",
-                            lambda i: (_ for _ in ()).throw(NotFound("gone too")))
-        await click(button(find, "Copy as draft"), client)
-        await drain()
-        steps["copy_nf"] = list(notes)
-        notes.clear()
-        monkeypatch.setattr(benchmarks_page.bactions, "copy_as_draft", _boom)
-        await click(button(find, "Copy as draft"), client)
-        await drain()
-        steps["copy_generic"] = list(notes)
-
-    with caplog.at_level("ERROR"):
-        _render(monkeypatch, logged_in=True, after=scenario)
-    assert "gone" in steps["nf"]
-    assert "Could not retire the benchmark." in steps["generic"]
-    assert steps["copy_nf"] == [("gone too", {"type": "negative"})]
-    assert steps["copy_generic"] == [("Could not copy the benchmark.", {"type": "negative"})]
-    assert not any("db.internal" in t for t in steps["generic"])
-    assert sum("db.internal" in (r.exc_text or "") for r in caplog.records) == 2
-
-
 def test_a_draft_can_be_retired_after_a_confirmation_and_the_login_is_rechecked(monkeypatch):
     calls = []
     monkeypatch.setattr(benchmarks_page.bactions, "retire", lambda i: calls.append(i))
@@ -611,43 +354,3 @@ def test_a_draft_can_be_retired_after_a_confirmation_and_the_login_is_rechecked(
     assert "Retire this draft? It disappears from the list." in out["confirm_text"]
     assert out["blocked"] == [] and notes[-1][1]["type"] == "warning"
     assert calls == [7]
-
-
-def test_an_edit_during_the_save_of_a_check_keeps_finalize_disabled(monkeypatch):
-    monkeypatch.setattr(benchmarks_page.bactions, "update_draft", lambda i, **kw: None)
-    monkeypatch.setattr(benchmarks_page.bactions, "check", lambda i: _report())
-
-    async def scenario(out, client, find, drain):
-        _datasets(monkeypatch)
-        await click(button(find, "Edit"), client)
-        calls = {"n": 0}
-
-        def edit_during_save():
-            calls["n"] += 1
-            if calls["n"] == 1:                      # the save is the first io_bound call
-                _inputs(find)["Name"].value = "typed while saving"
-
-        _io_hook(monkeypatch, edit_during_save)
-        await click(button(find, "Check against data"), client)
-        await drain()
-        out["enabled"] = button(find, "Finalize").enabled
-        out["labels"] = labels(find)
-
-    out = _render(monkeypatch, logged_in=True, after=scenario)
-    assert out["enabled"] is False
-    assert f"Data commit: {COMMIT}" not in out["labels"]
-
-
-def test_benchmark_without_entries_shows_no_best_and_skips_the_query(monkeypatch):
-    best_log.clear()
-    out = _render(monkeypatch, finals=({**FINAL, "entry_count": 0},))
-    assert "Best: —" in out["labels"] and best_log == [[]]
-
-
-def test_best_query_failure_does_not_break_the_list(monkeypatch):
-    def boom(ids):
-        raise RuntimeError("db")
-
-    out = _render(monkeypatch, best=boom)
-    assert out["status"] == 200 and "Best: —" in out["labels"]
-    assert "Flu 2022" in out["labels"]

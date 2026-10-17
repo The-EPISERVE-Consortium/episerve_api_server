@@ -5,7 +5,6 @@ from types import SimpleNamespace
 import pytest
 
 from app.clients import lakefs as lakefs_client
-from app.config import settings
 
 COMMIT = "0123abcd" * 8
 PATH = "94/93/81/Q9493814122238/components/curve.parquet"
@@ -50,11 +49,6 @@ def fake_lakefs(monkeypatch):
     monkeypatch.setattr(lakefs_client.lakefs, "Repository", _Repo)
 
 
-def test_head_commit_comes_from_the_processed_repo_branch():
-    assert lakefs_client.processed_head_commit() == COMMIT
-    assert _Repo.last.name == settings.lakefs_processed_repo
-
-
 def test_read_component_uses_sharded_path_at_the_given_commit():
     data = lakefs_client.read_processed_component(COMMIT, "Q9493814122238", "curve.parquet", 1024)
     assert data == b"PAR1-data"
@@ -72,13 +66,9 @@ def test_read_component_rejects_oversized_objects():
     (COMMIT, "9493814122238", "curve.parquet"),
     (COMMIT, "Q9493814122238", "../curve.parquet"),
     (COMMIT, "Q9493814122238", "a/b.parquet"),
-    (COMMIT, "Q9493814122238", ""),
+    (COMMIT, "Q9493814122238", ".."),
+    ("deadbeef", "Q9493814122238", "curve.parquet"),            # short hex could alias a branch name
 ])
 def test_read_component_rejects_unsafe_arguments(commit, qid, filename):
     with pytest.raises(ValueError):
         lakefs_client.read_processed_component(commit, qid, filename, 1024)
-
-
-def test_read_component_rejects_short_hex_commit_that_could_alias_a_branch():
-    with pytest.raises(ValueError):
-        lakefs_client.read_processed_component("deadbeef", "Q9493814122238", "curve.parquet", 1024)

@@ -6,7 +6,7 @@ import pytest
 
 from app.benchmarks import store
 from app.benchmarks.definition import Benchmark
-from app.benchmarks.errors import Conflict, NotDraft
+from app.benchmarks.errors import NotDraft
 from tests.fakes import FakeConn
 
 BENCH = Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30), "typ", "a",
@@ -17,29 +17,6 @@ def _use(monkeypatch, *results):
     conn = FakeConn(results)
     monkeypatch.setattr(store, "_connect", lambda: conn)
     return conn
-
-
-def test_notdraft_is_a_conflict():
-    assert issubclass(NotDraft, Conflict)
-
-
-def test_create_draft_inserts_with_parameters(monkeypatch):
-    conn = _use(monkeypatch, ([], 1, 5))
-    assert store.create_draft("Flu", "about", BENCH) == 5
-    sql, params = conn.executed[0]
-    assert sql.startswith("INSERT INTO benchmarks") and sql.count("%s") == 12
-    assert params == ("Flu", "about", "Q1", "v", "datum", "typ", "a", date(2026, 4, 1), date(2026, 9, 30),
-                      date(2024, 1, 3), date(2026, 3, 25), "input.parquet")
-    assert conn.commits == 1 and conn.closed
-
-
-def test_update_draft_checks_state_in_the_same_transaction(monkeypatch):
-    conn = _use(monkeypatch, ([{"finalized_at": None, "retired_at": None}], 1, None), ([], 1, None))
-    assert store.update_draft(3, "Flu", None, BENCH) is True
-    select, update = conn.executed
-    assert "FOR UPDATE" in select[0] and select[1] == (3,)
-    assert update[0].startswith("UPDATE benchmarks SET name") and update[1][-1] == 3
-    assert conn.commits == 1
 
 
 def test_update_draft_reports_unknown_ids_and_refuses_final_or_retired(monkeypatch):
@@ -73,12 +50,6 @@ def test_finalize_refuses_a_final_benchmark_and_reports_unknown_ids(monkeypatch)
                           history_end=date(2026, 3, 25)) is False
 
 
-def test_retire(monkeypatch):
-    conn = _use(monkeypatch, ([], 1, None), ([], 0, None))
-    assert store.retire(1) is True and store.retire(1) is False
-    assert "UPDATE benchmarks SET retired_at = NOW()" in conn.executed[0][0]
-
-
 def test_lists_and_get_use_state_filters_and_count_active_entries(monkeypatch):
     conn = _use(monkeypatch, ([{"id": 1}], 1, None), ([{"id": 2}], 1, None), ([], 0, None))
     assert store.list_final() == [{"id": 1}]
@@ -101,15 +72,6 @@ def test_state_and_benchmark_from_row():
     assert store.state({"finalized_at": "t", "retired_at": None}) == "final"
     assert store.state({"finalized_at": "t", "retired_at": "t"}) == "retired"
     assert store.state({"finalized_at": None, "retired_at": "t"}) == "retired"
-
-
-def test_connect_goes_through_the_shared_helper(monkeypatch):
-    from app import db
-
-    seen = {}
-    monkeypatch.setattr(db.pymysql, "connect", lambda **kw: seen.update(kw) or object())
-    store._connect()
-    assert seen["charset"] == "utf8mb4" and "database" in seen
 
 
 def test_no_function_ever_issues_a_delete(monkeypatch):

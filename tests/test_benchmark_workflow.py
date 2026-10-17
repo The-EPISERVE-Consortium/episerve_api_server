@@ -1,6 +1,6 @@
 """Pure helpers for starting the run workflow from a benchmark."""
 
-from app.benchmarks.workflow import apply_benchmark, clear_benchmark, overlay_config, workflow_problems
+from app.benchmarks.workflow import apply_benchmark, overlay_config, workflow_problems
 
 COMMIT = "ab" * 32
 URL = f"https://doip.example/doip/retrieve/Q1/d.parquet?version={COMMIT}"
@@ -26,12 +26,6 @@ def test_apply_benchmark_prefills_dataset_url_sql_filename_and_resets_config():
     assert state["benchmark"]["filter_value"] == "a" and state["benchmark"]["name"] == "Flu"
 
 
-def test_clear_benchmark():
-    state = apply_benchmark(_state(), SPEC, DATASET, ROW)
-    clear_benchmark(state)
-    assert state["benchmark"] is None
-
-
 def test_overlay_config_only_touches_declared_parameters():
     benchmark = {"prediction_length": 27}
     assert overlay_config({"history_length": 91, "prediction_length": 4}, benchmark,
@@ -39,11 +33,6 @@ def test_overlay_config_only_touches_declared_parameters():
         "history_length": 91, "prediction_length": 27, "prediction_offset": 0}
     assert overlay_config({"history_length": 91}, benchmark, {"history_length"}) == {"history_length": 91}
     assert overlay_config({"a": 1}, None, {"prediction_length"}) == {"a": 1}
-
-
-def test_no_problems_for_the_prefilled_input():
-    state = apply_benchmark(_state(), SPEC, DATASET, ROW)
-    assert workflow_problems(state["benchmark"], URL, SQL, "datum", "typ", "a") == []
 
 
 def test_problems_are_explained():

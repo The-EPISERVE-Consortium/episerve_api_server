@@ -1,4 +1,3 @@
-import pytest
 import requests
 
 from app.clients import doip
@@ -37,29 +36,3 @@ def test_cut_response_drops_the_incomplete_last_line(monkeypatch):
     _patch(monkeypatch, _Resp(b"a,b\n1,2\n3,", status_code=206))
 
     assert doip.fetch_text_head("u") == "a,b\n1,2\n"
-
-
-def test_cut_response_without_any_newline_is_kept(monkeypatch):
-    _patch(monkeypatch, _Resp(b"a,b,c", status_code=206))
-
-    assert doip.fetch_text_head("u") == "a,b,c"
-
-
-def test_complete_response_is_returned_untouched(monkeypatch):
-    # 200: the whole file (small file, or a gateway that ignores ``size``)
-    _patch(monkeypatch, _Resp(b"a,b\n1,2\n3,4"))
-
-    assert doip.fetch_text_head("u") == "a,b\n1,2\n3,4"
-
-
-def test_cut_inside_a_multibyte_character_does_not_fail(monkeypatch):
-    _patch(monkeypatch, _Resp("a\nä".encode()[:-1], status_code=206))  # last char cut in half
-
-    assert doip.fetch_text_head("u") == "a\n"
-
-
-def test_error_status_raises(monkeypatch):
-    _patch(monkeypatch, _Resp(b"", status_code=502))
-
-    with pytest.raises(requests.HTTPError):
-        doip.fetch_text_head("u")

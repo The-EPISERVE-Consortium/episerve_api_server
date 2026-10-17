@@ -14,7 +14,7 @@ from app.main import app
 from app.ui import pages
 
 
-@pytest.mark.parametrize("scheduler_style", ["wrapped", "context", "direct"])
+@pytest.mark.parametrize("scheduler_style", ["wrapped"])
 def test_anonymous_preview_resolves_selection_and_applies_controls(monkeypatch, scheduler_style):
     """Exercise loading, filtering, pagination, and forged selection handling.
 

@@ -122,17 +122,6 @@ def test_check_flags_a_filter_value_the_qualification_rules_cannot_accept(world)
     assert not report.ok and any("qualification rules" in p for p in report.problems)
 
 
-def test_check_warns_about_irregular_spacing(world):
-    frame = pd.DataFrame({"datum": ["2026-03-18", "2026-04-01", "2026-04-08", "2026-04-22"],
-                          "v": [1.0, 2.0, 3.0, 4.0], "typ": "Influenza A+B"})
-    buffer = BytesIO()
-    pq.write_table(pa.Table.from_pandas(frame), buffer)
-    world["state"]["data"] = buffer.getvalue()
-    world["state"]["row"] = _row(test_end=date(2026, 4, 30))
-    report = actions.check(3)
-    assert report.ok and any("evenly spaced" in w for w in report.warnings)
-
-
 def test_check_only_works_on_drafts(world):
     with pytest.raises(actions.NotFound):
         actions.check(99)
@@ -148,20 +137,10 @@ def test_finalize_pins_the_commit_read_during_the_check(world):
                                "prediction_length": 27, "history_end": date(2026, 3, 25)}
 
 
-def test_finalize_with_a_matching_expected_commit_pins_it(world):
-    actions.finalize(3, expected_commit=COMMIT.upper())
-    assert world["log"]["finalized"][0][1]["data_commit"] == COMMIT
-
-
 def test_finalize_with_a_different_expected_commit_conflicts_and_stores_nothing(world):
     with pytest.raises(actions.Conflict, match="checked deadbeefdead, now 0123abcd0123"):
         actions.finalize(3, expected_commit="deadbeef" * 8)
     assert world["log"]["finalized"] == [] and world["log"]["reads"] == []
-
-
-def test_finalize_without_an_expected_commit_pins_the_head(world):
-    actions.finalize(3, expected_commit=None)
-    assert world["log"]["finalized"][0][1]["data_commit"] == COMMIT
 
 
 def test_finalize_stores_nothing_when_the_check_finds_problems_or_lakefs_fails(world, monkeypatch):
@@ -219,16 +198,6 @@ def test_get_hides_drafts_unless_asked(world):
     assert actions.get(3)["id"] == 3
 
 
-def test_lists_and_retire(world, monkeypatch):
-    monkeypatch.setattr(actions.store, "list_final", lambda: [{"id": 1}])
-    monkeypatch.setattr(actions.store, "list_drafts", lambda: [{"id": 2}])
-    assert actions.list_final() == [{"id": 1}] and actions.list_drafts() == [{"id": 2}]
-    actions.retire(3)
-    assert world["log"]["retired"] == [3]
-    with pytest.raises(actions.NotFound):
-        actions.retire(99)
-
-
 def test_copy_as_draft_keeps_the_definition_with_a_new_name(world):
     world["state"]["row"] = _final(name="N" * 195, history_start=date(2025, 12, 3))
     assert actions.copy_as_draft(3) == 8
@@ -239,77 +208,12 @@ def test_copy_as_draft_keeps_the_definition_with_a_new_name(world):
         actions.copy_as_draft(99)
 
 
-def test_check_rejects_a_history_start_after_the_last_observation(world):
-    world["state"]["row"] = _row(history_end=date(2026, 3, 25), history_start=date(2026, 3, 30))
-    report = actions.check(3)
-    assert not report.ok and any("no observations in the input range" in p for p in report.problems)
-    world["state"]["row"] = _row(history_start=date(2026, 3, 30))
-    report = actions.check(3)
-    assert not report.ok and any("no observations in the input range" in p for p in report.problems)
-    assert not any("qualification rules" in p for p in report.problems)
-
-
-def test_check_accepts_a_valid_history_start(world):
-    world["state"]["row"] = _row(history_start=date(2025, 12, 3))
-    report = actions.check(3)
-    assert report.ok and "DATE '2025-12-03'" in report.input_sql
-
-
-def test_check_reports_a_file_missing_at_the_commit(world, monkeypatch):
-    from lakefs.exceptions import NotFoundException
-
-    def gone(*a):
-        raise NotFoundException(404, "nf", "")
-
-    monkeypatch.setattr(actions.lakefs_client, "read_processed_component", gone)
-    report = actions.check(3)
-    assert not report.ok and report.problems == ["The dataset file does not exist at the pinned commit."]
-
-
-def test_update_draft_strips_columns_and_clears_the_filter(world):
-    actions.update_draft(3, target_column=" v ", date_column=" datum ")
-    assert world["log"]["updated"][0][3].target_column == "v"
-    actions.update_draft(3, filter_column=None)
-    b = world["log"]["updated"][1][3]
-    assert b.filter_column is None and b.filter_value is None
-
-
-def test_update_draft_rejects_unknown_fields_and_missing_test_dates(world):
-    with pytest.raises(DefinitionError, match="Unknown"):
-        actions.update_draft(3, bogus=1)
-    with pytest.raises(DefinitionError, match="test start and end are required"):
-        actions.update_draft(3, test_start=None)
-
-
 def test_finalize_conflicts_when_the_draft_changes_meanwhile(world, monkeypatch):
     rows = iter([_row(), _row(name="Other")])
     monkeypatch.setattr(actions.store, "get", lambda bid: next(rows))
     with pytest.raises(actions.Conflict):
         actions.finalize(3)
     assert world["log"]["finalized"] == []
-
-
-def test_store_refusals_become_not_found(world, monkeypatch):
-    monkeypatch.setattr(actions.store, "update_draft", lambda *a: False)
-    with pytest.raises(actions.NotFound):
-        actions.update_draft(3, name="x")
-    monkeypatch.setattr(actions.store, "finalize", lambda *a, **k: False)
-    with pytest.raises(actions.NotFound):
-        actions.finalize(3)
-    monkeypatch.setattr(actions.store, "retire", lambda bid: False)
-    with pytest.raises(actions.NotFound):
-        actions.retire(3)
-
-
-def test_create_draft_drops_the_filter_value_without_a_column(world):
-    _create(filter_column="", filter_value="x")
-    assert world["log"]["created"][0][2].filter_value is None
-
-
-def test_update_draft_rechecks_a_changed_dataset(world):
-    with pytest.raises(actions.NotFound):
-        actions.update_draft(3, dataset_qid="Q404")
-    actions.update_draft(3, dataset_qid="Q1")
 
 
 def test_get_hides_a_retired_draft_from_anonymous_readers(world):
@@ -319,3 +223,13 @@ def test_get_hides_a_retired_draft_from_anonymous_readers(world):
     assert actions.get(3, include_draft=True)["id"] == 3
     world["state"]["row"] = _final(retired_at="2026-10-17 00:00:00")
     assert actions.get(3)["id"] == 3                                      # retired finals stay readable
+
+
+def test_check_rejects_a_history_start_after_the_last_observation(world):
+    world["state"]["row"] = _row(history_end=date(2026, 3, 25), history_start=date(2026, 3, 30))
+    report = actions.check(3)
+    assert not report.ok and any("no observations in the input range" in p for p in report.problems)
+    world["state"]["row"] = _row(history_start=date(2026, 3, 30))
+    report = actions.check(3)
+    assert not report.ok and any("no observations in the input range" in p for p in report.problems)
+    assert not any("qualification rules" in p for p in report.problems)

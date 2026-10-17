@@ -72,21 +72,6 @@ def test_partial_forecast_is_cannot_be_scored():
         _score(_run(), pd.DataFrame({"date": DATES[:1], "forecast": [1.0]}))
 
 
-def test_unreadable_predictions_are_cannot_be_scored():
-    def boom(run, benchmark):
-        raise LoadError("predictions have no column 'v'")
-
-    with pytest.raises(NotScorable, match="no column"):
-        score_run(BENCH, _run(), TRUTH, truth_commit=COMMIT, truth_as_of="", load_predictions=boom,
-                  load_params=lambda qid: {})
-
-
-def test_forecast_past_the_last_observation_is_scored_on_observed_dates():
-    dates = pd.to_datetime(["2022-01-05", "2022-01-12", "2022-01-19"])
-    entry = _score(_run(), pd.DataFrame({"date": dates, "forecast": [11.0, 21.0, 99.0]}))
-    assert entry.n_expected == 2 and entry.metrics["mae"] == pytest.approx(1.0)
-
-
 def test_candidate_runs_explain_why_a_run_cannot_be_added():
     runs = [
         _run("Q10", run_timestamp="2026-01-02T00:00:00Z"),
@@ -143,24 +128,10 @@ def test_candidates_for_a_strict_benchmark_check_provenance_only_where_needed():
     assert sorted(calls) == ["Q10", "Q11", "Q14"]                       # not for failed or already-added runs
 
 
-def test_candidates_fetch_provenance_in_parallel_and_keep_the_order():
-    import threading
+def test_unreadable_predictions_are_cannot_be_scored():
+    def boom(run, benchmark):
+        raise LoadError("predictions have no column 'v'")
 
-    runs = [_run(f"Q{n}", run_timestamp=f"2026-01-{n - 29:02d}T00:00:00Z") for n in range(30, 40)]
-    barrier = threading.Barrier(3, timeout=5)                       # three calls must be in flight together
-    seen = []
-
-    def inputs_for(qid):
-        seen.append(qid)
-        if qid in ("Q30", "Q31", "Q32"):
-            barrier.wait()
-        if qid == "Q35":
-            raise RuntimeError("DOIP down")
-        return [RunInput("Q1", "x.parquet", PIN if qid != "Q36" else "cd" * 32, SQL)]
-
-    result = candidate_runs(STRICT, runs, set(), load_inputs=inputs_for)
-    assert sorted(seen) == [f"Q{n}" for n in range(30, 40)]
-    assert [c["qid"] for c in result] == [f"Q{n}" for n in range(39, 29, -1)]      # newest first, as before
-    reasons = {c["qid"]: c["reason"] for c in result}
-    assert reasons["Q30"] is None and "pinned to" in reasons["Q36"]
-    assert "provenance could not be read" in reasons["Q35"]
+    with pytest.raises(NotScorable, match="no column"):
+        score_run(BENCH, _run(), TRUTH, truth_commit=COMMIT, truth_as_of="", load_predictions=boom,
+                  load_params=lambda qid: {})

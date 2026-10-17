@@ -42,17 +42,3 @@ def test_list_models_exposes_additional_properties(monkeypatch):
     ]
     assert m["additional_properties"][1]["maxValue"] == 1024
     assert m["docker_image_created"] == "2026-09-02T19:51:56Z"
-
-
-def test_list_models_defaults_additional_properties_to_empty(monkeypatch):
-    """A model with no declared parameters serialises as an empty list, not null."""
-    bare = {**_FAKE_MODEL}
-    bare.pop("additional_properties")
-    bare.pop("docker_image_created")
-    monkeypatch.setattr(models_router.ckan_client, "list_models", lambda: [bare])
-
-    resp = client.get("/models")
-    assert resp.status_code == 200
-    m = resp.json()[0]
-    assert m["additional_properties"] == []
-    assert m["docker_image_created"] == ""

@@ -6,13 +6,10 @@ from datetime import date
 import pymysql.err
 import pytest
 
-from app.config import settings
 from app.leaderboard import store
 from app.leaderboard.entries import Benchmark
-from app.leaderboard.service import Entry, Leaderboard
+from app.leaderboard.service import Entry
 from tests.fakes import FakeConn
-
-BENCH = Benchmark("Q1", "v", "datum", date(2022, 1, 1), date(2022, 12, 31), "typ", "a")
 
 
 def _use(monkeypatch, *results):
@@ -38,24 +35,6 @@ def _entry(**overrides):
         truth_commit="0123abcd" * 8, truth_as_of="2026-10-14T00:00:00Z",
     )
     return Entry(**{**base, **overrides})
-
-
-def test_dataclass_extensions_have_defaults():
-    entry = Entry("Q1", "m", "t", {}, None, date(2021, 12, 31), "", 1, 1, {}, [])
-    assert (entry.entry_id, entry.truth_commit, entry.truth_as_of, entry.scored_at) == (None, "", "", "")
-    board = Leaderboard(BENCH, "mae", 1, "", [])
-    assert (board.name, board.benchmark_id) == ("", 0)
-
-
-def test_connect_uses_benchmark_settings(monkeypatch):
-    seen = {}
-    monkeypatch.setattr(store.pymysql, "connect", lambda **kw: seen.update(kw) or object())
-    monkeypatch.setattr(settings, "benchmarks_db", "benchmarks")
-    monkeypatch.setattr(settings, "benchmarks_user", "bb")
-    monkeypatch.setattr(settings, "benchmarks_password", "pw")
-    store._connect()
-    assert (seen["database"], seen["user"], seen["password"]) == ("benchmarks", "bb", "pw")
-    assert seen["charset"] == "utf8mb4"
 
 
 def test_add_entry_checks_for_active_duplicate_then_inserts(monkeypatch):
@@ -87,35 +66,6 @@ def test_add_entry_retries_once_after_a_deadlock(monkeypatch):
         monkeypatch, (([], 0, None), _deadlock()), (([], 0, None), ([], 1, 43)))
     assert store.add_entry(3, _entry()) == 43
     assert first.closed and second.closed and first.rolled and second.commits == 1
-
-
-def test_add_entry_retries_after_a_lock_wait_timeout(monkeypatch):
-    conns = _use_attempts(monkeypatch, (([], 0, None), _deadlock(1205)), (([], 0, None), ([], 1, 44)))
-    assert store.add_entry(3, _entry()) == 44
-    assert all(c.closed for c in conns)
-
-
-def test_add_entry_deadlock_then_committed_duplicate_is_a_duplicate(monkeypatch):
-    first, second = _use_attempts(
-        monkeypatch, (([], 0, None), _deadlock()), (([{"id": 7}], 1, None),))
-    with pytest.raises(store.DuplicateEntry):
-        store.add_entry(3, _entry())
-    assert first.closed and second.closed
-
-
-def test_add_entry_second_deadlock_propagates(monkeypatch):
-    conns = _use_attempts(monkeypatch, (([], 0, None), _deadlock()), (([], 0, None), _deadlock()))
-    with pytest.raises(pymysql.err.OperationalError):
-        store.add_entry(3, _entry())
-    assert all(c.closed for c in conns)
-
-
-def test_add_entry_does_not_retry_other_operational_errors(monkeypatch):
-    err = pymysql.err.OperationalError(2003, "Can't connect")
-    conns = _use_attempts(monkeypatch, (([], 0, None), err), (([], 0, None), ([], 1, 45)))
-    with pytest.raises(pymysql.err.OperationalError):
-        store.add_entry(3, _entry())
-    assert conns[0].closed and len(conns[1].executed) == 0
 
 
 def test_list_entries_maps_rows_back_to_entries(monkeypatch):

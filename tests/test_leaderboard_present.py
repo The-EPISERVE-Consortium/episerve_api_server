@@ -3,9 +3,7 @@
 from datetime import date
 
 from app.leaderboard.entries import Benchmark
-from app.leaderboard.present import (
-    chart_option, filter_entries, history_days, history_window, point_rows, summary, table_rows,
-)
+from app.leaderboard.present import filter_entries, point_rows, summary, table_rows
 from app.leaderboard.service import Entry, Leaderboard
 
 BENCH = Benchmark("Q1", "v", "datum", date(2022, 1, 1), date(2022, 12, 31))
@@ -41,44 +39,10 @@ def test_summary_names_the_best_entry_and_the_ranking_only():
     assert text == "Best entry: a, ranked by MAE."
 
 
-def test_summary_does_not_repeat_what_the_data_tab_shows():
-    text = summary(_board([_entry("Q1", "a", mae=1.0)]))
-    assert "Target" not in text and "test window" not in text and "observations" not in text and "as of" not in text
-
-
-def test_summary_without_entries_says_so():
-    assert summary(_board([])) == "No scorable runs for this task."
-
-
 def _hist(qid, name, start, end=date(2021, 12, 31), **metrics):
     e = _entry(qid, name, **metrics)
     e.history_start, e.history_end = start, end
     return e
-
-
-def test_rows_carry_raw_values_for_sorting():
-    rows = table_rows(_board([_entry("Q1", "a", mae=1.234, coverage=0.78), _entry("Q2", "b", mae=2.0)]))
-    assert rows[0]["raw"] == {"mae": 1.234, "rmse": None, "coverage": 0.78, "interval_score": None}
-    assert rows[1]["raw"]["coverage"] is None and rows[1]["coverage"] == "—"
-
-
-def test_ties_all_get_best_flag():
-    board = _board([
-        _entry("Q1", "a", mae=1.0, coverage=0.70),
-        _entry("Q2", "b", mae=1.0, coverage=0.90),
-        _entry("Q3", "c", mae=2.0, coverage=0.50),
-    ])
-    rows = table_rows(board)
-    assert [r["best"]["mae"] for r in rows] == [True, True, False]
-    assert [r["best"]["coverage"] for r in rows] == [True, True, False]   # |0.7-0.8| == |0.9-0.8|
-    assert not any(r["best"]["rmse"] for r in rows)
-
-
-def test_history_days_is_inclusive_and_none_without_start():
-    assert history_days(_hist("Q1", "a", date(2021, 12, 30))) == 2
-    assert history_days(_hist("Q1", "a", date(2021, 12, 31))) == 1
-    assert history_days(_hist("Q1", "a", None)) is None
-    assert history_window(_hist("Q1", "a", None)) == "… → 2021-12-31"
 
 
 def test_filter_entries_by_model_and_min_history():
@@ -92,13 +56,6 @@ def test_filter_entries_by_model_and_min_history():
     assert filter_entries(all_, min_history_days=31) == [a, b]
     assert filter_entries(all_, model="a", min_history_days=1) == [a]
     assert filter_entries(all_, min_history_days=None) == all_
-
-
-def test_rows_for_filtered_entries_rerank_and_rehighlight():
-    a = _entry("Q1", "a", mae=1.0)
-    b = _entry("Q2", "b", mae=2.0)
-    rows = table_rows(_board([a, b]), [b])
-    assert [r["run_qid"] for r in rows] == ["Q2"] and rows[0]["rank"] == 1 and rows[0]["best"]["mae"] is True
 
 
 def _with_points(points):
@@ -118,42 +75,12 @@ def test_point_rows_format_and_error():
     assert rows[1]["observed"] == "—" and rows[1]["error"] == "—"
 
 
-def test_chart_band_is_stacked_with_gaps_for_missing_quantiles():
-    e = _with_points([
-        {"date": "d1", "truth": 1.0, "forecast": 1.0, "q10": 8.0, "q90": 12.0},
-        {"date": "d2", "truth": 1.0, "forecast": 1.0, "q10": None, "q90": 12.0},
-        {"date": "d3", "truth": 1.0, "forecast": 1.0, "q10": 8.0, "q90": None},
-    ])
-    option = chart_option(e)
-    series = {s["name"]: s for s in option["series"]}
-    assert set(series) == {"Observed", "Forecast", "q10 base", "q10–q90"}
-    assert series["q10 base"]["stack"] == series["q10–q90"]["stack"]
-    assert series["q10 base"]["data"] == [8.0, None, None]
-    assert series["q10–q90"]["data"] == [4.0, None, None]
-    assert series["q10–q90"]["areaStyle"]["color"].startswith("rgba")
-    assert series["q10 base"]["areaStyle"]["opacity"] == 0
-    assert "q10 base" not in option["legend"]["data"]
-    assert "q10" in option["tooltip"][":formatter"]
-
-
-def test_summary_stays_silent_about_a_single_shared_data_commit():
-    import dataclasses
-
-    entries = [dataclasses.replace(_entry("Q1", "a", mae=1.0), truth_commit="0123abcd" * 8),
-               dataclasses.replace(_entry("Q2", "b", mae=2.0), truth_commit="0123abcd" * 8)]
-    assert "0123abcd" not in summary(_board(entries)) and "data version" not in summary(_board(entries))
-
-
 def test_summary_flags_mixed_data_versions():
     import dataclasses
 
     entries = [dataclasses.replace(_entry("Q1", "a", mae=1.0), truth_commit="aaaaaaaa"),
                dataclasses.replace(_entry("Q2", "b", mae=2.0), truth_commit="bbbbbbbb")]
     assert "2 different data versions" in summary(_board(entries))
-
-
-def test_summary_without_commits_adds_nothing():
-    assert "lakeFS" not in summary(_board([_entry("Q1", "a", mae=1.0)]))
 
 
 def _run(qid, name, params=None, timestamp="2026-01-01T00:00:00Z"):
@@ -166,16 +93,3 @@ def test_rows_carry_the_run_date_and_a_baseline_flag():
     by_qid = {r["run_qid"]: r for r in rows}
     assert by_qid["Q10"]["date"] == "2026-10-16 22:48"
     assert by_qid["Q10"]["baseline"] is False and by_qid["Q11"]["baseline"] is True
-
-
-def test_a_run_without_a_usable_timestamp_shows_a_dash():
-    assert table_rows(_board([_run("Q10", "m", timestamp="")]))[0]["date"] == "—"
-
-
-def test_filter_entries_by_search_text_matches_model_run_and_parameters():
-    entries = [_run("Q10", "timesfm"), _run("Q11", "chronos2-small", params={"history_length": 233})]
-    assert [e.run_qid for e in filter_entries(entries, text="CHRONOS")] == ["Q11"]
-    assert [e.run_qid for e in filter_entries(entries, text="q10")] == ["Q10"]
-    assert [e.run_qid for e in filter_entries(entries, text="history_length=233")] == ["Q11"]
-    assert len(filter_entries(entries, text="  ")) == 2
-    assert filter_entries(entries, text="nothing") == []

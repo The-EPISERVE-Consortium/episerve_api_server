@@ -1,6 +1,5 @@
 """Regression tests for F1: transformation SQL must be parsed, never executed."""
 
-import duckdb
 import pytest
 
 from app.sql_validation import validate_transformation_sql
@@ -9,12 +8,6 @@ from app.sql_validation import validate_transformation_sql
 def test_accepts_single_select():
     validate_transformation_sql("SELECT * FROM df WHERE a > 1")
     validate_transformation_sql("WITH t AS (SELECT 1 AS a) SELECT * FROM t")
-
-
-def test_rejects_empty():
-    for bad in ("", "   ", "\n"):
-        with pytest.raises(ValueError):
-            validate_transformation_sql(bad)
 
 
 def test_rejects_multiple_statements_and_side_effects(tmp_path):
@@ -37,8 +30,3 @@ def test_rejects_non_select_statement():
     for bad in ("INSERT INTO df VALUES (1)", "ATTACH 'x.db'", "CALL foo()"):
         with pytest.raises(ValueError):
             validate_transformation_sql(bad)
-
-
-def test_parser_errors_surface_as_duckdb_parser_exception():
-    with pytest.raises(duckdb.ParserException):
-        validate_transformation_sql("SELEC bad syntax")

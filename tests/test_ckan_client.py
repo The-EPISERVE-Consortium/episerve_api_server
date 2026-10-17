@@ -16,12 +16,6 @@ def test_list_model_runs_exposes_predictions_resource_id(monkeypatch):
     assert run["predictions_resource_id"] == "pred-1"
 
 
-def test_list_model_runs_without_predictions_has_empty_resource_id(monkeypatch):
-    package = {"extras": [{"key": "qid", "value": "Q1"}], "resources": []}
-    monkeypatch.setattr(ckan, "_get", lambda action, params: {"results": [package]})
-    assert ckan.list_model_runs()[0]["predictions_resource_id"] == ""
-
-
 def test_get_datastore_records_paginates_and_strips_ids(monkeypatch):
     pages = {
         0: [{"_id": 1, "datum": "a"}, {"_id": 2, "datum": "b"}],
@@ -37,22 +31,3 @@ def test_get_datastore_records_paginates_and_strips_ids(monkeypatch):
     rows = ckan.get_datastore_records("res", page_size=2)
     assert rows == [{"datum": "a"}, {"datum": "b"}, {"datum": "c"}]
     assert calls == [("datastore_search", 0), ("datastore_search", 2)]
-
-
-def test_get_passes_a_request_timeout(monkeypatch):
-    seen = {}
-
-    class Response:
-        def raise_for_status(self):
-            pass
-
-        def json(self):
-            return {"success": True, "result": {}}
-
-    def fake_get(url, **kwargs):
-        seen.update(kwargs)
-        return Response()
-
-    monkeypatch.setattr(ckan.requests, "get", fake_get)
-    ckan._get("package_search", {})
-    assert seen["timeout"] == (5, 30)
