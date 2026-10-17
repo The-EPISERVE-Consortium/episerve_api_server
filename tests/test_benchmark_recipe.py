@@ -24,6 +24,7 @@ def test_an_older_manifest_without_sources_still_names_the_target_file():
 def test_one_column_table_serves_both_files():
     layouts = recipe.file_layouts(ROW, MANIFEST)
     assert layouts[0]["rows"] == 233 and layouts[0]["first_date"] == "2022-03-02"
+    assert layouts[0]["catalog"] == "https://data.episerve.zib.de/dataset/q1791000000001"
     assert "test window" in layouts[1]["meaning"]
     assert recipe.column_rows(layouts) == [
         {"column": "datum", "role": "date", "input": "yes", "reference": "yes"},

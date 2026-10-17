@@ -32,6 +32,7 @@ def file_layouts(row: dict, manifest: dict) -> list[dict]:
             "kind": kind, "title": title, "meaning": meaning, "columns": columns, "rows": entry["rows"],
             "first_date": entry.get("first_date"), "last_date": entry.get("last_date"),
             "sha256": entry["sha256"], "url": object_url(manifest, kind),
+            "catalog": f"{CATALOG_URL}/dataset/{entry['qid'].lower()}",
         })
     return layouts
 

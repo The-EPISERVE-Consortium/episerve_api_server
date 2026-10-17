@@ -362,6 +362,7 @@ def test_data_tab_describes_layout_sources_and_steps_of_a_benchmark_with_covaria
 
     out = _render(monkeypatch, row=row, board=_board([_entry()]), after=grab)
     urls = dict(out["links"])
+    assert urls["Data hub"] == "https://data.episerve.zib.de/dataset/q1791000000001"       # the catalog entry
     assert urls["input.parquet"].endswith(f"/doip/retrieve/Q1791000000001/input.parquet?version={'ee' * 32}")
     assert urls["reference.parquet"].endswith(f"/doip/retrieve/Q1791000000001/reference.parquet?version={'ee' * 32}")
     layouts = [rows for key, rows in out["tables"] if key == "column"]

@@ -158,7 +158,9 @@ def _generated_data_sections(row: dict, manifest: dict) -> None:
              "given to a model.").classes("text-sm text-gray-600")
     layouts = recipe.file_layouts(row, manifest)
     for layout in layouts:
-        ui.link(layout["title"], layout["url"], new_tab=True).classes("text-base font-semibold mt-3")
+        with ui.row().classes("items-baseline gap-3 mt-3"):
+            ui.link(layout["title"], layout["url"], new_tab=True).classes("text-base font-semibold")
+            ui.link("Data hub", layout["catalog"], new_tab=True).classes("text-sm")
         span = (f", {layout['first_date']} → {layout['last_date']}"
                 if layout["first_date"] and layout["last_date"] else "")
         ui.label(f"Each row is {layout['meaning']}. {layout['rows']} rows{span}; SHA-256 {layout['sha256'][:16]}…"
