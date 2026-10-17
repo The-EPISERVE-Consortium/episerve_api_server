@@ -36,7 +36,7 @@ def _report():
     return router.bactions.CheckReport(
         ok=True, problems=[], warnings=[], data_commit=COMMIT, component_name="d.parquet", truth_points=27,
         history_end=date(2026, 3, 25), last_history_date=date(2026, 3, 25), prediction_length=27,
-        frequency_days=7, input_sql="SELECT 1")
+        frequency_days=7)
 
 
 def _board():

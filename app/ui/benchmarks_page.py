@@ -317,9 +317,6 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
                         ui.label(
                             f"Forecast length: {report.prediction_length} steps every {report.frequency_days} days"
                         ).classes("text-sm")
-                        ui.label("Input SQL").classes("text-sm font-semibold")
-                        ui.label(report.input_sql or "").classes(
-                            "font-mono text-xs whitespace-pre-wrap bg-gray-100 p-2 rounded w-full")
             finally:
                 busy(False)
 

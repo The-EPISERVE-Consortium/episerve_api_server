@@ -16,11 +16,10 @@ def render(monkeypatch, _module, path, **kw):
     return _render(monkeypatch, _SHIM, path, **kw)
 
 COMMIT = "ab" * 32
-URL = f"https://doip.example/doip/retrieve/Q1/d.parquet?version={COMMIT}"
-SQL = ("SELECT CAST(\"datum\" AS DATE) AS \"datum\", \"v\" FROM df WHERE \"typ\" = 'a' "
-       "AND CAST(\"datum\" AS DATE) <= DATE '2026-03-25' ORDER BY \"datum\"")
+URL = "lakefs://benchmarks/main/3/input.parquet?version=" + "ee" * 32
+SQL = ""
 SPEC = {"benchmark_id": 3, "dataset_qid": "Q1", "data_commit": COMMIT, "input_data_files": [[URL, "input.parquet"]],
-        "data_transformation_sql": [SQL], "config": {"prediction_length": 27, "prediction_offset": 0},
+        "data_transformation_sql": [SQL], "input_columns": ["datum", "v"], "config": {"prediction_length": 27, "prediction_offset": 0},
         "test_start": "2026-04-01", "test_end": "2026-09-30"}
 ROW = {"id": 3, "name": "Flu", "date_column": "datum", "filters": '[["typ", "a"]]'}
 DATASET = {"qid": "Q1", "name": "Wastewater", "data_path": "https://doip.example/doip/retrieve/Q1/d.parquet"}
@@ -65,7 +64,7 @@ def _benchmark_state(sql=SQL, path=URL):
                  config=json.dumps({"prediction_length": 27}))
     state["benchmark"] = {"id": 3, "name": "Flu", "dataset_qid": "Q1", "data_commit": COMMIT, "prediction_length": 27,
                           "test_start": "2026-04-01", "test_end": "2026-09-30", "date_column": "datum",
-                          "filters": [["typ", "a"]]}
+                          "filters": [["typ", "a"]], "input_uri": URL}
     return state
 
 
@@ -78,7 +77,7 @@ def test_step5_warns_when_the_sql_leaks_and_the_run_can_still_be_triggered(monke
     from app.clients import prefect as prefect_client
     monkeypatch.setattr(prefect_client, "trigger_model_run", lambda **kw: triggered.append(kw) or {"prefect_flow_run_id": "r1", "status": "ok"})
     monkeypatch.setattr(pages.settings, "prefect_api_url", "http://prefect")
-    leaky = SQL.replace("2026-03-25", "2026-04-10")
+    leaky = "SELECT * FROM df WHERE CAST(datum AS DATE) <= DATE '2026-04-10'"
 
     async def after(out, client, find, drain):
         seen["labels"] = labels(find)
@@ -88,7 +87,7 @@ def test_step5_warns_when_the_sql_leaks_and_the_run_can_still_be_triggered(monke
 
     _step5(monkeypatch, _benchmark_state(sql=leaky), after)
     assert "This run would not qualify for the leaderboard:" in seen["labels"]
-    assert any("test start" in t for t in seen["labels"])
+    assert any("no SQL transformation" in t for t in seen["labels"])
     assert triggered and triggered[0]["input_data_files"][0][0] == URL
     assert triggered[0]["executed_by"] == "episerve_user_1"                    # the pseudonym, never name or email
     assert "Add the run there once it has finished." in seen["after"]
@@ -125,10 +124,10 @@ def test_use_benchmark_then_step5_end_to_end(monkeypatch):
     texts = seen["labels"]
     assert not any("would not qualify" in t for t in texts)
     payload = next(t for t in texts if "input_data_files" in t)
-    assert f"?version={COMMIT}" in payload and "input.parquet" in payload and "CAST" in payload
+    assert f"?version={'ee' * 32}" in payload and "input.parquet" in payload
 
 
-def test_step5_warns_when_the_input_is_not_at_the_data_commit(monkeypatch):
+def test_step5_warns_when_the_input_is_not_the_generated_file(monkeypatch):
     seen = {}
 
     def after(out, client, find, drain):
@@ -136,7 +135,7 @@ def test_step5_warns_when_the_input_is_not_at_the_data_commit(monkeypatch):
 
     _step5(monkeypatch, _benchmark_state(path=DATASET["data_path"]), after)
     assert "This run would not qualify for the leaderboard:" in seen["labels"]
-    assert any("is not read at the benchmark's data commit" in t for t in seen["labels"])
+    assert any("is not the benchmark's generated input file" in t for t in seen["labels"])
 
 
 def test_step5_blocks_a_config_without_a_required_parameter(monkeypatch):

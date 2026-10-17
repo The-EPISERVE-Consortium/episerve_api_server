@@ -34,6 +34,10 @@ def test_load_predictions_missing_target_column_raises():
         loaders.load_predictions([{"datum": "2022-01-05", "other": "1"}], BENCH)
 
 
+def _truth(data: bytes, bench: Benchmark) -> pd.DataFrame:
+    return loaders.read_series(data, bench, bench.test_start, bench.test_end, require_unique=True, empty_message="empty")
+
+
 def _parquet_bytes(frame: pd.DataFrame) -> bytes:
     buffer = BytesIO()
     pq.write_table(pa.Table.from_pandas(frame), buffer)
@@ -47,18 +51,18 @@ def test_fetch_run_params_parses_config(monkeypatch):
     assert loaders.fetch_run_params("Q1", "https://doip.example") == {"history_length": 91}
 
 
-def test_parse_truth_duplicate_dates_raise():
+def test_read_series_duplicate_dates_raise():
     source = pd.DataFrame({"datum": ["2022-01-05", "2022-01-05"], "value": [1.0, 2.0]})
     with pytest.raises(loaders.LoadError, match="several observations"):
-        loaders.parse_truth(_parquet_bytes(source), BENCH)
+        _truth(_parquet_bytes(source), BENCH)
 
 
-def test_parse_truth_drops_non_finite_values():
+def test_read_series_drops_non_finite_values():
     source = pd.DataFrame({
         "datum": ["2022-01-05", "2022-01-12", "2022-01-19"],
         "value": [float("nan"), float("inf"), 2.5],
     })
-    truth = loaders.parse_truth(_parquet_bytes(source), BENCH)
+    truth = _truth(_parquet_bytes(source), BENCH)
     assert truth["date"].tolist() == [pd.Timestamp("2022-01-19")]
     assert truth["truth"].tolist() == [2.5]
 
@@ -73,54 +77,23 @@ def test_load_predictions_non_finite_values_become_nan():
     assert frame.loc[1, "forecast"] == 1.0
 
 
-def test_parse_truth_reads_window_and_series():
+def test_read_series_reads_window_and_series():
     source = pd.DataFrame({
         "datum": ["2021-12-29", "2022-01-05", "2022-01-12", "2022-01-12"],
         "value": [1.0, 10.0, 20.0, 99.0],
         "typ": ["a", "a", "a", "b"],
     })
     bench = Benchmark(**{**BENCH.__dict__, "filters": (("typ", "a"),)})
-    truth = loaders.parse_truth(_parquet_bytes(source), bench)
+    truth = _truth(_parquet_bytes(source), bench)
     assert truth["truth"].tolist() == [10.0, 20.0]
 
 
-def test_parse_truth_rejects_garbage_bytes():
+def test_read_series_rejects_garbage_bytes():
     with pytest.raises(loaders.LoadError):
-        loaders.parse_truth(b"not a parquet file", BENCH)
+        _truth(b"not a parquet file", BENCH)
 
 
-def test_truth_from_pin_reads_the_named_component_at_the_pinned_commit(monkeypatch):
-    source = pd.DataFrame({"datum": ["2022-01-05"], "value": [10.0]})
-    calls = []
-
-    def fake_read(commit, qid, filename, max_bytes):
-        calls.append((commit, qid, filename, max_bytes))
-        return _parquet_bytes(source)
-
-    monkeypatch.setattr(loaders.lakefs_client, "read_processed_component", fake_read)
-    truth = loaders.truth_from_pin("Q1", "d.parquet", "abc12345", BENCH)
-    assert truth["truth"].tolist() == [10.0]
-    assert calls == [("abc12345", "Q1", "d.parquet", loaders.MAX_DOWNLOAD_BYTES)]
-
-
-def test_truth_from_pin_unsafe_commit_is_a_load_error(monkeypatch):
-    monkeypatch.setattr(loaders.lakefs_client, "_client", lambda: None)
-    with pytest.raises(loaders.LoadError, match="Invalid"):
-        loaders.truth_from_pin("Q1", "d.parquet", "../evil", BENCH)
-
-
-def test_last_observed_date_returns_the_latest_on_or_before():
-    source = pd.DataFrame({"datum": ["2026-03-18", "2026-03-25", "2026-04-01"], "value": [1.0, 2.0, 3.0]})
-    assert loaders.last_observed_date(_parquet_bytes(source), BENCH, date(2026, 3, 31)) == date(2026, 3, 25)
-
-
-def test_last_observed_date_without_observations_raises():
-    source = pd.DataFrame({"datum": ["2026-05-01"], "value": [1.0]})
-    with pytest.raises(loaders.LoadError, match="no observations on or before"):
-        loaders.last_observed_date(_parquet_bytes(source), BENCH, date(2026, 3, 31))
-
-
-def test_parse_truth_with_two_filters_reads_exactly_one_series():
+def test_read_series_with_two_filters_reads_exactly_one_series():
     source = pd.DataFrame({
         "datum": ["2022-01-05", "2022-01-05", "2022-01-05", "2022-01-12"],
         "typ": ["a", "a", "b", "a"],
@@ -128,10 +101,10 @@ def test_parse_truth_with_two_filters_reads_exactly_one_series():
         "value": [1.0, 2.0, 3.0, 4.0],
     })
     bench = Benchmark(**{**BENCH.__dict__, "filters": (("typ", "a"), ("age", "young"))})
-    truth = loaders.parse_truth(_parquet_bytes(source), bench)
+    truth = _truth(_parquet_bytes(source), bench)
     assert truth["truth"].tolist() == [1.0, 4.0]                    # one row per date: no duplicates
     with pytest.raises(loaders.LoadError, match="several observations"):
-        loaders.parse_truth(_parquet_bytes(source), Benchmark(**{**BENCH.__dict__, "filters": (("typ", "a"),)}))
+        _truth(_parquet_bytes(source), Benchmark(**{**BENCH.__dict__, "filters": (("typ", "a"),)}))
 
 
 def test_truth_from_reference_reads_the_file_at_the_commit_and_checks_its_hash(monkeypatch):

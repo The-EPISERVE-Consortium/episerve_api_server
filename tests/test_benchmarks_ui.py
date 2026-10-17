@@ -73,7 +73,7 @@ def _fill(find, **extra):
 
 def _report(**kw):
     base = dict(ok=True, data_commit=COMMIT, truth_points=5, history_end=date(2021, 12, 31),
-                prediction_length=5, frequency_days=7, input_sql="SELECT * FROM t")
+                prediction_length=5, frequency_days=7)
     return CheckReport(**{**base, **kw})
 
 
@@ -145,7 +145,7 @@ def test_designer_rejects_bad_dates_without_calling_the_action(monkeypatch):
 
 def test_check_shows_problems_warnings_and_the_generated_sql(monkeypatch):
     monkeypatch.setattr(benchmarks_page.bactions, "update_draft", lambda i, **kw: None)
-    reports = [_report(ok=False, problems=["column v is missing"], warnings=["uneven dates"], input_sql=None),
+    reports = [_report(ok=False, problems=["column v is missing"], warnings=["uneven dates"]),
                _report()]
     monkeypatch.setattr(benchmarks_page.bactions, "check", lambda i: reports.pop(0))
 
@@ -165,10 +165,9 @@ def test_check_shows_problems_warnings_and_the_generated_sql(monkeypatch):
     out = _render(monkeypatch, logged_in=True, after=scenario)
     assert "column v is missing" in out["red"] and "uneven dates" in out["orange"]
     assert out["finalize_disabled_1"] is True
-    assert "SELECT * FROM t" not in out["first"]
     second = out["second"]
     assert f"Data commit: {COMMIT}" in second and "Observations in the test window: 5" in second
-    assert "Forecast length: 5 steps every 7 days" in second and "SELECT * FROM t" in second
+    assert "Forecast length: 5 steps every 7 days" in second
 
 
 def test_finalize_is_disabled_until_a_successful_check_and_confirms_with_the_commit(monkeypatch):

@@ -204,7 +204,7 @@ def check_benchmark(benchmark_id: int):
         component_name=report.component_name, truth_points=report.truth_points,
         history_end=_iso(report.history_end), last_history_date=_iso(report.last_history_date),
         prediction_length=report.prediction_length, frequency_days=report.frequency_days,
-        input_sql=report.input_sql, columns=report.columns, missing=report.missing, input_rows=report.input_rows,
+        columns=report.columns, missing=report.missing, input_rows=report.input_rows,
     )
 
 

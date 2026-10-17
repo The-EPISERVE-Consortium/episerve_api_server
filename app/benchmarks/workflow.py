@@ -1,7 +1,6 @@
 """Helpers that start the run workflow from a final benchmark (no UI, no I/O)."""
 
 from app.benchmarks.definition import filters_from_row
-from app.leaderboard.entries import has_equality_filter, parse_history_window
 
 
 def apply_benchmark(state: dict, spec: dict, dataset_row: dict, benchmark_row: dict) -> dict:
@@ -15,7 +14,7 @@ def apply_benchmark(state: dict, spec: dict, dataset_row: dict, benchmark_row: d
     """
     url, filename = spec["input_data_files"][0]
     qid = spec["dataset_qid"]
-    state["datasets"] = [{**dataset_row, "data_path": url}]        # a benchmark with covariates: its generated file
+    state["datasets"] = [{**dataset_row, "data_path": url}]        # the benchmark's generated input file
     state["sql"] = {qid: spec["data_transformation_sql"][0]}
     state["filenames"] = {qid: filename}
     state["config"] = None
@@ -25,8 +24,7 @@ def apply_benchmark(state: dict, spec: dict, dataset_row: dict, benchmark_row: d
         "test_start": spec["test_start"], "test_end": spec["test_end"],
         "date_column": benchmark_row["date_column"],
         "filters": [list(pair) for pair in filters_from_row(benchmark_row)],
-        # set for a benchmark with covariates: the generated input file, which a run must use as it is
-        "input_uri": url if spec.get("input_columns") else None,
+        "input_uri": url,        # the generated input file, which a run must use as it is
     }
     return state
 
@@ -48,28 +46,13 @@ def overlay_config(config: dict, benchmark: dict | None, declared: set[str]) -> 
     return merged
 
 
-def workflow_problems(
-    benchmark: dict | None, data_path: str, sql: str, date_column: str,
-    filters: list,
-) -> list[str]:
+def workflow_problems(benchmark: dict | None, data_path: str, sql: str) -> list[str]:
     """Why a run built from the current workflow input would not qualify for the benchmark."""
     if not benchmark:
         return []
     problems = []
-    if benchmark.get("input_uri"):      # a benchmark with covariates: the generated file, no SQL on top of it
-        if (data_path or "") != benchmark["input_uri"]:
-            problems.append("the input is not the benchmark's generated input file")
-        if any(line.strip() and not line.strip().startswith("--") for line in (sql or "").splitlines()):
-            problems.append("the benchmark's input file must be used as it is (no SQL transformation)")
-        return problems
-    if f"?version={benchmark['data_commit']}" not in (data_path or ""):
-        problems.append(f"the input is not read at the benchmark's data commit {benchmark['data_commit'][:12]}")
-    window = parse_history_window(sql or "", date_column)
-    if window is None:
-        problems.append("the history window cannot be read from the SQL")
-    elif window.end.isoformat() >= benchmark["test_start"]:
-        problems.append(f"the history ends {window.end}, on or after the test start {benchmark['test_start']}")
-    for column, value in filters or []:
-        if not has_equality_filter(sql or "", column, value or ""):
-            problems.append(f"the filter {column} = {value!r} is missing from the SQL")
+    if (data_path or "") != benchmark["input_uri"]:
+        problems.append("the input is not the benchmark's generated input file")
+    if any(line.strip() and not line.strip().startswith("--") for line in (sql or "").splitlines()):
+        problems.append("the benchmark's input file must be used as it is (no SQL transformation)")
     return problems

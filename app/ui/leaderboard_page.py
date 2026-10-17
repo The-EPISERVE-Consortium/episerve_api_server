@@ -9,7 +9,7 @@ from starlette.requests import Request
 from app.ui import session
 from app.benchmarks import actions as bactions
 from app.leaderboard import actions
-from app.benchmarks.definition import covariates_from_row, evaluation_sql, materialized_from_row
+from app.benchmarks.definition import covariates_from_row, materialized_from_row
 from app.benchmarks.store import benchmark_from_row
 from app.leaderboard.about import COLUMN_HELP, METRIC_DOCS, description_text, overview_facts
 from app.leaderboard.loaders import LoadError
@@ -196,26 +196,6 @@ def _data_tab(row: dict, benchmark_id: int) -> None:
     manifest = materialized_from_row(row)
     if manifest:
         _generated_data_sections(row, manifest, benchmark_id)
-        _criteria_section()
-        return
-    ui.label("Training data").classes("text-xl font-semibold text-gray-900")
-    try:
-        spec = bactions.run_spec(benchmark_id)
-        url = spec["input_data_files"][0][0]
-        training = spec["data_transformation_sql"][0]
-    except Exception:
-        logger.exception("could not build the run spec for the data tab")
-        ui.label("The data file link and the training SQL are not available right now.").classes(
-            "text-sm text-gray-500")
-    else:
-        ui.label("The data file at the pinned version:").classes("text-sm text-gray-600")
-        ui.link(url, url, new_tab=True).classes("text-sm break-all")
-        ui.label("Apply this SQL to the file; the result is what a model sees.").classes("text-sm text-gray-600")
-        ui.code(training, language="sql").classes("w-full max-w-4xl")
-    ui.label("Evaluation data").classes("text-xl font-semibold text-gray-900 mt-4")
-    ui.label("Apply this SQL to the same file; forecasts are scored against the result.").classes(
-        "text-sm text-gray-600")
-    ui.code(evaluation_sql(benchmark_from_row(row)), language="sql").classes("w-full max-w-4xl")
     _criteria_section()
 
 

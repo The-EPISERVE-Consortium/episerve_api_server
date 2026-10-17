@@ -2931,8 +2931,7 @@ def register_pages():
                     bench_row = next((d for d in datasets if d["qid"] == bench["dataset_qid"]), None)
                     problems = workflow_problems(
                         bench, (bench_row or {}).get("data_path", ""),
-                        state.get("sql", {}).get(bench["dataset_qid"], ""), bench["date_column"],
-                        bench.get("filters", []),
+                        state.get("sql", {}).get(bench["dataset_qid"], ""),
                     ) if bench_row else ["the benchmark's dataset is no longer selected"]
                     if problems:
                         ui.label("This run would not qualify for the leaderboard:").classes(

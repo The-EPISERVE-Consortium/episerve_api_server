@@ -150,7 +150,6 @@ class CheckReportOut(BaseModel):
     last_history_date: str | None = None
     prediction_length: int | None = None
     frequency_days: int | None = None
-    input_sql: str | None = None
     columns: list[str] | None = None          # with covariates: the columns of the generated input file
     missing: dict[str, float] | None = None   # share of empty values per covariate column
     input_rows: int | None = None

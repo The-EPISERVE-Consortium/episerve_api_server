@@ -1,6 +1,7 @@
 """The stored leaderboard page: reads only, no external calls."""
 
 import asyncio
+import json
 from datetime import date
 
 import pytest
@@ -13,9 +14,14 @@ from tests.ui_harness import click, render
 
 BENCH = Benchmark("Q1", "v", "datum", date(2022, 1, 1), date(2022, 1, 31))
 COMMIT = "0123abcd" * 8
+MANIFEST = {"repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
+            "input": {"path": "3/input.parquet", "sha256": "a" * 64, "rows": 120, "first_date": "2021-01-06",
+                      "last_date": "2021-12-29", "columns": ["datum", "v"]},
+            "reference": {"path": "3/reference.parquet", "sha256": "b" * 64, "rows": 4}}
 ROW = {"id": 3, "name": "Flu", "dataset_qid": "Q1", "target_column": "v", "date_column": "datum",
        "filters": '[["region", "DE"]]', "test_start": date(2022, 1, 1),
-       "test_end": date(2022, 1, 31), "prediction_length": 5, "data_commit": COMMIT}
+       "test_end": date(2022, 1, 31), "prediction_length": 5, "data_commit": COMMIT,
+       "materialized": json.dumps(MANIFEST)}
 
 
 def _entry(qid="Q10", model="timesfm", mae=1.0, **overrides):
@@ -325,32 +331,7 @@ def test_unexpected_write_errors_are_generic_and_logged(monkeypatch, caplog):
 # --- tabs: Overview | Data | Evaluation | Leaderboard -------------------------------------------------------------
 
 
-def test_data_tab_shows_the_file_link_and_the_sql_for_the_training_and_the_evaluation_data(monkeypatch):
-    def grab(out, client, find, drain):
-        out["code"] = [(e.content, _panel_of(e)) for e in find(ui.code)]
-        out["links"] = [(e.text, e.props.get("href")) for e in find(ui.link)]
-
-    out = _render(monkeypatch, board=_board([_entry()]), after=grab)
-    url = f"https://doip.example/doip/retrieve/Q1/d.parquet?version={COMMIT}"
-    assert (url, url) in out["links"]
-    sql = [content for content, panel in out["code"] if panel == "data"]
-    assert len(sql) == 2
-    assert "SELECT 1 FROM df" in sql[0]                                        # the training data: the benchmark's input SQL
-    assert "DATE '2022-01-01'" in sql[1] and "DATE '2022-01-31'" in sql[1]    # the evaluation data: the test window
-
-
-def test_data_tab_survives_a_missing_run_spec(monkeypatch):
-    def grab(out, client, find, drain):
-        out["code"] = [e.content for e in find(ui.code)]
-        out["metrics"] = [t for t in find(ui.table) if t.props.get("row-key") == "metric"]
-
-    out = _render(monkeypatch, board=_board([_entry()]), spec=RuntimeError("db down"), after=grab)
-    assert out["status"] == 200 and len(out["metrics"]) == 1
-    assert len(out["code"]) == 1 and "DATE '2022-01-01'" in out["code"][0]        # the evaluation SQL needs no run spec
-    assert "The data file link and the training SQL are not available right now." in out["labels"]
-
-
-def test_data_tab_has_only_the_data_and_the_evaluation_criteria(monkeypatch):
+def test_data_tab_has_only_the_generated_data_and_the_evaluation_criteria(monkeypatch):
     def grab(out, client, find, drain):
         out["tables"] = {t.props.get("row-key"): _panel_of(t) for t in find(ui.table)}
 

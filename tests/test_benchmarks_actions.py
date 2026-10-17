@@ -68,6 +68,13 @@ def world(monkeypatch):
         return state["weather"] if qid == "Q2" else state["data"]
 
     monkeypatch.setattr(actions.lakefs_client, "read_processed_component", read)
+    log["written"] = []
+
+    def write(benchmark_id, files):
+        log["written"].append((benchmark_id, files))
+        return "main", "ee" * 32
+
+    monkeypatch.setattr(actions.lakefs_client, "write_benchmark_files", write)
     monkeypatch.setattr(actions.store, "get", lambda bid: dict(state["row"]) if bid == 3 else None)
     monkeypatch.setattr(actions.store, "create_draft",
                         lambda name, desc, b, created_by=None: log["created"].append((name, desc, b, created_by)) or 8)
@@ -127,7 +134,7 @@ def test_check_resolves_the_defaults_and_builds_the_run_inputs(world):
     assert (report.data_commit, report.component_name, report.truth_points) == (COMMIT, "d.parquet", 27)
     assert report.history_end == date(2026, 3, 25) and report.last_history_date == date(2026, 3, 25)
     assert (report.prediction_length, report.frequency_days) == (27, 7)
-    assert "<= DATE '2026-03-25'" in report.input_sql and "\"typ\" = 'Influenza A+B'" in report.input_sql
+    assert report.columns == ["datum", "v"] and report.input_rows == 26     # history only, the target series
     assert world["log"]["reads"] == [(COMMIT, "Q1", "d.parquet")]
 
 
@@ -135,13 +142,6 @@ def test_check_reports_data_problems_instead_of_raising(world):
     world["state"]["row"] = _row(test_start=date(2030, 1, 1), test_end=date(2030, 2, 1))
     report = actions.check(3)
     assert not report.ok and any("no observations" in p for p in report.problems)
-
-
-def test_check_flags_a_filter_value_the_qualification_rules_cannot_accept(world):
-    world["state"]["data"] = _parquet(typ="NOT AVAILABLE")
-    world["state"]["row"] = _row(filters='[["typ", "NOT AVAILABLE"]]')
-    report = actions.check(3)
-    assert not report.ok and any("qualification rules" in p for p in report.problems)
 
 
 def test_check_only_works_on_drafts(world):
@@ -156,7 +156,11 @@ def test_finalize_pins_the_commit_read_during_the_check(world):
     actions.finalize(3, by=CREATOR)
     bid, kw = world["log"]["finalized"][0]
     assert bid == 3 and kw == {"data_commit": COMMIT, "component_name": "d.parquet", "truth_points": 27,
-                               "prediction_length": 27, "history_end": date(2026, 3, 25), "materialized": None}
+                               "prediction_length": 27, "history_end": date(2026, 3, 25),
+                               "materialized": kw["materialized"]}
+    manifest = kw["materialized"]
+    assert manifest["input"]["columns"] == ["datum", "v"] and manifest["reference"]["rows"] == 27
+    assert manifest["commit"] == "ee" * 32
 
 
 def test_finalize_with_a_different_expected_commit_conflicts_and_stores_nothing(world):
@@ -191,15 +195,38 @@ def _final(**kw):
                 history_end=date(2026, 3, 25), prediction_length=27, truth_points=27, **kw)
 
 
-def test_run_spec_for_a_final_benchmark_pins_the_input_url(world, monkeypatch):
-    world["state"]["row"] = _final()
-    monkeypatch.setattr(actions.settings, "doip_url", "https://doip.example/")
+MANIFEST = {"version": 1, "repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
+            "input": {"path": "3/input.parquet", "columns": ["datum", "v"], "first_date": "2025-10-01",
+                      "last_date": "2026-03-25"},
+            "reference": {"path": "3/reference.parquet", "sha256": "ab" * 32, "rows": 27}}
+
+
+def test_run_spec_for_a_final_benchmark_names_the_generated_input_file(world, monkeypatch):
+    world["state"]["row"] = _final(materialized=json.dumps(MANIFEST))
     monkeypatch.setattr(actions.ckan_client, "list_processed_datasets", lambda: (_ for _ in ()).throw(AssertionError("no CKAN call")))
     spec = actions.run_spec(3)
-    assert spec["input_data_files"] == [[f"https://doip.example/doip/retrieve/Q1/d.parquet?version={COMMIT}", "input.parquet"]]
-    assert spec["data_transformation_sql"][0].endswith('ORDER BY "datum"') and "<= DATE '2026-03-25'" in spec["data_transformation_sql"][0]
+    assert spec["input_data_files"] == [[f"lakefs://benchmarks/main/3/input.parquet?version={'ee' * 32}", "input.parquet"]]
+    assert spec["data_transformation_sql"] == [""] and spec["input_columns"] == ["datum", "v"]
     assert spec["config"] == {"prediction_length": 27, "prediction_offset": 0}
     assert (spec["data_commit"], spec["test_start"], spec["test_end"]) == (COMMIT, "2026-04-01", "2026-09-30")
+
+
+def test_run_spec_needs_the_generated_files(world):
+    world["state"]["row"] = _final()
+    with pytest.raises(actions.NotFound, match="generated input file"):
+        actions.run_spec(3)
+
+
+def test_a_final_benchmark_without_files_gets_them_at_its_pinned_commit(world, monkeypatch):
+    world["state"]["row"] = _final()
+    saved = {}
+    monkeypatch.setattr(actions.store, "set_materialized", lambda bid, m: saved.update(id=bid, manifest=m))
+    manifest = actions.materialize_final(3)
+    assert saved == {"id": 3, "manifest": manifest} and manifest["reference"]["rows"] == 27
+    assert world["log"]["reads"] == [(COMMIT, "Q1", "d.parquet")] and world["log"]["finalized"] == []
+    world["state"]["row"] = _final(materialized=json.dumps(MANIFEST))
+    with pytest.raises(actions.Conflict):
+        actions.materialize_final(3)
 
 
 def test_run_spec_only_for_final_benchmarks(world):
@@ -255,7 +282,6 @@ def test_check_rejects_a_history_start_after_the_last_observation(world):
     world["state"]["row"] = _row(history_start=date(2026, 3, 30))
     report = actions.check(3)
     assert not report.ok and any("no observations in the input range" in p for p in report.problems)
-    assert not any("qualification rules" in p for p in report.problems)
 
 
 def test_only_the_creator_may_finalize_a_draft(world):
@@ -292,7 +318,6 @@ def test_check_builds_the_input_of_a_benchmark_with_covariates_and_reports_the_c
     report = actions.check(3)
     assert report.ok and report.columns == ["datum", "v", "wetter__temp"]
     assert report.input_rows == 26 and report.missing == {"wetter__temp": 0.0}
-    assert report.input_sql is None                                       # no SQL: the generated file is the input
     assert ("0123abcd" * 8, "Q2", "w.parquet") in world["log"]["reads"]    # the covariate is read at the same commit
 
 

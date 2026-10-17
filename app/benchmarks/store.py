@@ -137,6 +137,18 @@ def finalize(
         conn.close()
 
 
+def set_materialized(benchmark_id: int, materialized: dict) -> None:
+    """Record the manifest of the generated files of a final benchmark that has none yet."""
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE benchmarks SET materialized = %s WHERE id = %s AND materialized IS NULL "
+                        "AND finalized_at IS NOT NULL", (json.dumps(materialized), benchmark_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def set_description(benchmark_id: int, description: str | None) -> None:
     """Replace the description of a benchmark in any state (it is not part of the frozen definition)."""
     conn = _connect()

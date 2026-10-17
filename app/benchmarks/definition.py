@@ -1,10 +1,10 @@
 """Benchmark definition: one series cut into an input range and a reference range.
 
-The series is a dataset column (optionally narrowed by any number of equality filters, column = value).
-Further *covariates* (other datasets) can be added; the model input is then one generated file (see ``materialize``). The *input* range
-(``history_start``..``history_end``) is what a model run may see; the *reference* range
-(``test_start``..``test_end``) is what its forecast is compared against. Both are read
-from lakeFS at the commit pinned when the benchmark is finalized.
+The series is a dataset column (optionally narrowed by any number of equality filters, column = value); further
+*covariates* (other datasets) can be added. The *input* range (``history_start``..``history_end``) is what a model run
+may see; the *reference* range (``test_start``..``test_end``) is what its forecast is compared against. When the
+benchmark is finalized both are generated from the lakeFS commit it pins and stored as two files (see
+``materialize``); the model input is always that one generated file.
 """
 
 import json
@@ -229,47 +229,6 @@ def _validate_covariates(benchmark: Benchmark) -> None:
             if output.lower() in taken:
                 raise DefinitionError(f"The column {output!r} would exist twice in the input file.")
             taken.add(output.lower())
-
-
-def _ident(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
-
-
-def _literal(value: str) -> str:
-    return "'" + value.replace("'", "''") + "'"
-
-
-def input_sql(benchmark: Benchmark) -> str:
-    """The SQL (table ``df``) that cuts the input range out of the dataset.
-
-    Raises:
-        DefinitionError: If ``history_end`` is not set.
-    """
-    if benchmark.history_end is None:
-        raise DefinitionError("The history end is not set.")
-    date_col = _ident(benchmark.date_column)
-    cast = f"CAST({date_col} AS DATE)"
-    where = [f"{_ident(column)} = {_literal(value)}" for column, value in benchmark.filters]
-    if benchmark.history_start is not None:
-        where.append(f"{cast} >= DATE '{benchmark.history_start.isoformat()}'")
-    where.append(f"{cast} <= DATE '{benchmark.history_end.isoformat()}'")
-    return (
-        f"SELECT {cast} AS {date_col}, {_ident(benchmark.target_column)} FROM df "
-        f"WHERE {' AND '.join(where)} ORDER BY {date_col}"
-    )
-
-
-def evaluation_sql(benchmark: Benchmark) -> str:
-    """The SQL (table ``df``) that cuts the test window (the evaluation data) out of the dataset."""
-    date_col = _ident(benchmark.date_column)
-    cast = f"CAST({date_col} AS DATE)"
-    where = [f"{_ident(column)} = {_literal(value)}" for column, value in benchmark.filters]
-    where.append(f"{cast} >= DATE '{benchmark.test_start.isoformat()}'")
-    where.append(f"{cast} <= DATE '{benchmark.test_end.isoformat()}'")
-    return (
-        f"SELECT {cast} AS {date_col}, {_ident(benchmark.target_column)} FROM df "
-        f"WHERE {' AND '.join(where)} ORDER BY {date_col}"
-    )
 
 
 def derive_horizon(observed: list[date], last_history: date) -> Horizon:

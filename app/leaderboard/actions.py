@@ -14,10 +14,9 @@ from app.benchmarks.definition import materialized_from_row
 from app.benchmarks.errors import Conflict, NotFound
 from app.clients import ckan as ckan_client
 from app.config import settings
-from app.leaderboard import loaders, run_inputs, scoring, store
+from app.leaderboard import loaders, scoring, store
 from app.leaderboard.entries import Benchmark
 from app.leaderboard.loaders import LoadError
-from app.leaderboard.run_inputs import RunInput
 from app.leaderboard.service import Leaderboard, rank_entries
 
 logger = logging.getLogger(__name__)
@@ -30,13 +29,12 @@ def _final_benchmark(benchmark_id: int) -> dict:
     return row
 
 
-def _load_inputs(run_qid: str) -> list[RunInput] | None:
-    """The run's inputs from its DOIP provenance, or None when they cannot be read."""
-    try:
-        return run_inputs.fetch_run_inputs(run_qid, settings.doip_url)
-    except Exception:
-        logger.exception("could not read the provenance of run %s", run_qid)
-        return None
+def _manifest(row: dict) -> dict:
+    """The generated files of a final benchmark."""
+    manifest = materialized_from_row(row)
+    if not manifest:
+        raise NotFound(f"Benchmark {row['id']} has no generated input file yet")
+    return manifest
 
 
 def _load_predictions(run: dict, benchmark: Benchmark) -> pd.DataFrame:
@@ -53,9 +51,8 @@ def _load_predictions(run: dict, benchmark: Benchmark) -> pd.DataFrame:
 def add_run(benchmark_id: int, run_qid: str) -> int:
     """Score a model run against a final benchmark and store the entry.
 
-    The truth is read from the benchmark's pinned component at its ``data_commit`` (neither the
-    lakeFS head nor the current CKAN record is consulted), and the run is accepted only if its provenance shows its input at exactly
-    that commit.
+    The truth is read from the benchmark's generated reference file (checked against its stored hash), and the run is
+    accepted only if it read exactly the benchmark's generated input file, in the stored version, and nothing else.
 
     Returns:
         The new entry id.
@@ -73,19 +70,13 @@ def add_run(benchmark_id: int, run_qid: str) -> int:
     run = next((r for r in ckan_client.list_model_runs() if r["qid"] == run_qid), None)
     if run is None:
         raise NotFound(f"Model run {run_qid!r} not found")
-    commit = row["data_commit"]
-    manifest = materialized_from_row(row)
-    if manifest:        # a benchmark with covariates: truth from its generated reference file, no provenance fetch
-        truth = loaders.truth_from_reference(manifest, benchmark)
-        commit, inputs = manifest["commit"], None
-    else:
-        truth = loaders.truth_from_pin(benchmark.dataset_qid, row["component_name"], commit, benchmark)
-        inputs = _load_inputs(run_qid)
+    manifest = _manifest(row)
+    truth = loaders.truth_from_reference(manifest, benchmark)       # the benchmark's generated reference file
     entry = scoring.score_run(
-        benchmark, run, truth, truth_commit=commit, truth_as_of=row["finalized_at"],
+        benchmark, run, truth, truth_commit=manifest["commit"], truth_as_of=row["finalized_at"],
         load_predictions=_load_predictions,
         load_params=lambda qid: loaders.fetch_run_params(qid, settings.doip_url),
-        inputs=inputs, manifest=manifest,
+        manifest=manifest,
     )
     try:
         return store.add_entry(benchmark_id, entry)
@@ -142,11 +133,10 @@ def best_entries(benchmark_ids: list[int]) -> dict[int, dict]:
 
 
 def candidates(benchmark_id: int) -> list[dict]:
-    """Runs on the benchmark's dataset with the reason each cannot be added (None if it can)."""
+    """Runs that read the benchmark's input file with the reason each cannot be added (None if it can)."""
     row = _final_benchmark(benchmark_id)
     active = {e.run_qid for e in store.list_entries(benchmark_id)}
     return scoring.candidate_runs(
-        bstore.benchmark_from_row(row), ckan_client.list_model_runs(), active, load_inputs=_load_inputs,
+        ckan_client.list_model_runs(), active, _manifest(row),
         load_params=lambda qid: loaders.fetch_run_params(qid, settings.doip_url),
-        manifest=materialized_from_row(row),
     )

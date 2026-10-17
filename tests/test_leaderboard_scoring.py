@@ -10,16 +10,18 @@ from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable, candidate_runs, score_run
 
 BENCH = Benchmark("Q1", "v", "datum", date(2022, 1, 1), date(2022, 1, 31))
-SQL = "SELECT * FROM df WHERE CAST(datum AS DATE) <= DATE '2021-12-31'"
+URI = "lakefs://benchmarks/main/3/input.parquet"
+COMMIT = "0123abcd" * 8
+MANIFEST = {"repo": "benchmarks", "branch": "main", "commit": COMMIT,
+            "input": {"path": "3/input.parquet", "first_date": "2020-01-01", "last_date": "2021-12-31"}}
 DATES = pd.to_datetime(["2022-01-05", "2022-01-12"])
 TRUTH = pd.DataFrame({"date": DATES, "truth": [10.0, 20.0]})
-COMMIT = "0123abcd" * 8
 
 
 def _run(qid="Q10", **overrides):
     base = {
         "qid": qid, "model_name": "timesfm", "docker_tag": "latest", "status": "success",
-        "input_dataset_qids": ["Q1"], "data_transformation_sql": [SQL],
+        "input_sources": [f"{URI}?version={COMMIT}"],
         "run_timestamp": "2026-01-01T00:00:00Z", "predictions_resource_id": "res",
     }
     return {**base, **overrides}
@@ -27,7 +29,7 @@ def _run(qid="Q10", **overrides):
 
 def _score(run, predictions, **kw):
     return score_run(
-        BENCH, run, TRUTH, truth_commit=COMMIT, truth_as_of="2026-10-14",
+        BENCH, run, TRUTH, truth_commit=COMMIT, truth_as_of="2026-10-14", manifest=MANIFEST,
         load_predictions=lambda r, b: predictions, load_params=lambda qid: {"history_length": 91}, **kw,
     )
 
@@ -38,7 +40,7 @@ def test_scores_a_run_and_records_pins_params_and_points():
     assert entry.metrics["mae"] == pytest.approx(1.0) and entry.metrics["coverage"] == 1.0
     assert (entry.truth_commit, entry.truth_as_of) == (COMMIT, "2026-10-14")
     assert entry.params == {"history_length": 91}
-    assert entry.history_end == date(2021, 12, 31) and entry.history_start is None
+    assert entry.history_end == date(2021, 12, 31) and entry.history_start == date(2020, 1, 1)
     assert entry.points[0] == {"date": "2022-01-05", "forecast": 11.0, "q10": 9.0, "q90": 12.0, "truth": 10.0}
     assert (entry.n_scored, entry.n_expected) == (2, 2)
 
@@ -53,18 +55,12 @@ def test_non_finite_metrics_are_stored_as_none():
 
 @pytest.mark.parametrize("run,fragment", [
     (_run(status="failed"), "failed"),
-    (_run(input_dataset_qids=["Q9"]), "dataset"),
-    (_run(data_transformation_sql=["SELECT 1"]), "history window"),
+    (_run(input_sources=["lakefs://benchmarks/main/9/input.parquet"]), "did not read"),
+    (_run(input_sources=[f"{URI}?version={'dd' * 32}"]), "version"),
 ])
 def test_unqualified_runs_are_cannot_be_scored_with_a_reason(run, fragment):
     with pytest.raises(NotScorable, match=fragment):
         _score(run, pd.DataFrame({"date": DATES, "forecast": [1.0, 2.0]}))
-
-
-def test_leakage_is_cannot_be_scored():
-    leaky = _run(data_transformation_sql=["SELECT * FROM df WHERE CAST(datum AS DATE) <= DATE '2022-01-10'"])
-    with pytest.raises(NotScorable, match="test start"):
-        _score(leaky, pd.DataFrame({"date": DATES, "forecast": [1.0, 2.0]}))
 
 
 def test_partial_forecast_is_cannot_be_scored():
@@ -76,56 +72,15 @@ def test_candidate_runs_explain_why_a_run_cannot_be_added():
     runs = [
         _run("Q10", run_timestamp="2026-01-02T00:00:00Z"),
         _run("Q11", status="failed", run_timestamp="2026-01-03T00:00:00Z"),
-        _run("Q12", input_dataset_qids=["Q9"]),
+        _run("Q12", input_sources=["lakefs://benchmarks/main/9/input.parquet"]),
         _run("Q13", run_timestamp="2026-01-01T00:00:00Z"),
     ]
-    result = candidate_runs(BENCH, runs, active_run_qids={"Q13"})
-    assert [c["qid"] for c in result] == ["Q11", "Q10", "Q13"]          # other dataset omitted; newest first
+    result = candidate_runs(runs, {"Q13"}, MANIFEST)
+    assert [c["qid"] for c in result] == ["Q11", "Q10", "Q13"]          # other input omitted; newest first
     reasons = {c["qid"]: c["reason"] for c in result}
     assert reasons["Q10"] is None
     assert "failed" in reasons["Q11"]
     assert reasons["Q13"] == "already on this leaderboard"
-
-
-from dataclasses import replace
-
-from app.leaderboard.run_inputs import RunInput
-
-PIN = "ab" * 32
-STRICT = replace(BENCH, data_commit=PIN)
-
-
-def test_score_run_in_strict_mode_uses_the_provenance_inputs():
-    forecast = pd.DataFrame({"date": DATES, "forecast": [11.0, 19.0]})
-    good = [RunInput("Q1", "x.parquet", PIN, SQL)]
-    entry = score_run(STRICT, _run(data_transformation_sql=["SELECT 1"]), TRUTH, truth_commit=PIN, truth_as_of="t",
-                      load_predictions=lambda r, b: forecast, load_params=lambda q: {}, inputs=good)
-    assert entry.truth_commit == PIN
-    stale = [RunInput("Q1", "x.parquet", "cd" * 32, SQL)]
-    with pytest.raises(NotScorable, match="pinned to"):
-        score_run(STRICT, _run(), TRUTH, truth_commit=PIN, truth_as_of="t",
-                  load_predictions=lambda r, b: forecast, load_params=lambda q: {}, inputs=stale)
-
-
-def test_candidates_for_a_strict_benchmark_check_provenance_only_where_needed():
-    runs = [_run("Q10"), _run("Q11"), _run("Q12", status="failed"), _run("Q13"), _run("Q14")]
-    calls = []
-
-    def inputs_for(qid):
-        calls.append(qid)
-        if qid == "Q11":
-            return [RunInput("Q1", "x.parquet", "cd" * 32, SQL)]
-        if qid == "Q10":
-            return [RunInput("Q1", "x.parquet", PIN, SQL)]
-        raise RuntimeError("DOIP down")
-
-    result = {c["qid"]: c["reason"] for c in candidate_runs(STRICT, runs, {"Q13"}, load_inputs=inputs_for)}
-    assert result["Q10"] is None
-    assert "pinned to" in result["Q11"]
-    assert "failed" in result["Q12"]
-    assert result["Q13"] == "already on this leaderboard"
-    assert "provenance could not be read" in result["Q14"]
-    assert sorted(calls) == ["Q10", "Q11", "Q14"]                       # not for failed or already-added runs
 
 
 def test_unreadable_predictions_are_cannot_be_scored():
@@ -134,7 +89,7 @@ def test_unreadable_predictions_are_cannot_be_scored():
 
     with pytest.raises(NotScorable, match="no column"):
         score_run(BENCH, _run(), TRUTH, truth_commit=COMMIT, truth_as_of="", load_predictions=boom,
-                  load_params=lambda qid: {})
+                  load_params=lambda qid: {}, manifest=MANIFEST)
 
 
 def test_candidates_carry_tag_history_and_parameters_where_they_are_cheap_to_know():
@@ -147,10 +102,9 @@ def test_candidates_carry_tag_history_and_parameters_where_they_are_cheap_to_kno
             raise RuntimeError("DOIP down")
         return {"history_length": 91}
 
-    result = {c["qid"]: c for c in candidate_runs(BENCH, runs, {"Q13"}, load_params=params)}
+    result = {c["qid"]: c for c in candidate_runs(runs, {"Q13"}, MANIFEST, load_params=params)}
     assert result["Q10"]["docker_tag"] == "v2" and result["Q10"]["params"] == {"history_length": 91}
-    assert result["Q10"]["history_end"] is not None                          # parsed from the run's SQL
+    assert result["Q10"]["history_end"] == date(2021, 12, 31)                # from the manifest
     assert result["Q14"]["params"] == {}                                     # a failing loader gives no parameters
     assert result["Q11"]["params"] is None and result["Q13"]["params"] is None
     assert sorted(asked) == ["Q10", "Q14"]                                   # only for runs that can be added
-
