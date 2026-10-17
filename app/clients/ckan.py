@@ -106,6 +106,7 @@ def list_model_runs() -> list[dict]:
             "status":              extras.get("status", ""),
             "run_timestamp":       extras.get("run_timestamp", ""),
             "computation_time":    extras.get("computation_time", ""),
+            "started_by":          extras.get("started_by", ""),
             "input_files":             input_files,
             "output_files":            output_files,
             "predictions_resource_id": predictions_resource_id,

@@ -1,5 +1,7 @@
 """Passwords, personal tokens, rights and the login endpoints (no database)."""
 
+import json
+
 import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
@@ -82,3 +84,31 @@ def test_login_issues_a_personal_token():
     status = client.get("/auth/status", headers={"Authorization": f"Bearer {ok.json()['token']}"}).json()
     assert status["email"] == "ada@example.org" and status["rights"] == ["benchmarks"]
     assert client.get("/auth/status").status_code == 401
+
+
+def test_the_pseudonym_carries_only_the_id_never_name_or_email():
+    assert users.pseudonym(ADA) == "episerve_user_1" and users.pseudonym(18) == "episerve_user_18"
+    for text in (ADA.name, ADA.email):
+        assert text not in users.pseudonym(ADA)
+
+
+def test_the_prefect_run_carries_the_starter_pseudonym_only_when_there_is_one(monkeypatch):
+    from app.clients import prefect as prefect_client
+    sent = []
+
+    class Response:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": "abc", "state": {"type": "SCHEDULED"}}
+
+    monkeypatch.setattr(prefect_client, "_deployment_id", lambda name: "dep")
+    monkeypatch.setattr(prefect_client, "_headers", lambda: {})
+    monkeypatch.setattr(prefect_client.settings, "prefect_api_url", "http://prefect")
+    monkeypatch.setattr(prefect_client.httpx, "post", lambda url, headers, content: sent.append(json.loads(content)) or Response())
+    prefect_client.trigger_model_run([["u", "f"]], "image", "{}", started_by="episerve_user_18")
+    prefect_client.trigger_model_run([["u", "f"]], "image", "{}")
+    assert sent[0]["parameters"]["started_by"] == "episerve_user_18"
+    assert "started_by" not in sent[1]["parameters"]
+

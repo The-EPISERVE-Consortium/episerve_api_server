@@ -38,6 +38,13 @@ class User:
         return right is None or "admin" in self.rights or right in self.rights
 
 
+def pseudonym(user: "User | int") -> str:
+    """The name under which a user appears in public metadata (run provenance, CKAN): ``episerve_user_<id>``.
+    The id is the user's id in this system's table, which only an administrator can resolve; neither the name
+    nor the email ever leaves the system this way."""
+    return f"episerve_user_{user if isinstance(user, int) else user.id}"
+
+
 def hash_password(password: str) -> str:
     salt = secrets.token_bytes(16)
     digest = hashlib.scrypt(password.encode(), salt=salt, **_SCRYPT)

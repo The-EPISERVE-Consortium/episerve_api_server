@@ -25,8 +25,12 @@ def trigger_model_run(
     config_json: str,
     data_transformation_sql: list = None,
     model_tag: str = "latest",
+    started_by: str | None = None,
 ) -> dict:
-    """Create a Prefect flow run for the model-runner deployment."""
+    """Create a Prefect flow run for the model-runner deployment.
+
+    ``started_by`` is the pseudonym of the user (``users.pseudonym``); the runner records it in the run's provenance.
+    """
     deployment_id = _deployment_id(settings.prefect_model_runner_deployment)
     url = f"{settings.prefect_api_url}/deployments/{deployment_id}/create_flow_run"
     payload = {
@@ -38,6 +42,8 @@ def trigger_model_run(
             "data_transformation_sql": data_transformation_sql,
         }
     }
+    if started_by:
+        payload["parameters"]["started_by"] = started_by
     response = httpx.post(url, headers=_headers(), content=json.dumps(payload))
     response.raise_for_status()
     data = response.json()

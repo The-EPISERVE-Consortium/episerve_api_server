@@ -41,6 +41,7 @@ class ModelRunResponse(BaseModel):
 
 
 class ModelRunStatus(BaseModel):
+    started_by: str = ""  # pseudonym ``episerve_user_<id>`` of who started the run (empty for older runs)
     run_id: str
     qid: str
     model_name: str

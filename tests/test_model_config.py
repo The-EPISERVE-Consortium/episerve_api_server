@@ -65,6 +65,7 @@ def test_valid_run_is_triggered(monkeypatch, triggered):
     resp = client.post("/model-runs", json=BODY, headers=AUTH)
     assert resp.status_code == 202
     assert len(triggered) == 1
+    assert triggered[0]["started_by"] == "episerve_user_1"      # the pseudonym of the logged-in user, nothing else
 
 
 def test_unknown_model_is_not_blocked(monkeypatch, triggered):

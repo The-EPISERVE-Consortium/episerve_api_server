@@ -14,6 +14,14 @@ def test_list_model_runs_exposes_predictions_resource_id(monkeypatch):
     monkeypatch.setattr(ckan, "_get", lambda action, params: {"results": [package]})
     run = ckan.list_model_runs()[0]
     assert run["predictions_resource_id"] == "pred-1"
+    assert run["started_by"] == ""                                           # older runs have none
+
+
+def test_list_model_runs_exposes_who_started_the_run(monkeypatch):
+    package = {"extras": [{"key": "qid", "value": "Q1"}, {"key": "started_by", "value": "episerve_user_18"}],
+               "resources": []}
+    monkeypatch.setattr(ckan, "_get", lambda action, params: {"results": [package]})
+    assert ckan.list_model_runs()[0]["started_by"] == "episerve_user_18"
 
 
 def test_get_datastore_records_paginates_and_strips_ids(monkeypatch):
