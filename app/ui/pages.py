@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse
 from nicegui import context, ui, run, app as _napp
 from starlette.requests import Request
 
-from app import users
+from app import password_reset, users
 from app.benchmarks import actions as bactions
 from app.benchmarks.errors import NotFound as BenchmarkNotFound
 from app.benchmarks.workflow import apply_benchmark, clear_benchmark, overlay_config, workflow_problems
@@ -261,6 +261,31 @@ def _tv2_footer():
         ui.label("All runs are logged and reproducible.").classes("text-xs text-gray-400")
 
 
+def _login_styles():
+    ui.add_head_html('''<style>
+        body { margin: 0; }
+        .login-bg {
+            min-height: 100vh; width: 100%;
+            background: url("https://episerve.zib.de/img/hero.png") center/cover no-repeat;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .login-card {
+            background: rgba(20, 24, 33, 0.82);
+            backdrop-filter: blur(6px);
+            border-radius: 12px;
+            padding: 48px 40px 40px;
+            width: 100%; max-width: 400px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+            display: flex; flex-direction: column; gap: 0;
+        }
+        .login-card .q-field__control { background: #f3f4f6 !important; border-radius: 6px; }
+        .login-card .q-field__native, .login-card .q-field__prefix { color: #111 !important; }
+        .login-card .q-field--outlined .q-field__control:before { border: none !important; }
+        .login-btn { background: #29abe2 !important; color: #fff !important; font-weight: 700;
+                     letter-spacing: .08em; height: 44px; font-size: 15px; border-radius: 6px; }
+    </style>''')
+
+
 # ─── Page registrations ────────────────────────────────────────────────────────
 
 def register_pages():
@@ -271,28 +296,7 @@ def register_pages():
             ui.navigate.to("/ui")
             return
 
-        ui.add_head_html('''<style>
-            body { margin: 0; }
-            .login-bg {
-                min-height: 100vh; width: 100%;
-                background: url("https://episerve.zib.de/img/hero.png") center/cover no-repeat;
-                display: flex; align-items: center; justify-content: center;
-            }
-            .login-card {
-                background: rgba(20, 24, 33, 0.82);
-                backdrop-filter: blur(6px);
-                border-radius: 12px;
-                padding: 48px 40px 40px;
-                width: 100%; max-width: 400px;
-                box-shadow: 0 8px 32px rgba(0,0,0,0.45);
-                display: flex; flex-direction: column; gap: 0;
-            }
-            .login-card .q-field__control { background: #f3f4f6 !important; border-radius: 6px; }
-            .login-card .q-field__native, .login-card .q-field__prefix { color: #111 !important; }
-            .login-card .q-field--outlined .q-field__control:before { border: none !important; }
-            .login-btn { background: #29abe2 !important; color: #fff !important; font-weight: 700;
-                         letter-spacing: .08em; height: 44px; font-size: 15px; border-radius: 6px; }
-        </style>''')
+        _login_styles()
 
         def do_login():
             user = users.authenticate(email_inp.value or "", password_inp.value or "")
@@ -309,6 +313,54 @@ def register_pages():
                 password_inp = ui.input("Password").props('outlined dense type=password prefix-icon="lock"').classes("w-full mb-2")
                 error = ui.label("").classes("text-red-400 text-sm mb-1").style("min-height:1.25rem")
                 ui.button("LOGIN", on_click=do_login).classes("w-full login-btn mt-3")
+                ui.link("Forgot your password?", "/forgot-password").classes("text-sm text-gray-300 text-center mt-4")
+        _footer()
+
+    @ui.page("/forgot-password")
+    def forgot_password_page():
+        _login_styles()
+
+        async def send():
+            email = email_inp.value or ""
+            await run.io_bound(password_reset.request_reset, email)
+            message.set_text("If this email belongs to an account, a mail with a reset link is on its way.")
+            send_btn.disable()
+
+        with ui.element("div").classes("login-bg"):
+            with ui.element("div").classes("login-card"):
+                ui.label("EPISERVE").classes("text-2xl font-bold text-white text-center w-full mb-4").style("display:block")
+                ui.label("Enter your email address and we send you a link to choose a new password.").classes(
+                    "text-sm text-gray-300 mb-4")
+                email_inp = ui.input("Email").props('outlined dense prefix-icon="mail"').classes("w-full mb-2")
+                message = ui.label("").classes("text-green-300 text-sm mb-1").style("min-height:1.25rem")
+                send_btn = ui.button("SEND LINK", on_click=send).classes("w-full login-btn mt-3")
+                ui.link("Back to login", "/login").classes("text-sm text-gray-300 text-center mt-4")
+        _footer()
+
+    @ui.page("/reset-password")
+    def reset_password_page(token: str = ""):
+        _login_styles()
+
+        async def save():
+            if (password_inp.value or "") != (repeat_inp.value or ""):
+                error.set_text("The two passwords differ.")
+                return
+            problem = await run.io_bound(password_reset.complete_reset, token, password_inp.value or "")
+            if problem:
+                error.set_text(problem)
+                return
+            ui.notify("Password changed. Please log in.", type="positive")
+            ui.navigate.to("/login")
+
+        with ui.element("div").classes("login-bg"):
+            with ui.element("div").classes("login-card"):
+                ui.label("EPISERVE").classes("text-2xl font-bold text-white text-center w-full mb-4").style("display:block")
+                ui.label("Choose a new password.").classes("text-sm text-gray-300 mb-4")
+                password_inp = ui.input("New password").props('outlined dense type=password prefix-icon="lock"').classes("w-full mb-4")
+                repeat_inp = ui.input("Repeat password").props('outlined dense type=password prefix-icon="lock"').classes("w-full mb-2")
+                error = ui.label("").classes("text-red-400 text-sm mb-1").style("min-height:1.25rem")
+                ui.button("SAVE PASSWORD", on_click=save).classes("w-full login-btn mt-3")
+                ui.link("Back to login", "/login").classes("text-sm text-gray-300 text-center mt-4")
         _footer()
 
     @ui.page("/ui")

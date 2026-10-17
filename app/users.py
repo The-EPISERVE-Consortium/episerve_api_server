@@ -178,6 +178,35 @@ def verify_token(token: str | None) -> User | None:
     return user
 
 
+# --- password reset ---
+
+RESET_VALID_SECONDS = 3600
+
+
+def _reset_signature(user_id: int, expires: int, password_hash: str) -> str:
+    message = f"reset|{user_id}|{expires}|{password_hash}".encode()
+    return hmac.new(settings.auth_master_secret.encode(), message, hashlib.sha256).hexdigest()
+
+
+def issue_reset_token(user: User) -> str:
+    """A link token valid for an hour; it dies with the first password change (the signature covers the hash)."""
+    expires = int(datetime.now(timezone.utc).timestamp()) + RESET_VALID_SECONDS
+    return f"r.{user.id}.{expires}.{_reset_signature(user.id, expires, user.password_hash)}"
+
+
+def verify_reset_token(token: str | None) -> User | None:
+    try:
+        kind, user_id, expires, signature = (token or "").split(".")
+        if kind != "r" or int(expires) < datetime.now(timezone.utc).timestamp():
+            return None
+        user = get_by_id(int(user_id))
+    except ValueError:
+        return None
+    if user is None or not hmac.compare_digest(signature, _reset_signature(user.id, int(expires), user.password_hash)):
+        return None
+    return user
+
+
 # --- command line ---
 
 def _main(argv: list[str]) -> int:

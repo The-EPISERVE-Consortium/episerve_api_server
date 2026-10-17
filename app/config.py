@@ -54,6 +54,9 @@ class Settings:
     agentmail_inbox: str = os.environ.get("AGENTMAIL_INBOX", "")
     agentmail_url: str = os.environ.get("AGENTMAIL_URL") or "https://api.agentmail.to"
 
+    # Public base URL of this server, used for links in mails
+    public_url: str = (os.environ.get("PUBLIC_URL") or "https://api.episerve.zib.de").rstrip("/")
+
     # Server
     port: int = int(os.environ.get("PORT", "8000"))
 

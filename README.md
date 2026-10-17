@@ -168,3 +168,4 @@ All configuration via environment variables. In K8s these come from sealed secre
 - **WebSocket**: requires the `shared-gateway-websocket` HTTPListenerPolicy (already applied via `episerve-k8s`).
 
 - **Mail**: `app/mailer.py` (`send_mail(to, subject, text)`) sends through AgentMail (`AGENTMAIL_API_KEY`, `AGENTMAIL_INBOX` = the sending inbox address, from the optional secret `agentmail-credentials`, keys `api-key` and `inbox`). Without them nothing is sent and the call returns False. Check with `python -m app.mailer <to> <subject> <text>` in the pod.
+- **Password reset**: `/login` links to `/forgot-password` (email -> a mail with a one-hour link, always the same answer, one mail per address and minute) and `/reset-password?token=…` (new password, at least 10 characters). The link is signed with the password hash, so it works once. Links use `PUBLIC_URL` (default `https://api.episerve.zib.de`).
