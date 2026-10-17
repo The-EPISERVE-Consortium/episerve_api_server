@@ -331,14 +331,14 @@ def test_unexpected_write_errors_are_generic_and_logged(monkeypatch, caplog):
 # --- tabs: Overview | Data | Evaluation | Leaderboard -------------------------------------------------------------
 
 
-def test_data_tab_has_the_files_the_sources_the_steps_and_the_evaluation_criteria(monkeypatch):
+def test_data_tab_has_the_files_the_sources_and_the_steps_and_the_criteria_close_the_leaderboard_tab(monkeypatch):
     def grab(out, client, find, drain):
         out["tables"] = {t.props.get("row-key"): _panel_of(t) for t in find(ui.table)}
 
     out = _render(monkeypatch, board=_board([_entry()]), after=grab)
     for heading in ("The two data files", "Source datasets", "How the files are generated", "Evaluation criteria"):
         assert heading in out["labels"]
-    assert out["tables"]["metric"] == "data" and "property" not in out["tables"]        # no fact tables
+    assert out["tables"]["metric"] == "leaderboard" and "property" not in out["tables"]      # not on the Data tab        # no fact tables
     assert not any(t in out["labels"] for t in ("Ranking", "Which runs are accepted", "Metrics"))
 
 
@@ -374,7 +374,7 @@ def test_data_tab_describes_layout_sources_and_steps_of_a_benchmark_with_covaria
     steps = [t for t in out["labels"] if t[:2] in ("1.", "2.", "3.", "4.", "5.", "6.")]
     assert len(steps) == 6 and "wetter__temp" in steps[3] and steps[3].startswith("4. Covariate wetter")
     assert "120 rows, 2021-01-06 → 2021-12-29" in " ".join(out["labels"])
-    assert "metric" in dict(out["tables"])                                         # the evaluation criteria stay
+    assert "metric" not in dict(out["tables"])                                     # they are on the Leaderboard tab
 
 
 # --- three tabs: Overview (default), Data and Leaderboard ----------------------------------------------------

@@ -198,7 +198,6 @@ def _data_tab(row: dict, benchmark_id: int) -> None:
     manifest = materialized_from_row(row)
     if manifest:
         _generated_data_sections(row, manifest)
-    _criteria_section()
 
 
 def _criteria_section() -> None:
@@ -292,6 +291,7 @@ def register_leaderboard_page() -> None:
                         ui.switch("Show all runs", value=state["all_runs"], on_change=set_all)
                     view = ui.column().classes("w-full gap-3")
                     candidates_box = ui.column().classes("w-full gap-2 mt-6")
+                    _criteria_section()
 
         @ui.refreshable
         def board_view():
