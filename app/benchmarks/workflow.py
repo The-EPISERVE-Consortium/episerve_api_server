@@ -15,7 +15,7 @@ def apply_benchmark(state: dict, spec: dict, dataset_row: dict, benchmark_row: d
     """
     url, filename = spec["input_data_files"][0]
     qid = spec["dataset_qid"]
-    state["datasets"] = [{**dataset_row, "data_path": url}]
+    state["datasets"] = [{**dataset_row, "data_path": url}]        # a benchmark with covariates: its generated file
     state["sql"] = {qid: spec["data_transformation_sql"][0]}
     state["filenames"] = {qid: filename}
     state["config"] = None
@@ -25,6 +25,8 @@ def apply_benchmark(state: dict, spec: dict, dataset_row: dict, benchmark_row: d
         "test_start": spec["test_start"], "test_end": spec["test_end"],
         "date_column": benchmark_row["date_column"],
         "filters": [list(pair) for pair in filters_from_row(benchmark_row)],
+        # set for a benchmark with covariates: the generated input file, which a run must use as it is
+        "input_uri": url if spec.get("input_columns") else None,
     }
     return state
 
@@ -54,6 +56,12 @@ def workflow_problems(
     if not benchmark:
         return []
     problems = []
+    if benchmark.get("input_uri"):      # a benchmark with covariates: the generated file, no SQL on top of it
+        if (data_path or "") != benchmark["input_uri"]:
+            problems.append("the input is not the benchmark's generated input file")
+        if any(line.strip() and not line.strip().startswith("--") for line in (sql or "").splitlines()):
+            problems.append("the benchmark's input file must be used as it is (no SQL transformation)")
+        return problems
     if f"?version={benchmark['data_commit']}" not in (data_path or ""):
         problems.append(f"the input is not read at the benchmark's data commit {benchmark['data_commit'][:12]}")
     window = parse_history_window(sql or "", date_column)

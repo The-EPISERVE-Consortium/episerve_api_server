@@ -54,3 +54,19 @@ def test_every_filter_of_a_benchmark_with_several_filters_must_be_in_the_sql():
     problems = workflow_problems(b, URL, SQL, "datum", b["filters"])
     assert problems == ["the filter 'age' = '35-59' is missing from the SQL".replace("'age'", "age")]
 
+
+def test_a_benchmark_with_covariates_prefills_its_generated_file_and_allows_no_sql():
+    uri = "lakefs://benchmarks/main/3/input.parquet?version=" + "ee" * 32
+    spec = {**SPEC, "input_data_files": [[uri, "input.parquet"]], "data_transformation_sql": [""],
+            "input_columns": ["datum", "v", "wetter__temp"]}
+    state = apply_benchmark(_state(), spec, DATASET, ROW)
+    assert state["datasets"][0]["data_path"] == uri and state["sql"] == {"Q1": ""}
+    b = state["benchmark"]
+    assert b["input_uri"] == uri
+    assert workflow_problems(b, uri, "", "datum", b["filters"]) == []
+    assert workflow_problems(b, uri, "-- SELECT * FROM df WHERE a = 'b'", "datum", b["filters"]) == []   # a comment is no SQL
+    assert workflow_problems(b, DATASET["data_path"], "", "datum", b["filters"]) == [
+        "the input is not the benchmark's generated input file"]
+    assert workflow_problems(b, uri, "SELECT * FROM df", "datum", b["filters"]) == [
+        "the benchmark's input file must be used as it is (no SQL transformation)"]
+

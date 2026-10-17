@@ -361,6 +361,34 @@ def test_data_tab_has_only_the_data_and_the_evaluation_criteria(monkeypatch):
     assert not any(t in out["labels"] for t in ("Ranking", "Which runs are accepted", "Metrics"))
 
 
+def test_data_tab_of_a_benchmark_with_covariates_links_the_two_generated_files_and_shows_no_sql(monkeypatch):
+    import json
+    manifest = {"repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
+                "input": {"path": "3/input.parquet", "sha256": "a" * 64, "rows": 120, "first_date": "2021-01-06",
+                          "last_date": "2021-12-29", "columns": ["datum", "v", "wetter__temp"]},
+                "reference": {"path": "3/reference.parquet", "sha256": "b" * 64, "rows": 4}}
+    cov = [{"name": "wetter", "dataset_qid": "Q2", "date_column": "day", "columns": ["temp"],
+            "filters": [["city", "Berlin"]], "aggregation": "mean"}]
+    row = {**ROW, "covariates": json.dumps(cov), "materialized": json.dumps(manifest)}
+
+    def grab(out, client, find, drain):
+        out["code"] = [e.content for e in find(ui.code) if _panel_of(e) == "data"]
+        out["links"] = [(e.text, e.props.get("href")) for e in find(ui.link)]
+        out["tables"] = {t.props.get("row-key"): t.rows for t in find(ui.table) if _panel_of(t) == "data"}
+
+    out = _render(monkeypatch, row=row, board=_board([_entry()]), after=grab)
+    assert out["code"] == []                                                       # no SQL: the files are generated
+    assert ("Download the input file (Parquet)", "/benchmarks/3/data/input") in out["links"]
+    assert ("Download the reference file (Parquet)", "/benchmarks/3/data/reference") in out["links"]
+    assert out["tables"]["column"] == [
+        {"column": "datum", "role": "date"}, {"column": "v", "role": "target"},
+        {"column": "wetter__temp", "role": "covariate (wetter)"}]
+    assert out["tables"]["name"][0]["filters"] == "city = Berlin" and out["tables"]["name"][0]["dataset"] == "Q2"
+    assert "metric" in out["tables"]                                               # the evaluation criteria stay
+    for text in ("120 rows, 2021-01-06 → 2021-12-29; SHA-256 aaaaaaaaaaaaaaaa…", "4 rows; SHA-256 bbbbbbbbbbbbbbbb…"):
+        assert text in out["labels"]
+
+
 # --- three tabs: Overview (default), Data and Leaderboard ----------------------------------------------------
 
 

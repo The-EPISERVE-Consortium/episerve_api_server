@@ -8,7 +8,7 @@ from starlette.requests import Request
 
 from app.ui import session
 from app.benchmarks import actions as bactions
-from app.benchmarks.definition import DefinitionError, filters_from_row
+from app.benchmarks.definition import DefinitionError, covariates_from_row, filters_from_row
 from app.clients import ckan as ckan_client
 from app.leaderboard import actions as lboard_actions
 from app.leaderboard.about import description_text
@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 _LOGIN_EXPIRED = "Your login has expired; please log in again."
 MAX_FORM_FILTERS = 5     # only the designer form is limited; the API takes any number
+MAX_FORM_COVARIATES = 6
 _DOMAIN_ERRORS = (DefinitionError, LoadError, bactions.NotFound, bactions.NotDraft, bactions.Conflict,
                   bactions.Forbidden)
 
@@ -139,6 +140,70 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
                                    ).props("flat no-caps dense").classes("self-start")
         for column, value in filters_from_row(row):
             add_filter(column, value)
+        ui.label("Covariates (optional): further datasets whose columns are added to the model input, aligned to the "
+                 "target series").classes("text-sm text-gray-600 mt-2")
+        covariate_box = ui.column().classes("w-full gap-2")
+        covariate_blocks: list = []      # dicts with the inputs of one covariate
+
+        def update_covariate_button():
+            add_covariate_btn.set_enabled(len(covariate_blocks) < MAX_FORM_COVARIATES)
+
+        def add_covariate(source=None):
+            block = {"filters": []}
+            with covariate_box:
+                with ui.column().classes("w-full gap-1 border border-gray-200 rounded-lg p-3") as card:
+                    with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                        block["name"] = text_input("Covariate name", source.name if source else "")
+                        block["dataset"] = ui.select(
+                            options, label="Covariate dataset", on_change=invalidate,
+                            value=source.dataset_qid if source else None).props("outlined dense").classes("w-full")
+
+                        def remove_covariate(_=None, block=block, card=card):
+                            covariate_blocks.remove(block)
+                            covariate_box.remove(card)
+                            update_covariate_button()
+                            invalidate()
+
+                        ui.button(icon="delete", on_click=remove_covariate).props(
+                            "flat round dense aria-label='Remove covariate'")
+                    with ui.row().classes("w-full items-center gap-2 no-wrap"):
+                        block["date"] = text_input("Covariate date column", source.date_column if source else "")
+                        block["columns"] = text_input("Covariate columns (comma separated)",
+                                                      ", ".join(source.columns) if source else "")
+                        block["aggregation"] = ui.select(
+                            ["mean", "sum", "last"], label="Per time step", on_change=invalidate,
+                            value=source.aggregation if source else "mean").props("outlined dense").classes("w-40")
+                    block["filter_box"] = ui.column().classes("w-full gap-1")
+
+                    def add_cov_filter(column="", value="", block=block):
+                        with block["filter_box"]:
+                            with ui.row().classes("w-full items-center gap-2 no-wrap") as line:
+                                entry = (text_input("Covariate filter column", column),
+                                         text_input("Covariate filter value", value), line)
+
+                                def remove_cov_filter(_=None, entry=entry, block=block):
+                                    block["filters"].remove(entry)
+                                    block["filter_box"].remove(entry[2])
+                                    block["add_filter"].set_enabled(len(block["filters"]) < MAX_FORM_FILTERS)
+                                    invalidate()
+
+                                ui.button(icon="close", on_click=remove_cov_filter).props(
+                                    "flat round dense aria-label='Remove covariate filter'")
+                        block["filters"].append(entry)
+                        block["add_filter"].set_enabled(len(block["filters"]) < MAX_FORM_FILTERS)
+
+                    block["add_filter"] = ui.button(
+                        "Add covariate filter", icon="add", on_click=lambda _=None: (add_cov_filter(), invalidate())
+                    ).props("flat no-caps dense").classes("self-start")
+                    for column, value in (source.filters if source else ()):
+                        add_cov_filter(column, value)
+            covariate_blocks.append(block)
+            update_covariate_button()
+
+        add_covariate_btn = ui.button("Add covariate", icon="add", on_click=lambda: (add_covariate(), invalidate())
+                                      ).props("flat no-caps dense").classes("self-start")
+        for source in covariates_from_row(row):
+            add_covariate(source)
         h_start = text_input("History start (optional)", _fmt(row.get("history_start")), placeholder="YYYY-MM-DD")
         h_end = text_input("History end (blank = last date before C)", _fmt(row.get("history_end")),
                            placeholder="YYYY-MM-DD")
@@ -165,6 +230,13 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
                 test_end=_parse_date(t_end.value, "test end", required=True),
                 filters=tuple(((c.value or "").strip(), v.value or "") for c, v, _ in filter_inputs
                               if (c.value or "").strip() or (v.value or "")),
+                covariates=[
+                    {"name": (b["name"].value or "").strip(), "dataset_qid": b["dataset"].value or "",
+                     "date_column": (b["date"].value or "").strip(), "columns": b["columns"].value or "",
+                     "aggregation": b["aggregation"].value or "mean",
+                     "filters": [((c.value or "").strip(), v.value or "") for c, v, _ in b["filters"]
+                                 if (c.value or "").strip() or (v.value or "")]}
+                    for b in covariate_blocks],
                 history_start=_parse_date(h_start.value, "history start", required=False),
                 history_end=_parse_date(h_end.value, "history end", required=False),
                 input_filename=(filename.value or "").strip() or "input.parquet",
@@ -233,6 +305,13 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
                         ui.label(warning).classes("text-orange-600 text-sm")
                     if report.ok:
                         ui.label(f"Data commit: {report.data_commit}").classes("text-sm")
+                        if report.columns:
+                            ui.label(f"Generated model input: {report.input_rows} rows, {len(report.columns)} columns"
+                                     ).classes("text-sm")
+                            for column in report.columns:
+                                share = (report.missing or {}).get(column)
+                                ui.label(f"{column}" + (f" ({share:.0%} empty)" if share else "")).classes(
+                                    "text-xs text-gray-600 pl-3")
                         ui.label(f"Observations in the test window: {report.truth_points}").classes("text-sm")
                         ui.label(f"History ends: {report.history_end}").classes("text-sm")
                         ui.label(

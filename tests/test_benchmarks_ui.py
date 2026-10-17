@@ -117,7 +117,7 @@ def test_designer_saves_a_new_draft_with_parsed_fields(monkeypatch):
     assert created == [dict(
         name="Flu", description=None, dataset_qid="Q1", target_column="v", date_column="datum",
         test_start=date(2022, 1, 1), test_end=date(2022, 1, 31), filters=(),
-        history_start=date(2021, 6, 1), history_end=None, input_filename="input.parquet", created_by=1)]   # the logged-in user
+        history_start=date(2021, 6, 1), history_end=None, input_filename="input.parquet", covariates=[], created_by=1)]   # the logged-in user
 
 
 def test_designer_rejects_bad_dates_without_calling_the_action(monkeypatch):
@@ -410,4 +410,79 @@ def test_designer_removes_a_filter_row_and_shows_the_stored_filters_of_a_draft(m
     out = _render(monkeypatch, drafts=(draft,), logged_in=True, after=scenario)
     assert out["stored"] == [("region", "DE"), ("age", "35-59"), ("sex", "f")]
     assert out["left"] == [("region", "DE"), ("sex", "f")] and out["add_enabled"] is True
+
+
+def _by_label(find, label):
+    return [e for e in find(ui.input) if e.props.get("label") == label]
+
+
+def test_designer_adds_a_covariate_with_its_own_filters_and_saves_it(monkeypatch):
+    created = []
+    monkeypatch.setattr(benchmarks_page.bactions, "create_draft", lambda **kw: created.append(kw) or 9)
+
+    async def scenario(out, client, find, drain):
+        _datasets(monkeypatch)
+        await click(button(find, "New benchmark"), client)
+        await click(button(find, "Add covariate"), client)
+        _by_label(find, "Covariate name")[0].value = "wetter"
+        next(e for e in find(ui.select) if e.props.get("label") == "Covariate dataset").value = "Q1"
+        _by_label(find, "Covariate date column")[0].value = "day"
+        _by_label(find, "Covariate columns (comma separated)")[0].value = "temp, rain"
+        next(e for e in find(ui.select) if e.props.get("label") == "Per time step").value = "sum"
+        await click(button(find, "Add covariate filter"), client)
+        _by_label(find, "Covariate filter column")[0].value = "city"
+        _by_label(find, "Covariate filter value")[0].value = "Berlin"
+        _fill(find)
+        await click(button(find, "Save"), client)
+        await drain()
+
+    _render(monkeypatch, logged_in=True, after=scenario)
+    assert created[0]["covariates"] == [{
+        "name": "wetter", "dataset_qid": "Q1", "date_column": "day", "columns": "temp, rain", "aggregation": "sum",
+        "filters": [("city", "Berlin")]}]
+
+
+def test_designer_shows_removes_and_limits_the_covariates_of_a_draft(monkeypatch):
+    import json
+    cov = [{"name": "wetter", "dataset_qid": "Q1", "date_column": "day", "columns": ["temp"], "aggregation": "last",
+            "filters": [["city", "Berlin"]]},
+           {"name": "mobil", "dataset_qid": "Q1", "date_column": "d", "columns": ["m1", "m2"], "filters": []}]
+    draft = {**DRAFT, "covariates": json.dumps(cov)}
+
+    async def scenario(out, client, find, drain):
+        _datasets(monkeypatch)
+        await click(button(find, "Edit"), client)
+        out["stored"] = [(n.value, c.value) for n, c in zip(_by_label(find, "Covariate name"),
+                                                            _by_label(find, "Covariate columns (comma separated)"))]
+        out["filter"] = (_by_label(find, "Covariate filter column")[0].value, _by_label(find, "Covariate filter value")[0].value)
+        for _ in range(benchmarks_page.MAX_FORM_COVARIATES):
+            if button(find, "Add covariate").enabled:
+                await click(button(find, "Add covariate"), client)
+        out["count"] = len(_by_label(find, "Covariate name"))
+        out["enabled"] = button(find, "Add covariate").enabled
+        removers = [b for b in find(ui.button) if b.props.get("aria-label") == "Remove covariate"]
+        await click(removers[0], client)
+        out["after"] = [n.value for n in _by_label(find, "Covariate name")][:1]
+
+    out = _render(monkeypatch, drafts=(draft,), logged_in=True, after=scenario)
+    assert out["stored"] == [("wetter", "temp"), ("mobil", "m1, m2")] and out["filter"] == ("city", "Berlin")
+    assert out["count"] == benchmarks_page.MAX_FORM_COVARIATES and out["enabled"] is False
+    assert out["after"] == ["mobil"]                                                  # the first block is gone
+
+
+def test_the_check_lists_the_columns_of_the_generated_input(monkeypatch):
+    report = _report()
+    report.columns, report.missing, report.input_rows = ["datum", "v", "wetter__temp"], {"wetter__temp": 0.25}, 120
+    monkeypatch.setattr(benchmarks_page.bactions, "check", lambda i: report)
+
+    async def scenario(out, client, find, drain):
+        _datasets(monkeypatch)
+        await click(button(find, "Edit"), client)
+        await click(button(find, "Check against data"), client)
+        await drain()
+        out["labels"] = labels(find)
+
+    out = _render(monkeypatch, logged_in=True, after=scenario)
+    assert "Generated model input: 120 rows, 3 columns" in out["labels"]
+    assert "wetter__temp (25% empty)" in out["labels"] and "datum" in out["labels"]
 

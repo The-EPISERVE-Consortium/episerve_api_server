@@ -9,7 +9,7 @@ from starlette.requests import Request
 from app.ui import session
 from app.benchmarks import actions as bactions
 from app.leaderboard import actions
-from app.benchmarks.definition import evaluation_sql
+from app.benchmarks.definition import covariates_from_row, evaluation_sql, materialized_from_row
 from app.benchmarks.store import benchmark_from_row
 from app.leaderboard.about import COLUMN_HELP, METRIC_DOCS, description_text, overview_facts
 from app.leaderboard.loaders import LoadError
@@ -148,8 +148,56 @@ def _overview_tab(row: dict) -> None:
         "body-cell-caption", '''<q-td :props="props" class="text-gray-500" style="width: 11rem">{{ props.value }}</q-td>''')
 
 
+def _generated_data_sections(row: dict, manifest: dict, benchmark_id: int) -> None:
+    """Training and evaluation data of a benchmark with covariates: two generated files, no SQL."""
+    sources = covariates_from_row(row)
+    inp, ref = manifest["input"], manifest["reference"]
+    ui.label("Training data").classes("text-xl font-semibold text-gray-900")
+    ui.label("One file, generated once from the sources below when the benchmark was finalized. "
+             "A model run reads exactly this file, as it is.").classes("text-sm text-gray-600")
+    ui.link("Download the input file (Parquet)", f"/benchmarks/{benchmark_id}/data/input").classes("text-sm")
+    ui.label(f"{inp['rows']} rows, {inp.get('first_date', '?')} → {inp.get('last_date', '?')}; "
+             f"SHA-256 {inp['sha256'][:16]}…").classes("text-xs text-gray-500")
+    owner = {name: covariate.name for covariate in sources for name in covariate.output_columns()}
+    ui.table(
+        columns=[{"name": "column", "label": "Column", "field": "column", "align": "left"},
+                 {"name": "role", "label": "Role", "field": "role", "align": "left"}],
+        rows=[{"column": name, "role": "date" if name == row["date_column"] else "target" if name == row["target_column"]
+               else f"covariate ({owner.get(name, '?')})"} for name in inp["columns"]],
+        row_key="column",
+    ).props("dense flat bordered").classes("w-full max-w-xl")
+    if sources:
+        ui.label("Sources").classes("text-sm font-semibold text-gray-800 mt-2")
+        ui.table(
+            columns=[{"name": "name", "label": "Name", "field": "name", "align": "left"},
+                     {"name": "dataset", "label": "Dataset", "field": "dataset", "align": "left"},
+                     {"name": "columns", "label": "Columns", "field": "columns", "align": "left",
+                      "style": "white-space: normal"},
+                     {"name": "filters", "label": "Filters", "field": "filters", "align": "left",
+                      "style": "white-space: normal"},
+                     {"name": "aggregation", "label": "Per time step", "field": "aggregation", "align": "left"}],
+            rows=[{"name": c.name, "dataset": c.dataset_qid, "columns": ", ".join(c.columns),
+                   "filters": ", ".join(f"{col} = {val}" for col, val in c.filters) or "none",
+                   "aggregation": c.aggregation} for c in sources],
+            row_key="name",
+        ).props("dense flat bordered").classes("w-full max-w-4xl")
+        ui.label("The target series sets the time steps; the rows of a source between two steps are combined "
+                 "(mean, sum or last value) into the later one. Empty stays empty, nothing is filled in.").classes(
+            "text-xs text-gray-500")
+    ui.label("Evaluation data").classes("text-xl font-semibold text-gray-900 mt-4")
+    ui.label("Forecasts are scored against this file (date and target value only); it is never given to a model."
+             ).classes("text-sm text-gray-600")
+    ui.link("Download the reference file (Parquet)", f"/benchmarks/{benchmark_id}/data/reference").classes("text-sm")
+    ui.label(f"{ref['rows']} rows; SHA-256 {ref['sha256'][:16]}…").classes("text-xs text-gray-500")
+
+
 def _data_tab(row: dict, benchmark_id: int) -> None:
     ui.add_css(".nicegui-code pre, .nicegui-code code { white-space: pre-wrap !important; word-break: break-word; }")
+    manifest = materialized_from_row(row)
+    if manifest:
+        _generated_data_sections(row, manifest, benchmark_id)
+        _criteria_section()
+        return
     ui.label("Training data").classes("text-xl font-semibold text-gray-900")
     try:
         spec = bactions.run_spec(benchmark_id)
@@ -168,6 +216,10 @@ def _data_tab(row: dict, benchmark_id: int) -> None:
     ui.label("Apply this SQL to the same file; forecasts are scored against the result.").classes(
         "text-sm text-gray-600")
     ui.code(evaluation_sql(benchmark_from_row(row)), language="sql").classes("w-full max-w-4xl")
+    _criteria_section()
+
+
+def _criteria_section() -> None:
     ui.label("Evaluation criteria").classes("text-xl font-semibold text-gray-900 mt-4")
     ui.table(
         columns=[{"name": "metric", "label": "Metric", "field": "metric", "align": "left"},
