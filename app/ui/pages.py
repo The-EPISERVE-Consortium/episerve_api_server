@@ -55,9 +55,15 @@ def _header(current: str = "", api: str | None = None, method: str = "GET"):
                     ("text-blue-700 border-b-2 border-blue-700 pb-0.5" if active else "text-gray-600 hover:text-blue-700")
                 )
 
-            # Token dialog
-            with ui.dialog() as token_dialog, ui.card().classes("w-full max-w-lg p-6"):
-                ui.label("Current Token").classes("text-base font-semibold text-gray-800 mb-3")
+            # User details dialog
+            with ui.dialog() as details_dialog, ui.card().classes("w-full max-w-lg p-6"):
+                ui.label("User Details").classes("text-base font-semibold text-gray-800 mb-3")
+                detail_labels = {}
+                for key, title in (("name", "Name"), ("email", "Email"), ("rights", "Rights")):
+                    with ui.row().classes("items-baseline gap-2 w-full"):
+                        ui.label(title).classes("text-xs uppercase tracking-wide text-gray-500 w-16")
+                        detail_labels[key] = ui.label("").classes("text-sm text-gray-800")
+                ui.label("Token").classes("text-xs uppercase tracking-wide text-gray-500 mt-3")
                 with ui.row().classes("items-center gap-2 w-full"):
                     token_label = ui.label("").classes(
                         "font-mono text-sm bg-gray-100 rounded px-3 py-2 break-all flex-1"
@@ -66,21 +72,21 @@ def _header(current: str = "", api: str | None = None, method: str = "GET"):
                         ui.run_javascript(f"navigator.clipboard.writeText({repr(_napp.storage.user.get('token', ''))})")
                         ui.notify("Copied to clipboard", position="top", type="positive")
                     ui.button(icon="content_copy", on_click=_copy_token).props("flat round dense").classes("text-gray-500")
-                ui.button("Close", on_click=token_dialog.close).classes("mt-4 self-end").props("flat")
+                ui.button("Close", on_click=details_dialog.close).classes("mt-4 self-end").props("flat")
 
-            def _open_token_dialog():
+            def _open_details_dialog():
+                user = session.current_user()
+                detail_labels["name"].set_text(user.name if user else "")
+                detail_labels["email"].set_text(user.email if user else "")
+                detail_labels["rights"].set_text(", ".join(sorted(user.rights)) if user and user.rights else "none")
                 token_label.set_text(_napp.storage.user.get("token", ""))
-                token_dialog.open()
+                details_dialog.open()
 
             # Avatar button + dropdown menu
             with ui.element("div").classes("relative"):
                 with ui.button(icon="account_circle").props("flat round").classes("text-gray-600 hover:text-blue-700"):
                     with ui.menu().classes("mt-1"):
-                        user = session.current_user()
-                        if user:
-                            ui.menu_item(f"{user.name} ({user.email})").props("disable")
-                            ui.separator()
-                        ui.menu_item("Show current token", on_click=_open_token_dialog)
+                        ui.menu_item("User Details", on_click=_open_details_dialog)
                         ui.separator()
                         ui.menu_item("Logout", on_click=lambda: (
                             _napp.storage.user.clear(),
