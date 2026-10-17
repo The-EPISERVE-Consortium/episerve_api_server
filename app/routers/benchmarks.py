@@ -137,7 +137,7 @@ def get_leaderboard(
     entries = [
         BenchmarkEntryOut(
             rank=i, entry_id=e.entry_id, run_qid=e.run_qid, model_name=e.model_name, docker_tag=e.docker_tag,
-            params=e.params, history_start=e.history_start.isoformat() if e.history_start else None,
+            params=e.params, used_columns=e.used_columns, history_start=e.history_start.isoformat() if e.history_start else None,
             history_end=e.history_end.isoformat(), run_timestamp=e.run_timestamp, n_scored=e.n_scored,
             n_expected=e.n_expected, metrics=e.metrics, points=e.points, truth_commit=e.truth_commit,
             truth_as_of=e.truth_as_of, scored_at=e.scored_at,

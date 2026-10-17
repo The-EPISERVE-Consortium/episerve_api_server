@@ -33,7 +33,7 @@ def test_overlay_config_only_touches_declared_parameters():
     assert overlay_config({"a": 1}, None, {"prediction_length"}) == {"a": 1}
 
 
-def test_the_generated_file_must_be_used_as_it_is():
+def test_the_generated_file_must_be_the_input_but_an_sql_selection_on_it_is_fine():
     uri = "https://doip.example/doip/retrieve/Q1791000000001/input.parquet?version=" + "ee" * 32
     spec = {**SPEC, "input_data_files": [[uri, "input.parquet"]]}
     state = apply_benchmark(_state(), spec, DATASET, ROW)
@@ -44,6 +44,6 @@ def test_the_generated_file_must_be_used_as_it_is():
     assert workflow_problems(b, uri, "-- SELECT * FROM df WHERE a = 'b'") == []   # a comment is no SQL
     assert workflow_problems(b, DATASET["data_path"], "") == [
         "the input is not the benchmark's generated input file"]
-    assert workflow_problems(b, uri, "SELECT * FROM df") == [
-        "the benchmark's input file must be used as it is (no SQL transformation)"]
+    assert workflow_problems(b, uri, 'SELECT "datum", "v" FROM df') == []          # a column selection is allowed
+    assert workflow_problems(b, uri, "SELECT * FROM df WHERE datum >= DATE '2022-01-01'") == []
 

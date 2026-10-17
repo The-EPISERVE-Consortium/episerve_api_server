@@ -57,11 +57,13 @@ def _add_entry_once(benchmark_id: int, entry: Entry) -> int:
                     conn.rollback()
                     raise DuplicateEntry(f"Run {entry.run_qid} is already on this leaderboard.")
                 cur.execute(
-                    "INSERT INTO entries (benchmark_id, run_qid, model_name, docker_tag, run_timestamp, params, "
+                    "INSERT INTO entries (benchmark_id, run_qid, model_name, docker_tag, run_timestamp, params, used_columns, "
                     "history_start, history_end, n_scored, n_expected, mae, rmse, coverage, interval_score, points, "
-                    "truth_as_of, truth_commit) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    "truth_as_of, truth_commit) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                     (benchmark_id, entry.run_qid, entry.model_name, entry.docker_tag, entry.run_timestamp,
-                     json.dumps(entry.params, allow_nan=False), entry.history_start, entry.history_end,
+                     json.dumps(entry.params, allow_nan=False),
+                     None if entry.used_columns is None else json.dumps(entry.used_columns),
+                     entry.history_start, entry.history_end,
                      entry.n_scored, entry.n_expected,
                      entry.metrics.get("mae"), entry.metrics.get("rmse"), entry.metrics.get("coverage"),
                      entry.metrics.get("interval_score"), json.dumps(entry.points, allow_nan=False),
@@ -86,7 +88,8 @@ def _entry_from_row(row: dict) -> Entry:
         params=json.loads(row["params"]), history_start=row["history_start"], history_end=row["history_end"],
         run_timestamp=row["run_timestamp"], n_scored=row["n_scored"], n_expected=row["n_expected"],
         metrics={m: (None if row[m] is None else float(row[m])) for m in METRICS},
-        points=json.loads(row["points"]), entry_id=row["id"], truth_commit=row["truth_commit"],
+        points=json.loads(row["points"]), used_columns=json.loads(row["used_columns"]) if row.get("used_columns") else None,
+        entry_id=row["id"], truth_commit=row["truth_commit"],
         truth_as_of=row["truth_as_of"], scored_at=str(row["scored_at"]),
     )
 
@@ -97,7 +100,7 @@ def list_entries(benchmark_id: int) -> list[Entry]:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, run_qid, model_name, docker_tag, run_timestamp, params, history_start, history_end, "
+                "SELECT id, run_qid, model_name, docker_tag, run_timestamp, params, used_columns, history_start, history_end, "
                 "n_scored, n_expected, mae, rmse, coverage, interval_score, points, truth_as_of, truth_commit, "
                 "CAST(scored_at AS CHAR) AS scored_at FROM entries "
                 "WHERE benchmark_id = %s AND removed_at IS NULL ORDER BY id",

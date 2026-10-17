@@ -29,6 +29,7 @@ class Entry:
     n_expected: int
     metrics: dict[str, float | None]
     points: list[dict] = field(default_factory=list)
+    used_columns: list[str] | None = None    # the input columns the model got to see (None: not recorded)
     entry_id: int | None = None
     truth_commit: str = ""
     truth_as_of: str = ""
@@ -46,6 +47,7 @@ class Leaderboard:
     entries: list[Entry]
     name: str = ""
     benchmark_id: int = 0
+    input_columns: list[str] = field(default_factory=list)      # all columns of the benchmark's input file
 
 
 def sort_key(metric: str) -> Callable[[Entry], tuple]:

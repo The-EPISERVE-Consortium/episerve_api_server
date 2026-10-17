@@ -93,3 +93,11 @@ def test_rows_carry_the_run_date_and_a_baseline_flag():
     by_qid = {r["run_qid"]: r for r in rows}
     assert by_qid["Q10"]["date"] == "2026-10-16 22:48"
     assert by_qid["Q10"]["baseline"] is False and by_qid["Q11"]["baseline"] is True
+
+
+def test_columns_text_is_short_for_all_columns_and_lists_a_selection():
+    from app.leaderboard.present import columns_text
+    every = ["datum", "v", "w"]
+    assert columns_text(every, every) == "all (3)"
+    assert columns_text(["datum", "v"], every) == "datum, v"
+    assert columns_text(None, every) == "—" and columns_text([], every) == "none"

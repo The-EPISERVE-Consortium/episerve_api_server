@@ -47,12 +47,13 @@ def overlay_config(config: dict, benchmark: dict | None, declared: set[str]) -> 
 
 
 def workflow_problems(benchmark: dict | None, data_path: str, sql: str) -> list[str]:
-    """Why a run built from the current workflow input would not qualify for the benchmark."""
+    """Why a run built from the current workflow input would not qualify for the benchmark.
+
+    ``sql`` is not checked: it can only select from the generated input file, which holds nothing but the history;
+    the leaderboard shows which columns the run used."""
     if not benchmark:
         return []
     problems = []
     if (data_path or "") != benchmark["input_uri"]:
         problems.append("the input is not the benchmark's generated input file")
-    if any(line.strip() and not line.strip().startswith("--") for line in (sql or "").splitlines()):
-        problems.append("the benchmark's input file must be used as it is (no SQL transformation)")
-    return problems
+    return problems             # an SQL on that file (a selection of columns or rows) is fine: the file is all it sees

@@ -164,7 +164,7 @@ def _button(find, label):
 CANDIDATES = [
     {"qid": "Q10", "model_name": "timesfm", "run_timestamp": "2026-01-02T00:00:00Z", "reason": None,
      "docker_tag": "v2", "params": {"history_length": 91}, "history_start": None,
-     "history_end": date(2025, 12, 31)},
+     "history_end": date(2025, 12, 31), "used_columns": ["datum"]},
     {"qid": "Q11", "model_name": "chronos", "run_timestamp": "2026-01-01T00:00:00Z",
      "reason": "run status is failed, not success"},
     {"qid": "Q12", "model_name": "chronos", "run_timestamp": "2026-01-01T00:00:00Z",
@@ -216,7 +216,8 @@ def test_candidates_table_lists_only_fitting_runs_with_checkboxes_and_two_button
     out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=grab)
     assert "Potential candidates for this leaderboard" in out["labels"]
     assert out["rows"] == [{"qid": "Q10", "model": "timesfm", "tag": "v2", "date": "2026-01-02",
-                            "params": "history_length=91", "history": "… → 2025-12-31"}]  # failed / added: not listed
+                            "params": "history_length=91", "used": "datum",
+                            "history": "… → 2025-12-31"}]  # failed / added: not listed
     assert out["selection"] == "multiple"
     assert "Select all" in out["buttons"] and "Add selected" in out["buttons"]
     assert "Add to leaderboard" not in out["buttons"] and "body-cell-add" not in out["slots"]

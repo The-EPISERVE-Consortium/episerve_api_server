@@ -72,12 +72,12 @@ def _step5(monkeypatch, state, after=None):
     return render(monkeypatch, pages, "/ui/run_workflow/5", setup=_setup(monkeypatch, state), after=after or (lambda *a: None))
 
 
-def test_step5_warns_when_the_sql_leaks_and_the_run_can_still_be_triggered(monkeypatch):
+def test_step5_accepts_an_sql_selection_and_the_run_is_triggered_with_it(monkeypatch):
     seen, triggered = {}, []
     from app.clients import prefect as prefect_client
     monkeypatch.setattr(prefect_client, "trigger_model_run", lambda **kw: triggered.append(kw) or {"prefect_flow_run_id": "r1", "status": "ok"})
     monkeypatch.setattr(pages.settings, "prefect_api_url", "http://prefect")
-    leaky = "SELECT * FROM df WHERE CAST(datum AS DATE) <= DATE '2026-04-10'"
+    selection = 'SELECT "datum", "v" FROM df'
 
     async def after(out, client, find, drain):
         seen["labels"] = labels(find)
@@ -85,9 +85,8 @@ def test_step5_warns_when_the_sql_leaks_and_the_run_can_still_be_triggered(monke
         seen["after"] = [(l.text) for l in find(ui.label)]
         seen["links"] = [(l.props.get("href"), l.text) for l in find(ui.link)]
 
-    _step5(monkeypatch, _benchmark_state(sql=leaky), after)
-    assert "This run would not qualify for the leaderboard:" in seen["labels"]
-    assert any("no SQL transformation" in t for t in seen["labels"])
+    _step5(monkeypatch, _benchmark_state(sql=selection), after)
+    assert "This run would not qualify for the leaderboard:" not in seen["labels"]
     assert triggered and triggered[0]["input_data_files"][0][0] == URL
     assert triggered[0]["executed_by"] == "episerve_user_1"                    # the pseudonym, never name or email
     assert "Add the run there once it has finished." in seen["after"]

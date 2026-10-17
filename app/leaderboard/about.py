@@ -28,6 +28,8 @@ COLUMN_HELP = {
     "run": "The model run (QID). In the leaderboard it links to the details of the run.",
     "date": "When the run was made.",
     "params": "The configuration the model was run with.",
+    "used": "The columns of the benchmark's input file the model got to see: all of them, or the selection the run "
+            "made with a data transformation (SQL).",
     "history": "The window of the series the model was given as input (first date → last date, '…' if it has no "
                "start). The test window starts after it.",
     "scored": "Dates scored / dates in the test window. A run is only accepted when it forecasts every date.",

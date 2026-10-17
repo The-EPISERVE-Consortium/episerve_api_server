@@ -185,6 +185,7 @@ class BenchmarkEntryOut(BaseModel):
     model_name: str
     docker_tag: str
     params: dict[str, Any]
+    used_columns: list[str] | None = None   # the input columns the model got to see (null: not recorded)
     history_start: str | None
     history_end: str
     run_timestamp: str

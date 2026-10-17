@@ -69,6 +69,15 @@ def history_text(start, end) -> str:
     return f"{start.isoformat() if start else '…'} → {end.isoformat()}"
 
 
+def columns_text(used: list[str] | None, all_columns: list[str]) -> str:
+    """The columns a run used, short: ``all (5)``, the names when it used a selection, ``—`` when not recorded."""
+    if used is None:
+        return "—"
+    if all_columns and list(used) == list(all_columns):
+        return f"all ({len(used)})"
+    return ", ".join(used) if used else "none"
+
+
 def table_rows(board: Leaderboard, entries: list[Entry] | None = None) -> list[dict]:
     """One display row per entry (default: all of the board's), with the best value of each column marked.
 
@@ -88,6 +97,7 @@ def table_rows(board: Leaderboard, entries: list[Entry] | None = None) -> list[d
             "run_qid": entry.run_qid,
             "date": _run_date(entry.run_timestamp),
             "params": params_text(entry.params),
+            "used": columns_text(entry.used_columns, board.input_columns),
             "history": history_text(entry.history_start, entry.history_end),
             "history_days": history_days(entry),
             "scored": f"{entry.n_scored}/{entry.n_expected}",

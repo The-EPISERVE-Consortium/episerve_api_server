@@ -110,6 +110,7 @@ def read_leaderboard(benchmark_id: int, rank_by: str = "interval_score", best_pe
         benchmark=bstore.benchmark_from_row(row), rank_by=rank_by, truth_points=row["truth_points"] or 0,
         truth_as_of=max((e.truth_as_of for e in entries), default=""), entries=ranked,
         name=row["name"], benchmark_id=row["id"],
+        input_columns=list((materialized_from_row(row) or {}).get("input", {}).get("columns") or []),
     )
 
 

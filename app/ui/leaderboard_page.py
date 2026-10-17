@@ -15,7 +15,7 @@ from app.leaderboard.about import COLUMN_HELP, METRIC_DOCS, description_text, ov
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
 from app.leaderboard.present import (
-    LABELS, chart_option, filter_entries, history_text, history_window, params_text, point_rows, summary, table_rows,
+    LABELS, chart_option, columns_text, filter_entries, history_text, history_window, params_text, point_rows, summary, table_rows,
 )
 from app.ui.pages import _error_label, _header
 
@@ -318,6 +318,8 @@ def register_leaderboard_page() -> None:
                  "style": "white-space: normal; max-width: 6rem"},
                 {"name": "params", "label": "Parameters", "field": "params", "align": "left",
                  "style": "white-space: normal; max-width: 14rem"},
+                {"name": "used", "label": "Used columns", "field": "used", "align": "left",
+                 "style": "white-space: normal; max-width: 14rem"},
                 {"name": "history", "label": "History (A→B)", "field": "history", "align": "left", "sortable": True,
                  "style": "white-space: normal; min-width: 8rem"},
                 *[{"name": m, "label": LABELS[m], "field": m, "align": "right", "sortable": True,
@@ -398,9 +400,11 @@ def register_leaderboard_page() -> None:
                 _error_label("Could not list the candidate runs.")
                 return
             loading.delete()
+            input_columns = list(((materialized_from_row(row) or {}).get("input") or {}).get("columns") or [])
             rows = [{
                 "qid": c["qid"], "model": c["model_name"], "tag": c.get("docker_tag") or "—",
                 "date": c["run_timestamp"][:10], "params": params_text(c.get("params") or {}),
+                "used": columns_text(c.get("used_columns"), input_columns),
                 "history": history_text(c.get("history_start"), c["history_end"]) if c.get("history_end") else "—",
             } for c in found if c["reason"] is None]
             if not rows:
@@ -412,6 +416,8 @@ def register_leaderboard_page() -> None:
                                  {"name": "run", "label": "Run", "field": "qid", "align": "left"},
                                  {"name": "date", "label": "Date", "field": "date", "align": "left"},
                                  {"name": "params", "label": "Parameters", "field": "params", "align": "left",
+                                  "style": "white-space: normal; max-width: 14rem"},
+                                 {"name": "used", "label": "Used columns", "field": "used", "align": "left",
                                   "style": "white-space: normal; max-width: 14rem"},
                                  {"name": "history", "label": "History (A→B)", "field": "history", "align": "left",
                                   "style": "white-space: normal; min-width: 8rem"}]

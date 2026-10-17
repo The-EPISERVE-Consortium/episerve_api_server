@@ -45,8 +45,9 @@ def test_add_entry_checks_for_active_duplicate_then_inserts(monkeypatch):
     assert insert[0].startswith("INSERT INTO entries")
     params = insert[1]
     assert json.loads(params[5]) == {"history_length": 91}           # params column
-    assert json.loads(params[14])[0]["truth"] == 10.0                # points column
-    assert params[13] is None                                        # interval_score NULL, never NaN
+    assert params[6] is None                                         # used_columns not recorded
+    assert json.loads(params[15])[0]["truth"] == 10.0                # points column
+    assert params[14] is None                                        # interval_score NULL, never NaN
     assert conn.commits == 1 and conn.closed
 
 
@@ -99,3 +100,17 @@ def test_no_function_ever_issues_a_delete(monkeypatch):
     store.list_entries(1)
     store.remove_entry(1, 1)
     assert conn.executed and all("DELETE" not in sql.upper() for sql, _ in conn.executed)
+
+
+def test_used_columns_are_stored_as_json_and_read_back(monkeypatch):
+    entry = _entry()
+    entry.used_columns = ["Meldedatum", "Inzidenz_7-Tage"]
+    conn = _use(monkeypatch, ([], 0, None), ([], 1, 43))
+    store.add_entry(3, entry)
+    assert json.loads(conn.executed[1][1][6]) == ["Meldedatum", "Inzidenz_7-Tage"]
+    row = {"run_qid": "Q1", "model_name": "m", "docker_tag": "t", "params": "{}", "used_columns": '["a", "b"]',
+           "history_start": None, "history_end": None, "run_timestamp": "", "n_scored": 1, "n_expected": 1,
+           "mae": 1, "rmse": 1, "coverage": None, "interval_score": None, "points": "[]", "id": 1,
+           "truth_commit": "", "truth_as_of": "", "scored_at": ""}
+    assert store._entry_from_row(row).used_columns == ["a", "b"]
+    assert store._entry_from_row({**row, "used_columns": None}).used_columns is None

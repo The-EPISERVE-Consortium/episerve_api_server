@@ -108,3 +108,16 @@ def test_candidates_carry_tag_history_and_parameters_where_they_are_cheap_to_kno
     assert result["Q14"]["params"] == {}                                     # a failing loader gives no parameters
     assert result["Q11"]["params"] is None and result["Q13"]["params"] is None
     assert sorted(asked) == ["Q10", "Q14"]                                   # only for runs that can be added
+
+
+def test_the_columns_a_run_used_are_recorded_and_listed_for_candidates():
+    manifest = {**MANIFEST, "input": {**MANIFEST["input"], "columns": ["datum", "v", "w"]}}
+    forecast = pd.DataFrame({"date": DATES, "forecast": [11.0, 19.0]})
+    sql = _run(data_transformation_sql=['SELECT datum, v FROM df'])
+    entry = score_run(BENCH, sql, TRUTH, truth_commit=COMMIT, truth_as_of="", manifest=manifest,
+                      load_predictions=lambda r, b: forecast, load_params=lambda q: {})
+    assert entry.used_columns == ["datum", "v"]
+    assert score_run(BENCH, _run(), TRUTH, truth_commit=COMMIT, truth_as_of="", manifest=manifest,
+                     load_predictions=lambda r, b: forecast, load_params=lambda q: {}).used_columns == ["datum", "v", "w"]
+    (candidate,) = candidate_runs([sql], set(), manifest)
+    assert candidate["used_columns"] == ["datum", "v"]

@@ -76,7 +76,7 @@ A **benchmark** is one series: a processed dataset (`dataset_qid`), a target col
 - A **final** benchmark is immutable. **Copy as draft** creates a new draft with the same definition; that is the way to change one.
 - **Retire** hides a benchmark from the lists; its leaderboard stays readable.
 
-**Run workflow**: on `/ui/run_workflow/1`, **Start from a benchmark** prefills the run from a final benchmark: the input URL of the generated input file (`lakefs://benchmarks/main/<id>/input.parquet?version=<commit>`), no SQL, the input file name and, for models that declare them, `prediction_length` and `prediction_offset` (`0`). Step 5 shows a warning when the current input is not that file or an SQL transformation is applied to it.
+**Run workflow**: on `/ui/run_workflow/1`, **Start from a benchmark** prefills the run from a final benchmark: the DOIP URL of the generated input file (`<DOIP>/doip/retrieve/<QID>/input.parquet?version=<commit>`), no SQL, the input file name and, for models that declare them, `prediction_length` and `prediction_offset` (`0`). Step 5 shows a warning when the current input is not that file. An SQL on the file (for example a selection of columns) is allowed: it can only select from the generated file, which holds nothing but the history, and the leaderboard shows which columns a run used.
 
 An **entry** is a model run added to a benchmark on its leaderboard page `/ui/benchmarks/{id}` (logged-in users only). The run is qualified and scored once; the metrics (MAE, RMSE, 80% coverage, 80% interval score), parameters, history window and per-date points are stored in the MariaDB database `benchmarks`, and reading a leaderboard only queries that database. Removing an entry hides it (soft delete); adding the run again recomputes it.
 
@@ -85,6 +85,8 @@ A run can be added only if:
 - its status is `success`;
 - it read exactly the benchmark's generated input file at the version stored in the benchmark (`input_sources` of the run record, taken from its DOIP provenance `prov:used`), and nothing else; a run with another version, with further inputs or without that input is refused or not listed;
 - it forecasts every observed date in the reference range.
+
+A run may select columns or rows of the input file with a `data_transformation_sql`; `app/benchmarks/columns.py` evaluates the SQL on an empty table with the file's columns to find the columns the model got to see. The entry stores them (`entries.used_columns`, JSON; NULL for entries made before) and both tables of the Leaderboard tab show them as *Used columns* (`all (5)` or the names; the API returns `used_columns` per entry).
 
 The truth is read from the benchmark's generated `reference.parquet` (checked against its SHA-256), so a later revision of the data never changes a score.
 

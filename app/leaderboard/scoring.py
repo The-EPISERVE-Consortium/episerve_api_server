@@ -5,6 +5,7 @@ from typing import Callable
 
 import pandas as pd
 
+from app.benchmarks.columns import used_columns
 from app.leaderboard.entries import Benchmark, qualify_run
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.metrics import score_forecast
@@ -65,6 +66,7 @@ def score_run(
         run_timestamp=run.get("run_timestamp", ""), n_scored=result.n_scored, n_expected=result.n_expected,
         metrics={name: finite_or_none(value) for name, value in result.metrics.items()},
         points=points_for(forecast, truth), truth_commit=truth_commit, truth_as_of=truth_as_of,
+        used_columns=used_columns(manifest, run.get("data_transformation_sql")),
     )
 
 
@@ -90,7 +92,7 @@ def candidate_runs(
             "docker_tag": run.get("docker_tag", ""),
             "history_start": verdict.window.start if verdict.window else None,
             "history_end": verdict.window.end if verdict.window else None,
-            "params": None,
+            "params": None, "used_columns": used_columns(manifest, run.get("data_transformation_sql")),
         })
     addable = [c["qid"] for c in candidates if c["reason"] is None]
     if load_params and addable:
