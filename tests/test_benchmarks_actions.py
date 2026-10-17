@@ -225,9 +225,9 @@ def test_a_final_benchmark_without_files_gets_them_at_its_pinned_commit(world, m
     manifest = actions.materialize_final(3)
     assert saved == {"id": 3, "manifest": manifest} and manifest["reference"]["rows"] == 27
     assert world["log"]["reads"] == [(COMMIT, "Q1", "d.parquet")] and world["log"]["finalized"] == []
-    world["state"]["row"] = _final(materialized=json.dumps({**MANIFEST, "version": 1}))
-    assert actions.materialize_final(3)["version"] == 2                         # the older, non-FDO files are replaced
-    world["state"]["row"] = _final(materialized=json.dumps(MANIFEST))
+    world["state"]["row"] = _final(materialized=json.dumps({**MANIFEST, "version": 2}))
+    assert actions.materialize_final(3)["version"] == 3                         # an older layout is replaced
+    world["state"]["row"] = _final(materialized=json.dumps({**MANIFEST, "version": 3}))
     with pytest.raises(actions.Conflict):
         actions.materialize_final(3)
 
@@ -333,20 +333,21 @@ def test_check_reports_a_covariate_that_cannot_be_used(world):
     assert any("Q404" in p for p in actions.check(3).problems)
 
 
-def test_finalize_stores_two_fdo_objects_and_records_the_manifest(world):
+def test_finalize_stores_one_fdo_object_with_two_components_and_records_the_manifest(world):
     world["state"]["row"] = _row(covariates=json.dumps(COVARIATES))
     actions.finalize(3, by=CREATOR)
     files, _ = world["log"]["written"][0]
     _, kw = world["log"]["finalized"][0]
     manifest = kw["materialized"]
-    assert manifest["version"] == 2 and manifest["repo"] == "benchmarks" and manifest["commit"] == "ee" * 32
-    in_qid, ref_qid = manifest["input"]["qid"], manifest["reference"]["qid"]
-    assert in_qid != ref_qid and manifest["input"]["columns"] == ["datum", "v", "wetter__temp"]
-    assert sorted(f.rsplit("/", 1)[-1] for f in files) == sorted(
-        [f"{in_qid}.fdo.json", f"{ref_qid}.fdo.json", "input.parquet", "reference.parquet"])
+    assert manifest["version"] == 3 and manifest["repo"] == "benchmarks" and manifest["commit"] == "ee" * 32
+    qid = manifest["qid"]
+    assert manifest["input"]["qid"] == manifest["reference"]["qid"] == qid       # one object, two components
+    assert manifest["input"]["columns"] == ["datum", "v", "wetter__temp"]
+    assert sorted(f.rsplit("/", 1)[-1] for f in files) == sorted([f"{qid}.fdo.json", "input.parquet", "reference.parquet"])
     assert len(manifest["input"]["sha256"]) == 64 and manifest["reference"]["rows"] == 27
-    description = json.loads(files[f"{actions.fdo.shard(in_qid)}/{in_qid}.fdo.json"])
-    assert description["@id"] == in_qid and description["profile"]["accessRights"] == "open"
+    description = json.loads(files[f"{actions.fdo.shard(qid)}/{qid}.fdo.json"])
+    assert description["@id"] == qid and description["profile"]["accessRights"] == "open"
+    assert sorted(description["profile"]["episerveBenchmark"]["files"]) == ["input", "reference"]
     assert description["profile"]["episerveBenchmark"]["source_qids"] == ["Q1", "Q2"]
     assert description["profile"]["episerveBenchmark"]["data_commit"] == COMMIT
 

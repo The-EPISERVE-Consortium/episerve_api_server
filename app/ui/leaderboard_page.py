@@ -156,7 +156,7 @@ def _generated_data_sections(row: dict, manifest: dict, benchmark_id: int) -> No
     ui.label("One file, generated once from the sources below when the benchmark was finalized. "
              "A model run reads exactly this file, as it is.").classes("text-sm text-gray-600")
     ui.link("Download the input file (Parquet)", object_url(manifest, "input", versioned=True), new_tab=True).classes("text-sm")
-    ui.label(f"Object {inp['qid']}, served by the DOIP server").classes("text-xs text-gray-500")
+    ui.label(f"Object {inp['qid']} (both files), served by the DOIP server").classes("text-xs text-gray-500")
     ui.label(f"{inp['rows']} rows, {inp.get('first_date', '?')} → {inp.get('last_date', '?')}; "
              f"SHA-256 {inp['sha256'][:16]}…").classes("text-xs text-gray-500")
     owner = {name: covariate.name for covariate in sources for name in covariate.output_columns()}
@@ -190,7 +190,6 @@ def _generated_data_sections(row: dict, manifest: dict, benchmark_id: int) -> No
              ).classes("text-sm text-gray-600")
     ui.link("Download the reference file (Parquet)", object_url(manifest, "reference", versioned=True),
             new_tab=True).classes("text-sm")
-    ui.label(f"Object {ref['qid']}, served by the DOIP server").classes("text-xs text-gray-500")
     ui.label(f"{ref['rows']} rows; SHA-256 {ref['sha256'][:16]}…").classes("text-xs text-gray-500")
 
 

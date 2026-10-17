@@ -219,30 +219,31 @@ def _covariate_data(benchmark: Benchmark, commit: str) -> dict[str, bytes]:
 
 
 def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materialize.Built") -> dict:
-    """Store the generated files as two FDO objects and return the manifest recorded with the finalized benchmark."""
+    """Store the generated files as one FDO object and return the manifest recorded with the finalized benchmark."""
     input_bytes, input_sha = materialize.to_parquet(built.input)
     reference_bytes, reference_sha = materialize.to_parquet(built.reference)
-    input_qid, reference_qid = fdo.mint_qids(2)
+    qid = fdo.mint_qid()
     sources = sorted({benchmark.dataset_qid, *(c.dataset_qid for c in benchmark.covariates)})
     parts = {
-        "input": (input_qid, input_bytes, input_sha, built.input, "input.parquet",
-                  "Model input of the benchmark: the history window, the target series and its covariates."),
-        "reference": (reference_qid, reference_bytes, reference_sha, built.reference, "reference.parquet",
-                      "Reference data of the benchmark: the test window the forecasts are scored against."),
+        "input": ("input.parquet", input_bytes, input_sha, built.input),
+        "reference": ("reference.parquet", reference_bytes, reference_sha, built.reference),
     }
-    files, manifest = {}, {"version": 2, "repo": settings.lakefs_benchmarks_repo}
-    for role, (qid, data, sha, frame, component, description) in parts.items():
+    manifest = {"version": 3, "repo": settings.lakefs_benchmarks_repo, "qid": qid}
+    files = {}
+    for role, (component, data, sha, frame) in parts.items():
         files[fdo.component_path(qid, component)] = data
-        files[fdo.fdo_path(qid)] = fdo.build_fdo(
-            qid=qid, benchmark_id=benchmark_id, benchmark_name=name, role=role, component=component, sha256=sha,
-            rows=len(frame), columns=list(frame.columns), benchmark=benchmark, source_qids=sources,
-            description=f"{name}. {description}")
         manifest[role] = {"qid": qid, "component": component, "sha256": sha, "rows": len(frame),
                           "columns": list(frame.columns)}
     manifest["input"].update(first_date=str(built.input[benchmark.date_column].min()),
                              last_date=str(built.input[benchmark.date_column].max()))
+    files[fdo.fdo_path(qid)] = fdo.build_fdo(
+        qid=qid, benchmark_id=benchmark_id, benchmark_name=name,
+        files={role: {k: v for k, v in manifest[role].items() if k != "qid"} for role in parts},
+        benchmark=benchmark, source_qids=sources,
+        description=f"{name}. Generated model input (history window, target series and covariates) and "
+                    "reference data (the test window the forecasts are scored against).")
     branch, commit = lakefs_client.write_benchmark_objects(
-        files, f"benchmark {benchmark_id}: generated input and reference objects")
+        files, f"benchmark {benchmark_id}: generated input and reference files")
     manifest.update(branch=branch, commit=commit)
     return manifest
 
@@ -304,7 +305,7 @@ def finalize(benchmark_id: int, expected_commit: str | None = None, *, by: User)
 
 
 def materialize_final(benchmark_id: int) -> dict:
-    """Generate and store the files of a final benchmark that has none or only the older, non-FDO files.
+    """Generate and store the files of a final benchmark that has none or only an older layout (files below the benchmark id, or one object per file).
 
     The data is read at the benchmark's own pinned commit, so the result is what finalizing would have produced.
 
@@ -315,8 +316,8 @@ def materialize_final(benchmark_id: int) -> dict:
     row = _row(benchmark_id)
     if store.state(row) != "final":
         raise NotFound(f"Benchmark {benchmark_id} is not final")
-    if (materialized_from_row(row) or {}).get("version", 1) >= 2:
-        raise Conflict(f"Benchmark {benchmark_id} already has generated objects.")
+    if (materialized_from_row(row) or {}).get("version", 1) >= 3:
+        raise Conflict(f"Benchmark {benchmark_id} already has its generated object.")
     benchmark = store.benchmark_from_row(row)
     report = _evaluate(benchmark, _dataset(benchmark.dataset_qid), benchmark.data_commit, row["component_name"])
     if not report.ok:

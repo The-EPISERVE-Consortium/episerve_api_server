@@ -1,6 +1,6 @@
 """The FDO objects of a benchmark's generated files.
 
-Each generated file (input, reference) is a digital object with its own QID, stored in the lakeFS repository
+The generated files (input, reference) of a benchmark are ONE digital object with its own QID and one component per file, stored in the lakeFS repository
 ``benchmarks`` in the layout every other object uses (``pp/qq/rr/<QID>/<QID>.fdo.json`` and
 ``pp/qq/rr/<QID>/components/<file>``), so the DOIP server serves it and the sync registers it in CKAN.
 """
@@ -19,15 +19,9 @@ def shard(qid: str) -> str:
     return f"{digits[0:2]}/{digits[2:4]}/{digits[4:6]}/{qid.upper()}"
 
 
-def mint_qids(count: int) -> list[str]:
-    """New distinct QIDs of the form ``Q<unix seconds><3 random digits>``."""
-    seconds = int(time.time())
-    qids: list[str] = []
-    while len(qids) < count:
-        qid = f"Q{seconds}{random.randint(0, 999):03d}"
-        if qid not in qids:
-            qids.append(qid)
-    return qids
+def mint_qid() -> str:
+    """A new QID of the form ``Q<unix seconds><3 random digits>``."""
+    return f"Q{int(time.time())}{random.randint(0, 999):03d}"
 
 
 def component_path(qid: str, component: str) -> str:
@@ -41,16 +35,17 @@ def fdo_path(qid: str) -> str:
 
 
 def build_fdo(
-    *, qid: str, benchmark_id: int, benchmark_name: str, role: str, component: str, sha256: str, rows: int,
-    columns: list[str], benchmark: Benchmark, source_qids: list[str], description: str,
+    *, qid: str, benchmark_id: int, benchmark_name: str, files: dict[str, dict], benchmark: Benchmark,
+    source_qids: list[str], description: str,
 ) -> bytes:
-    """The FDO description (JSON) of one generated file.
+    """The FDO description (JSON) of a benchmark's generated files: one object, one component per file.
 
     Args:
         qid: The object's QID.
-        role: ``input`` (what models read) or ``reference`` (what forecasts are scored against).
+        files: Role (``input``: what models read; ``reference``: what forecasts are scored against) to
+            ``{"component", "sha256", "rows", "columns"}``.
         benchmark: The frozen definition; its pinned commit goes into the provenance.
-        source_qids: The datasets the file was generated from.
+        source_qids: The datasets the files were generated from.
     """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     document = {
@@ -69,22 +64,24 @@ def build_fdo(
             "immutable": True,
             "modified": now,
             "fdo:hasComponent": [
-                {"@id": f"#{component}", "componentId": component, "mediaType": "application/vnd.apache.parquet"},
+                {"@id": f"#{info['component']}", "componentId": info["component"],
+                 "mediaType": "application/vnd.apache.parquet"}
+                for info in files.values()
             ],
         },
         "profile": {
             "@context": "https://schema.org/",
             "@type": "Dataset",
             "@id": qid,
-            "name": f"benchmark-{benchmark_id}-{role}",
-            "display_name": f"{benchmark_name} ({role} data)",
+            "name": f"benchmark-{benchmark_id}",
+            "display_name": f"Benchmark {benchmark_id}: {benchmark_name}",
             "description": description,
             "url": "",
             "additionalType": "benchmarks",
             "accessRights": "open",
             "episerveBenchmark": {
-                "id": benchmark_id, "role": role, "rows": rows, "columns": columns, "sha256": sha256,
-                "source_qids": source_qids, "data_commit": benchmark.data_commit,
+                "id": benchmark_id, "files": files, "source_qids": source_qids,
+                "data_commit": benchmark.data_commit,
             },
         },
         "provenance": {
