@@ -383,8 +383,9 @@ def register_leaderboard_page() -> None:
             the page is shown, and only for users who may add runs.
             """
             ui.label("Potential candidates for this leaderboard").classes("text-lg font-semibold text-gray-900")
-            ui.label("Finished model runs that fit this benchmark (input read at the pinned data version, one "
-                     "input) and are not on the leaderboard yet.").classes("text-sm text-gray-600")
+            ui.label("Finished model runs that fit this benchmark (they read exactly its input file, nothing else) "
+                     "and are not on the leaderboard yet. A new run appears here after the catalog has synced it, "
+                     "usually a minute or two after it finishes; reload the page to see it.").classes("text-sm text-gray-600")
             loading = ui.row().classes("items-center gap-2")
             with loading:
                 ui.spinner(size="sm")
