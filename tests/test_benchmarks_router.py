@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.conftest import ADMIN
-from tests.fakes import bearer
+from tests.fakes import bearer, install_users, make_user
 from app.clients import lakefs as lakefs_client
 from app.leaderboard import actions
 from app.leaderboard.entries import Benchmark
@@ -183,3 +183,16 @@ def test_create_patch_check_finalize_copy_and_retire(monkeypatch):
     assert client.post("/benchmarks/4/copy", headers=AUTH).status_code == 201
     assert client.post("/benchmarks/4/retire", headers=AUTH).status_code == 204
     assert [c[0] for c in calls] == ["create", "patch", "finalize", "copy", "retire"]
+
+
+def test_only_an_admin_changes_the_description_of_any_benchmark(monkeypatch):
+    saved = []
+    monkeypatch.setattr(router.bactions, "set_description", lambda bid, text: saved.append((bid, text)))
+    monkeypatch.setattr(router.bactions, "get", lambda bid, include_draft=False: FINAL)
+    body = {"description": "Hello"}
+    assert client.put("/benchmarks/3/description", json=body).status_code == 401
+    member = make_user(5, ("benchmarks",), email="m@example.org")
+    install_users(monkeypatch, ADMIN, member)
+    assert client.put("/benchmarks/3/description", json=body, headers=bearer(member)).status_code == 403
+    assert client.put("/benchmarks/3/description", json=body, headers=AUTH).status_code == 200
+    assert saved == [(3, "Hello")]

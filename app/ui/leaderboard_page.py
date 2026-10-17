@@ -169,11 +169,52 @@ def _entry_detail(entry, benchmark_id: int, logged_in: bool) -> None:
         ui.button("Remove from leaderboard", on_click=remove).props("flat color=negative")
 
 
+def _is_admin() -> bool:
+    return session.can("admin")
+
+
+def _edit_description_dialog(row: dict) -> None:
+    with ui.dialog() as dialog, ui.card().classes("w-[40rem] max-w-full gap-2"):
+        ui.label("Edit description").classes("text-lg font-semibold")
+        text = ui.textarea(value=row.get("description") or "").props("outlined autogrow").classes("w-full")
+        ui.label("Leave it empty to show a sentence generated from the definition.").classes("text-xs text-gray-500")
+        error = ui.label("").classes("text-red-600 text-sm")
+
+        async def save():
+            if not _is_admin():
+                ui.notify(_LOGIN_EXPIRED, type="warning")
+                return
+            try:
+                await run.io_bound(lambda: bactions.set_description(row["id"], text.value))
+            except bactions.NotFound as e:
+                error.set_text(str(e))
+                return
+            except Exception:
+                logger.exception("could not save the description")
+                error.set_text("The description could not be saved.")
+                return
+            dialog.close()
+            ui.navigate.reload()
+
+        with ui.row().classes("justify-end w-full gap-2"):
+            ui.button("Cancel", on_click=dialog.close).props("flat")
+            ui.button("Save", on_click=save)
+    dialog.open()
+
+
 def _overview_tab(row: dict) -> None:
-    ui.label(description_text(row)).classes("text-sm text-gray-600")
-    with ui.column().classes("gap-1"):
-        for caption, value in overview_facts(row):
-            ui.label(f"{caption}: {value}").classes("text-sm text-gray-700")
+    with ui.row().classes("items-start gap-2 w-full"):
+        ui.label(description_text(row)).classes("text-sm text-gray-600 max-w-3xl whitespace-pre-line")
+        if _is_admin():
+            ui.button(icon="edit", on_click=lambda: _edit_description_dialog(row)).props(
+                "flat round dense size=sm aria-label='Edit description'").classes("text-gray-500")
+    rows = [{"caption": caption, "value": value} for caption, value in overview_facts(row)]
+    ui.table(
+        columns=[{"name": "caption", "label": "", "field": "caption", "align": "left"},
+                 {"name": "value", "label": "", "field": "value", "align": "left"}],
+        rows=rows, row_key="caption",
+    ).props("flat bordered dense hide-header hide-bottom").classes("max-w-xl w-full").add_slot(
+        "body-cell-caption", '''<q-td :props="props" class="text-gray-500" style="width: 11rem">{{ props.value }}</q-td>''')
 
 
 def _data_tab(row: dict, benchmark_id: int) -> None:

@@ -132,6 +132,17 @@ def finalize(
         conn.close()
 
 
+def set_description(benchmark_id: int, description: str | None) -> None:
+    """Replace the description of a benchmark in any state (it is not part of the frozen definition)."""
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE benchmarks SET description = %s WHERE id = %s", (description, benchmark_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def retire(benchmark_id: int) -> bool:
     """Hide a benchmark; True if it was not retired yet."""
     conn = _connect()

@@ -89,3 +89,10 @@ def test_is_public_means_finalized_whatever_retired_at_says():
     assert store.is_public({"finalized_at": "t", "retired_at": "t"})
     assert not store.is_public({"finalized_at": None, "retired_at": None})
     assert not store.is_public({"finalized_at": None, "retired_at": "t"})
+
+
+def test_set_description_updates_any_benchmark(monkeypatch):
+    conn = _use(monkeypatch, ([], 1, None))
+    store.set_description(3, "Text")
+    assert conn.executed[0][1] == ("Text", 3)
+    assert "UPDATE benchmarks SET description" in conn.executed[0][0] and "finalized" not in conn.executed[0][0]

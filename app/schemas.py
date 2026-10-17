@@ -1,5 +1,5 @@
 from datetime import date
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Any
 
 
@@ -90,6 +90,10 @@ class BenchmarkCreate(BaseModel):
     history_start: date | None = None
     history_end: date | None = None
     input_filename: str = "input.parquet"
+
+
+class DescriptionIn(BaseModel):
+    description: str | None = Field(default=None, max_length=4000)
 
 
 class BenchmarkPatch(BaseModel):

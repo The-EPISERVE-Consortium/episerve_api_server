@@ -358,18 +358,42 @@ def test_the_query_picks_the_tab_and_former_names_map_to_the_new_ones(monkeypatc
     assert out["find"](ui.tabs)[0].value == expected
 
 
-def test_overview_has_the_general_facts_but_no_how_to_run(monkeypatch):
+def test_overview_has_the_general_facts_in_a_table_but_no_how_to_run(monkeypatch):
     row = {**ROW, "description": "Weekly wastewater viral load.", "entry_count": 4}
 
     def grab(out, client, find, drain):
         out["code"] = [_panel_of(e) for e in find(ui.code)]
         out["buttons"] = [(b.props.get("label"), _panel_of(b)) for b in find(ui.button)]
+        out["facts"] = next(t for t in find(ui.table) if t.props.get("row-key") == "caption")
 
     out = _render(monkeypatch, row=row, board=_board([_entry()]), after=grab)
-    for text in ("Weekly wastewater viral load.", "Series: v · region = DE", "Forecast horizon: 5 steps", "Runs: 4"):
-        assert text in out["labels"]
+    assert "Weekly wastewater viral load." in out["labels"]
+    assert [(r["caption"], r["value"]) for r in out["facts"].rows] == [
+        ("Series", "v · region = DE"), ("Forecast horizon", "5 steps"), ("Runs", "4")]
     assert "overview" not in out["code"]
     assert [b for b, panel in out["buttons"] if panel == "overview" and b] == []
+
+
+def test_only_an_admin_can_edit_the_description_and_it_is_saved_for_a_final_benchmark(monkeypatch):
+    saved = []
+    monkeypatch.setattr(leaderboard_page.bactions, "set_description", lambda bid, text: saved.append((bid, text)))
+
+    def edit_buttons(find):
+        return [b for b in find(ui.button) if b.props.get("aria-label") == "Edit description"]
+
+    monkeypatch.setattr(leaderboard_page, "_is_admin", lambda: False)
+    out = _render(monkeypatch, board=_board([_entry()]), logged_in=True)
+    assert edit_buttons(out["find"]) == []
+
+    async def scenario(out, client, find, drain):
+        await _click(edit_buttons(find)[0], client)
+        next(t for t in find(ui.textarea)).value = "New text"
+        await _click(_button(find, "Save"), client)
+        await drain()
+
+    monkeypatch.setattr(leaderboard_page, "_is_admin", lambda: True)
+    _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert saved == [(3, "New text")]
 
 
 def test_the_header_of_the_page_holds_only_the_title_and_the_api_box(monkeypatch):

@@ -237,6 +237,16 @@ def finalize(benchmark_id: int, expected_commit: str | None = None) -> None:
         raise NotFound(f"Benchmark {benchmark_id} not found")
 
 
+def set_description(benchmark_id: int, description: str | None) -> None:
+    """Change the description, also of a final benchmark (empty clears it).
+
+    Raises:
+        NotFound: Unknown benchmark.
+    """
+    _row(benchmark_id)
+    store.set_description(benchmark_id, (description or "").strip() or None)
+
+
 def retire(benchmark_id: int) -> None:
     """Hide a benchmark from the lists.
 

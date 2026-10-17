@@ -10,7 +10,7 @@ from app.leaderboard import actions as lactions
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
 from app.schemas import (
-    BenchmarkCreate, BenchmarkEntryOut, BenchmarkLeaderboardOut, BenchmarkOut, BenchmarkPatch, CheckReportOut,
+    BenchmarkCreate, BenchmarkEntryOut, BenchmarkLeaderboardOut, BenchmarkOut, BenchmarkPatch, CheckReportOut, DescriptionIn,
     EntryCreate, EntryCreated, RunSpecOut,
 )
 
@@ -134,6 +134,16 @@ def update_benchmark(benchmark_id: int, request: BenchmarkPatch):
     """Change fields of a draft (only the fields sent; null clears an optional field)."""
     try:
         bactions.update_draft(benchmark_id, **request.model_dump(exclude_unset=True))
+        return _benchmark_out(bactions.get(benchmark_id, include_draft=True))
+    except Exception as e:
+        raise _http(e)
+
+
+@router.put("/{benchmark_id}/description", response_model=BenchmarkOut, dependencies=[Depends(require_right("admin"))])
+def set_description(benchmark_id: int, request: DescriptionIn):
+    """Change the description of a benchmark in any state (admins only; empty clears it)."""
+    try:
+        bactions.set_description(benchmark_id, request.description)
         return _benchmark_out(bactions.get(benchmark_id, include_draft=True))
     except Exception as e:
         raise _http(e)
