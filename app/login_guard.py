@@ -1,9 +1,10 @@
 """A lock against guessing passwords: too many failed logins and the login waits.
 
-Failures are counted in memory (per server process, over a sliding window) under three keys: email + IP address,
-the IP address alone (one machine trying many accounts), and the email alone (guessing spread over many machines).
-A key at its limit blocks the login until its oldest failure leaves the window; a blocked login is refused before
-any password is checked. A successful login clears the counters of that email. A restart of the server resets
+Failures are counted in memory (per server process, over a sliding window) under two keys: the IP address (at most
+5 failed logins per 15 minutes, whatever accounts they were for) and the email (at most 30, which stops guessing
+spread over many machines). A key at its limit blocks the login until its oldest failure leaves the window; a
+blocked login is refused before any password is checked. A successful login clears the counter of that email but not
+that of the IP, so a valid account cannot be used to keep the counter down. A restart of the server resets
 everything; a second replica would count separately.
 """
 
@@ -16,10 +17,9 @@ from app import users
 logger = logging.getLogger(__name__)
 
 WINDOW_SECONDS = 15 * 60
-LIMIT_EMAIL_AND_IP = 5
-LIMIT_IP = 20
+LIMIT_IP = 5
 LIMIT_EMAIL = 30
-MAX_KEYS = 10_000  # bounds the memory when someone invents many addresses
+MAX_KEYS = 10_000  # bounds the memory when someone invents many addresses or IPs
 
 _failures: dict[tuple, list[float]] = {}
 _clock = time.monotonic
@@ -41,7 +41,7 @@ def client_ip(forwarded_for: str | None, peer: str | None) -> str:
 
 
 def _keys(email: str, ip: str) -> list[tuple[tuple, int]]:
-    return [(("pair", email, ip), LIMIT_EMAIL_AND_IP), (("ip", ip), LIMIT_IP), (("email", email), LIMIT_EMAIL)]
+    return [(("ip", ip), LIMIT_IP), (("email", email), LIMIT_EMAIL)]
 
 
 def _recent(key: tuple, now: float) -> list[float]:
@@ -75,8 +75,7 @@ def record_failure(email: str, ip: str) -> None:
         del _failures[next(iter(_failures))]
 
 
-def record_success(email: str, ip: str) -> None:
-    _failures.pop(("pair", email, ip), None)
+def record_success(email: str) -> None:
     _failures.pop(("email", email), None)
 
 
@@ -91,5 +90,5 @@ def authenticate(email: str, password: str, ip: str) -> users.User | None:
         logger.warning("login failed for %r from %s", email[:100], ip)
         record_failure(email, ip)
     else:
-        record_success(email, ip)
+        record_success(email)
     return user

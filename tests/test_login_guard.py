@@ -25,14 +25,16 @@ def _fail(email="ada@example.org", ip="1.1.1.1", times=1):
         assert login_guard.authenticate(email, "wrong", ip) is None
 
 
-def test_five_failures_from_one_address_and_ip_lock_even_the_right_password(_people_and_clock):
-    _fail(times=5)
+def test_five_failures_from_one_ip_lock_every_login_from_it_even_the_right_password(_people_and_clock):
+    _fail(times=3)
+    _fail(email="bob@example.org", times=2)  # the failures count together, whatever account they were for
     with pytest.raises(login_guard.Locked) as locked:
         login_guard.authenticate("ada@example.org", "right password", "1.1.1.1")
     assert locked.value.retry_after == 900
-    # another machine can still log in to the same account, and the locked one can use another account
+    with pytest.raises(login_guard.Locked):
+        login_guard.authenticate("bob@example.org", "bobs password", "1.1.1.1")
+    # another machine is not affected
     assert login_guard.authenticate("ada@example.org", "right password", "2.2.2.2") == ADA
-    assert login_guard.authenticate("bob@example.org", "bobs password", "1.1.1.1") == BOB
 
 
 def test_the_lock_ends_when_the_failures_leave_the_window(_people_and_clock):
@@ -45,32 +47,35 @@ def test_the_lock_ends_when_the_failures_leave_the_window(_people_and_clock):
     assert login_guard.authenticate("ada@example.org", "right password", "1.1.1.1") == ADA
 
 
-def test_a_success_clears_the_counters_of_that_address(_people_and_clock):
+def test_a_success_does_not_lower_the_count_of_the_ip(_people_and_clock):
     _fail(times=4)
-    assert login_guard.authenticate("ada@example.org", "right password", "1.1.1.1") == ADA
-    _fail(times=4)  # would be 8 without the reset
-    assert login_guard.retry_after("ada@example.org", "1.1.1.1") == 0
-
-
-def test_one_ip_trying_many_accounts_is_locked_after_twenty(_people_and_clock):
-    for i in range(20):
-        _fail(email=f"user{i}@example.org", ip="9.9.9.9")
+    assert login_guard.authenticate("bob@example.org", "bobs password", "1.1.1.1") == BOB
+    _fail()  # the fifth failure from this IP counts although a login succeeded in between
     with pytest.raises(login_guard.Locked):
-        login_guard.authenticate("bob@example.org", "bobs password", "9.9.9.9")
+        login_guard.authenticate("bob@example.org", "bobs password", "1.1.1.1")
+
+
+def test_a_success_clears_the_failures_counted_for_the_email(_people_and_clock):
+    for i in range(29):
+        _fail(ip=f"10.0.1.{i}")
+    assert login_guard.authenticate("ada@example.org", "right password", "10.0.2.1") == ADA
+    for i in range(29):
+        _fail(ip=f"10.0.3.{i}")  # would be locked at 30 without the reset
+    assert login_guard.retry_after("ada@example.org", "10.0.4.1") == 0
 
 
 def test_one_account_guessed_from_many_ips_is_locked_after_thirty(_people_and_clock):
     for i in range(30):
-        _fail(ip=f"10.0.0.{i}")
+        _fail(ip=f"10.0.0.{i}")  # every IP stays far below its own limit
     with pytest.raises(login_guard.Locked):
         login_guard.authenticate("ada@example.org", "right password", "10.9.9.9")
 
 
 def test_email_case_and_blanks_do_not_help_to_dodge_the_lock(_people_and_clock):
-    _fail(times=3)
-    _fail(email="  ADA@example.org ", times=2)
+    for i in range(30):
+        _fail(email=["ada@example.org", "  ADA@example.org ", "Ada@Example.org"][i % 3], ip=f"10.1.0.{i}")
     with pytest.raises(login_guard.Locked):
-        login_guard.authenticate("Ada@Example.org", "right password", "1.1.1.1")
+        login_guard.authenticate("ada@EXAMPLE.org", "right password", "10.1.9.9")
 
 
 def test_memory_is_bounded(monkeypatch):
