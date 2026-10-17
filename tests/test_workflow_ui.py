@@ -22,7 +22,7 @@ SQL = ("SELECT CAST(\"datum\" AS DATE) AS \"datum\", \"v\" FROM df WHERE \"typ\"
 SPEC = {"benchmark_id": 3, "dataset_qid": "Q1", "data_commit": COMMIT, "input_data_files": [[URL, "input.parquet"]],
         "data_transformation_sql": [SQL], "config": {"prediction_length": 27, "prediction_offset": 0},
         "test_start": "2026-04-01", "test_end": "2026-09-30"}
-ROW = {"id": 3, "name": "Flu", "date_column": "datum", "filter_column": "typ", "filter_value": "a"}
+ROW = {"id": 3, "name": "Flu", "date_column": "datum", "filters": '[["typ", "a"]]'}
 DATASET = {"qid": "Q1", "name": "Wastewater", "data_path": "https://doip.example/doip/retrieve/Q1/d.parquet"}
 MODEL = {"name": "m", "docker_image": "img", "docker_tag": "1", "additional_properties": [
     {"name": "prediction_length", "value": 4}, {"name": "history_length", "value": 91}]}
@@ -65,7 +65,7 @@ def _benchmark_state(sql=SQL, path=URL):
                  config=json.dumps({"prediction_length": 27}))
     state["benchmark"] = {"id": 3, "name": "Flu", "dataset_qid": "Q1", "data_commit": COMMIT, "prediction_length": 27,
                           "test_start": "2026-04-01", "test_end": "2026-09-30", "date_column": "datum",
-                          "filter_column": "typ", "filter_value": "a"}
+                          "filters": [["typ", "a"]]}
     return state
 
 

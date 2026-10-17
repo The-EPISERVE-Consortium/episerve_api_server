@@ -12,12 +12,12 @@ from tests.ui_harness import button, click, labels, render
 COMMIT = "0123456789abcdef" * 4
 FINAL = {
     "id": 5, "name": "Flu 2022", "dataset_qid": "Q1", "target_column": "v", "date_column": "datum",
-    "filter_column": "region", "filter_value": "DE", "history_start": None, "history_end": None,
+    "filters": '[["region", "DE"]]', "history_start": None, "history_end": None,
     "test_start": date(2022, 1, 1), "test_end": date(2022, 1, 31), "entry_count": 3, "data_commit": COMMIT,
 }
 DRAFT = {
     "id": 7, "name": "Draft A", "description": "d", "dataset_qid": "Q1", "target_column": "v",
-    "date_column": "datum", "filter_column": None, "filter_value": None, "history_start": None,
+    "date_column": "datum", "filters": None, "history_start": None,
     "history_end": None, "test_start": date(2022, 2, 1), "test_end": date(2022, 2, 28),
     "input_filename": "input.parquet", "entry_count": 0, "data_commit": None,
 }
@@ -116,8 +116,8 @@ def test_designer_saves_a_new_draft_with_parsed_fields(monkeypatch):
     _render(monkeypatch, logged_in=True, after=scenario)
     assert created == [dict(
         name="Flu", description=None, dataset_qid="Q1", target_column="v", date_column="datum",
-        test_start=date(2022, 1, 1), test_end=date(2022, 1, 31), filter_column=None, filter_value=None,
-        history_start=date(2021, 6, 1), history_end=None, input_filename="input.parquet", extra_filters=(), created_by=1)]   # the logged-in user
+        test_start=date(2022, 1, 1), test_end=date(2022, 1, 31), filters=(),
+        history_start=date(2021, 6, 1), history_end=None, input_filename="input.parquet", created_by=1)]   # the logged-in user
 
 
 def test_designer_rejects_bad_dates_without_calling_the_action(monkeypatch):

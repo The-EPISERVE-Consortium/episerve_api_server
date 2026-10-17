@@ -31,7 +31,7 @@ def _parquet(typ="Influenza A+B"):
 
 def _row(**overrides):
     base = {"id": 3, "name": "Flu", "description": None, "dataset_qid": "Q1", "target_column": "v",
-            "date_column": "datum", "filter_column": "typ", "filter_value": "Influenza A+B",
+            "date_column": "datum", "filters": '[["typ", "Influenza A+B"]]',
             "test_start": date(2026, 4, 1), "test_end": date(2026, 9, 30), "history_start": None,
             "history_end": None, "input_filename": "input.parquet", "component_name": None,
             "prediction_length": None, "truth_points": None, "data_commit": None, "created_by": 7,
@@ -67,8 +67,7 @@ def world(monkeypatch):
 
 def _create(**kw):
     args = dict(name=" Flu 2026 ", description=None, dataset_qid="Q1", target_column="v", date_column="datum",
-                test_start=date(2026, 4, 1), test_end=date(2026, 9, 30), filter_column="typ",
-                filter_value="Influenza A+B")
+                test_start=date(2026, 4, 1), test_end=date(2026, 9, 30), filters=[("typ", "Influenza A+B")])
     return actions.create_draft(**{**args, **kw})
 
 
@@ -88,10 +87,10 @@ def test_create_draft_rejects_invalid_definitions_and_unknown_datasets(world):
 
 
 def test_update_draft_merges_only_the_given_fields(world):
-    actions.update_draft(3, name="Renamed", history_start=date(2025, 12, 3), filter_column=None, filter_value=None)
+    actions.update_draft(3, name="Renamed", history_start=date(2025, 12, 3), filters=None)
     bid, name, desc, b = world["log"]["updated"][0]
     assert (bid, name) == (3, "Renamed") and b.history_start == date(2025, 12, 3)
-    assert b.filter_column is None and b.target_column == "v" and b.test_end == date(2026, 9, 30)
+    assert b.filters == () and b.target_column == "v" and b.test_end == date(2026, 9, 30)
 
 
 def test_update_draft_refuses_final_unknown_and_invalid(world):
@@ -123,7 +122,7 @@ def test_check_reports_data_problems_instead_of_raising(world):
 
 def test_check_flags_a_filter_value_the_qualification_rules_cannot_accept(world):
     world["state"]["data"] = _parquet(typ="NOT AVAILABLE")
-    world["state"]["row"] = _row(filter_value="NOT AVAILABLE")
+    world["state"]["row"] = _row(filters='[["typ", "NOT AVAILABLE"]]')
     report = actions.check(3)
     assert not report.ok and any("qualification rules" in p for p in report.problems)
 
@@ -261,12 +260,11 @@ def test_a_draft_without_a_recorded_creator_can_only_be_finalized_by_an_admin(wo
 
 
 def test_create_and_update_a_draft_with_several_filters(world):
-    _create(extra_filters=[("age", "35-59")], created_by=CREATOR.id)
-    benchmark = world["log"]["created"][0][2]
-    assert benchmark.all_filters() == [("typ", "Influenza A+B"), ("age", "35-59")]
+    _create(filters=[("typ", "Influenza A+B"), ("age", "35-59")], created_by=CREATOR.id)
+    assert world["log"]["created"][0][2].filters == (("typ", "Influenza A+B"), ("age", "35-59"))
     actions.update_draft(3, filters=[{"column": "typ", "value": "x"}, {"column": "age", "value": "1"}])
-    assert world["log"]["updated"][0][3].all_filters() == [("typ", "x"), ("age", "1")]
+    assert world["log"]["updated"][0][3].filters == (("typ", "x"), ("age", "1"))
     actions.update_draft(3, filters=[])
-    assert world["log"]["updated"][1][3].all_filters() == []
-    actions.update_draft(3, filter_column=None, filter_value=None)       # removing the first filter drops the others
-    assert world["log"]["updated"][2][3].all_filters() == []
+    assert world["log"]["updated"][1][3].filters == ()
+    actions.update_draft(3, filters=None)                                  # null removes them as well
+    assert world["log"]["updated"][2][3].filters == ()

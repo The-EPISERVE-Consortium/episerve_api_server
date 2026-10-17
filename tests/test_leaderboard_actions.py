@@ -14,7 +14,7 @@ COMMIT = "0123abcd" * 8
 _real_truth_from_pin = actions.loaders.truth_from_pin
 DATES = pd.to_datetime(["2022-01-05", "2022-01-12"])
 ROW = {"id": 3, "name": "Flu", "dataset_qid": "Q1", "target_column": "v", "date_column": "datum",
-       "filter_column": None, "filter_value": None, "test_start": date(2022, 1, 1),
+       "filters": None, "test_start": date(2022, 1, 1),
        "test_end": date(2022, 1, 31), "truth_points": 2, "created_at": "t", "retired_at": None,
        "entry_count": 0}
 FINAL_ROW = {**ROW, "finalized_at": "2026-10-16 11:00:00", "data_commit": COMMIT, "component_name": "d.parquet",

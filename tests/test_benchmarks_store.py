@@ -9,7 +9,7 @@ from app.benchmarks.definition import Benchmark
 from app.benchmarks.errors import NotDraft
 from tests.fakes import FakeConn
 
-BENCH = Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30), "typ", "a",
+BENCH = Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30), (("typ", "a"),),
                   history_start=date(2024, 1, 3), history_end=date(2026, 3, 25), input_filename="input.parquet")
 
 
@@ -62,8 +62,8 @@ def test_lists_and_get_use_state_filters_and_count_active_entries(monkeypatch):
 
 
 def test_state_and_benchmark_from_row():
-    row = {"dataset_qid": "Q1", "target_column": "v", "date_column": "datum", "filter_column": None,
-           "filter_value": None, "test_start": date(2026, 4, 1), "test_end": date(2026, 9, 30),
+    row = {"dataset_qid": "Q1", "target_column": "v", "date_column": "datum", "filters": None,
+           "test_start": date(2026, 4, 1), "test_end": date(2026, 9, 30),
            "history_start": None, "history_end": date(2026, 3, 25), "input_filename": "input.parquet",
            "prediction_length": 27, "data_commit": "c" * 40, "finalized_at": "t", "retired_at": None}
     b = store.benchmark_from_row(row)
@@ -105,12 +105,11 @@ def test_create_draft_stores_the_creator(monkeypatch):
     assert "created_by" in sql and params[-1] == 18
 
 
-def test_the_extra_filters_are_stored_as_json_and_read_back():
-    row = {"dataset_qid": "Q1", "target_column": "v", "date_column": "datum", "filter_column": "typ", "filter_value": "a",
-           "extra_filters": '[["age", "35-59"]]', "test_start": date(2026, 4, 1), "test_end": date(2026, 9, 30)}
-    assert store.benchmark_from_row(row).extra_filters == (("age", "35-59"),)
-    assert store.benchmark_from_row({**row, "extra_filters": None}).extra_filters == ()
-    bench = Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30), "typ", "a",
-                      extra_filters=(("age", "35-59"),))
-    assert store._definition_params("n", None, bench)[-1] == '[["age", "35-59"]]'
-    assert store._definition_params("n", None, Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30)))[-1] is None
+def test_the_filters_are_stored_as_json_and_read_back():
+    row = {"dataset_qid": "Q1", "target_column": "v", "date_column": "datum", "filters": '[["typ", "a"], ["age", "35-59"]]',
+           "test_start": date(2026, 4, 1), "test_end": date(2026, 9, 30)}
+    assert store.benchmark_from_row(row).filters == (("typ", "a"), ("age", "35-59"))
+    assert store.benchmark_from_row({**row, "filters": None}).filters == ()
+    bench = Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30), (("typ", "a"), ("age", "35-59")))
+    assert store._definition_params("n", None, bench)[5] == '[["typ", "a"], ["age", "35-59"]]'
+    assert store._definition_params("n", None, Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30)))[5] is None

@@ -97,7 +97,7 @@ class BenchmarkCreate(BaseModel):
     test_end: date
     filter_column: str | None = None
     filter_value: str | None = None
-    filters: list[FilterIn] | None = None  # up to 3; when given it replaces filter_column / filter_value
+    filters: list[FilterIn] | None = None  # up to 3; when given it is used instead of filter_column / filter_value
     history_start: date | None = None
     history_end: date | None = None
     input_filename: str = "input.parquet"

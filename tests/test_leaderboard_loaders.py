@@ -79,7 +79,7 @@ def test_parse_truth_reads_window_and_series():
         "value": [1.0, 10.0, 20.0, 99.0],
         "typ": ["a", "a", "a", "b"],
     })
-    bench = Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": "a"})
+    bench = Benchmark(**{**BENCH.__dict__, "filters": (("typ", "a"),)})
     truth = loaders.parse_truth(_parquet_bytes(source), bench)
     assert truth["truth"].tolist() == [10.0, 20.0]
 
@@ -127,9 +127,8 @@ def test_parse_truth_with_two_filters_reads_exactly_one_series():
         "age": ["young", "old", "young", "young"],
         "value": [1.0, 2.0, 3.0, 4.0],
     })
-    bench = Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": "a",
-                         "extra_filters": (("age", "young"),)})
+    bench = Benchmark(**{**BENCH.__dict__, "filters": (("typ", "a"), ("age", "young"))})
     truth = loaders.parse_truth(_parquet_bytes(source), bench)
     assert truth["truth"].tolist() == [1.0, 4.0]                    # one row per date: no duplicates
     with pytest.raises(loaders.LoadError, match="several observations"):
-        loaders.parse_truth(_parquet_bytes(source), Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": "a"}))
+        loaders.parse_truth(_parquet_bytes(source), Benchmark(**{**BENCH.__dict__, "filters": (("typ", "a"),)}))

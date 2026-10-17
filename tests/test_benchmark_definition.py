@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import pytest
 
 from app.benchmarks.definition import (
-    Benchmark, DefinitionError, derive_horizon, evaluation_sql, filters_from_row, input_sql, split_filters, validate,
+    Benchmark, DefinitionError, derive_horizon, evaluation_sql, filters_from_row, input_sql, normalize_filters, validate,
 )
 from app.leaderboard.entries import HistoryWindow, has_equality_filter, parse_history_window
 
@@ -14,7 +14,7 @@ def _b(**overrides):
     base = dict(
         dataset_qid="Q9493814122238", target_column="viruslast_normalisiert", date_column="datum",
         test_start=date(2026, 4, 1), test_end=date(2026, 9, 30),
-        filter_column="typ", filter_value="Influenza A+B", history_end=date(2026, 3, 25),
+        filters=(("typ", "Influenza A+B"),), history_end=date(2026, 3, 25),
     )
     return Benchmark(**{**base, **overrides})
 
@@ -28,14 +28,14 @@ def test_input_sql_with_filter_and_history_start():
 
 
 def test_input_sql_without_filter_and_start():
-    assert input_sql(_b(filter_column=None, filter_value=None)) == (
+    assert input_sql(_b(filters=())) == (
         'SELECT CAST("datum" AS DATE) AS "datum", "viruslast_normalisiert" FROM df '
         "WHERE CAST(\"datum\" AS DATE) <= DATE '2026-03-25' ORDER BY \"datum\""
     )
 
 
 def test_input_sql_escapes_quotes_in_identifiers_and_values():
-    sql = input_sql(_b(target_column='a"b', filter_value="O'Brien"))
+    sql = input_sql(_b(target_column='a"b', filters=(("typ", "O'Brien"),)))
     assert '"a""b"' in sql and "'O''Brien'" in sql
 
 
@@ -48,8 +48,8 @@ def test_generated_sql_is_accepted_by_the_qualification_rules():
 @pytest.mark.parametrize("name,overrides,message", [
     ("  ", {}, "name"),
     ("ok", {"dataset_qid": "bad"}, "dataset"),
-    ("ok", {"filter_column": None, "filter_value": "x"}, "needs a filter column"),
-    ("ok", {"filter_column": "typ", "filter_value": None}, "filter value"),
+    ("ok", {"filters": (("", "x"),)}, "filter column must be"),
+    ("ok", {"filters": (("typ", ""),)}, "filter value"),
     ("ok", {"input_filename": "../x.parquet"}, "file name"),
     ("ok", {"test_start": date(2026, 10, 1)}, "test start"),
     ("ok", {"history_end": date(2026, 4, 1)}, "history must end before"),
@@ -93,37 +93,32 @@ def test_evaluation_sql_selects_the_test_window_of_the_series():
 
 
 def _two(**overrides):
-    return _b(extra_filters=(("Altersgruppe", "35-59"),), **overrides)
+    return _b(filters=(("typ", "Influenza A+B"), ("Altersgruppe", "35-59")), **overrides)
 
 
 def test_sql_applies_every_filter_and_the_qualification_rules_accept_it():
     b = _two()
-    assert b.all_filters() == [("typ", "Influenza A+B"), ("Altersgruppe", "35-59")]
+    assert b.filters == (("typ", "Influenza A+B"), ("Altersgruppe", "35-59"))
     sql = input_sql(b)
     assert "\"typ\" = 'Influenza A+B' AND \"Altersgruppe\" = '35-59' AND CAST" in sql
     assert evaluation_sql(b).count(" = '") == 2
-    assert all(has_equality_filter(sql, column, value) for column, value in b.all_filters())
+    assert all(has_equality_filter(sql, column, value) for column, value in b.filters)
 
 
 def test_several_filters_are_validated():
     validate(_two(), "Name")
-    validate(_b(extra_filters=(("a", "1"), ("b", "2"))), "Name")                   # three in all
+    validate(_b(filters=(("typ", "x"), ("a", "1"), ("b", "2"))), "Name")                   # three in all
     with pytest.raises(DefinitionError, match="At most 3"):
-        validate(_b(extra_filters=(("a", "1"), ("b", "2"), ("c", "3"))), "Name")
+        validate(_b(filters=(("typ", "x"), ("a", "1"), ("b", "2"), ("c", "3"))), "Name")
     with pytest.raises(DefinitionError, match="only once"):
-        validate(_b(extra_filters=(("TYP", "x"),)), "Name")
-    with pytest.raises(DefinitionError, match="first filter"):
-        validate(_b(filter_column=None, filter_value=None, extra_filters=(("a", "1"),)), "Name")
+        validate(_b(filters=(("typ", "x"), ("TYP", "y"))), "Name")
     with pytest.raises(DefinitionError, match="value"):
-        validate(_b(extra_filters=(("a", ""),)), "Name")
+        validate(_b(filters=(("typ", "x"), ("a", ""))), "Name")
 
 
 def test_filters_convert_between_the_row_the_api_and_the_definition():
-    assert filters_from_row({"filter_column": "typ", "filter_value": "a", "extra_filters": '[["age", "35-59"]]'}) == [
-        ("typ", "a"), ("age", "35-59")]
-    assert filters_from_row({"filter_column": "typ", "filter_value": "a", "extra_filters": None}) == [("typ", "a")]
-    assert filters_from_row({"filter_column": None, "filter_value": None}) == []
-    assert split_filters([{"column": " typ ", "value": "a"}, {"column": "age", "value": "1"}]) == (
-        "typ", "a", (("age", "1"),))
-    assert split_filters([]) == (None, None, ())
-
+    assert filters_from_row({"filters": '[["typ", "a"], ["age", "35-59"]]'}) == [("typ", "a"), ("age", "35-59")]
+    assert filters_from_row({"filters": [["typ", "a"]]}) == [("typ", "a")]
+    assert filters_from_row({"filters": None}) == [] and filters_from_row({}) == [] and filters_from_row({"filters": ""}) == []
+    assert normalize_filters([{"column": " typ ", "value": "a"}, ("age", "1")]) == (("typ", "a"), ("age", "1"))
+    assert normalize_filters(None) == () and normalize_filters([]) == ()

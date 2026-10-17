@@ -18,9 +18,9 @@ def test_baselines_are_recognised_by_name():
 
 
 def test_overview_facts_name_the_series_the_horizon_and_the_runs():
-    row = {"target_column": "v", "filter_column": "typ", "filter_value": "a", "prediction_length": 8, "entry_count": 2}
+    row = {"target_column": "v", "filters": '[["typ", "a"]]', "prediction_length": 8, "entry_count": 2}
     assert overview_facts(row) == [("Series", "v · typ = a"), ("Forecast horizon", "8 steps"), ("Runs", "2")]
-    bare = {"target_column": "v", "filter_column": None, "prediction_length": None}
+    bare = {"target_column": "v", "filters": None, "prediction_length": None}
     assert overview_facts(bare) == [("Series", "v"), ("Forecast horizon", "—")]
 
 
@@ -43,6 +43,6 @@ def test_overview_names_the_creator_when_known():
 
 def test_the_overview_names_every_filter():
     from app.leaderboard.about import overview_facts
-    row = {"target_column": "Faelle_7-Tage", "filter_column": "Bundesland_id", "filter_value": "5",
-           "extra_filters": '[["Altersgruppe", "35-59"]]', "prediction_length": 28}
+    row = {"target_column": "Faelle_7-Tage", "filters": '[["Bundesland_id", "5"], ["Altersgruppe", "35-59"]]',
+           "prediction_length": 28}
     assert ("Series", "Faelle_7-Tage · Bundesland_id = 5, Altersgruppe = 35-59") in overview_facts(row)

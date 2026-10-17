@@ -9,7 +9,7 @@ SQL = ("SELECT CAST(\"datum\" AS DATE) AS \"datum\", \"v\" FROM df WHERE \"typ\"
 SPEC = {"benchmark_id": 3, "dataset_qid": "Q1", "data_commit": COMMIT, "input_data_files": [[URL, "input.parquet"]],
         "data_transformation_sql": [SQL], "config": {"prediction_length": 27, "prediction_offset": 0},
         "test_start": "2026-04-01", "test_end": "2026-09-30"}
-ROW = {"id": 3, "name": "Flu", "date_column": "datum", "filter_column": "typ", "filter_value": "a"}
+ROW = {"id": 3, "name": "Flu", "date_column": "datum", "filters": '[["typ", "a"]]'}
 DATASET = {"qid": "Q1", "name": "Wastewater", "data_path": "https://doip.example/doip/retrieve/Q1/d.parquet"}
 
 
@@ -46,7 +46,7 @@ def test_problems_are_explained():
 
 
 def test_every_filter_of_a_benchmark_with_several_filters_must_be_in_the_sql():
-    row = {**ROW, "extra_filters": '[["age", "35-59"]]'}
+    row = {**ROW, "filters": '[["typ", "a"], ["age", "35-59"]]'}
     b = apply_benchmark(_state(), SPEC, DATASET, row)["benchmark"]
     assert b["filters"] == [["typ", "a"], ["age", "35-59"]]
     two = SQL.replace("WHERE \"typ\" = 'a'", "WHERE \"typ\" = 'a' AND \"age\" = '35-59'")

@@ -49,13 +49,13 @@ def description_text(row: dict) -> str:
     """The benchmark's own description, or a sentence generated from its definition."""
     if row.get("description"):
         return row["description"]
-    subject = f"{row['target_column']} for {_filter_text(row)}" if row.get("filter_column") else row["target_column"]
+    subject = f"{row['target_column']} for {_filter_text(row)}" if filters_from_row(row) else row["target_column"]
     return f"Forecast of {subject} over a test window of {row['test_start']} → {row['test_end']}."
 
 
 def overview_facts(row: dict) -> list[tuple[str, str]]:
     """What is forecast and how much has been run; the data details are on the Data tab."""
-    series = f"{row['target_column']} · {_filter_text(row)}" if row.get("filter_column") else row["target_column"]
+    series = f"{row['target_column']} · {_filter_text(row)}" if filters_from_row(row) else row["target_column"]
     length = row.get("prediction_length")
     facts = [("Series", series), ("Forecast horizon", f"{length} steps" if length else "—")]
     if row.get("created_by_name"):

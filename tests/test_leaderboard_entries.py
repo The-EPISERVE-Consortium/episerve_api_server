@@ -69,7 +69,7 @@ def test_unparseable_sql_is_cannot_be_scored():
 
 
 def test_missing_filter_in_sql_is_cannot_be_scored():
-    result = qualify_run(_run(), _benchmark(filter_column="typ", filter_value="RSV A"))
+    result = qualify_run(_run(), _benchmark(filters=(("typ", "RSV A"),)))
     assert result.relevant and "filter" in result.reason
 
 
@@ -154,7 +154,7 @@ def test_strict_run_still_applies_status_leakage_and_filter_rules():
     assert "failed" in qualify_run(_run(status="failed"), _strict(), inputs=[_input()]).reason
     leaky = _input(sql="SELECT * FROM df WHERE CAST(datum AS DATE) <= DATE '2026-04-10'")
     assert "test start" in qualify_run(_run(), _strict(), inputs=[leaky]).reason
-    missing_filter = replace(_strict(), filter_column="typ", filter_value="RSV A")
+    missing_filter = replace(_strict(), filters=(("typ", "RSV A"),))
     assert "filter" in qualify_run(_run(), missing_filter, inputs=[_input()]).reason
     assert qualify_run(_run(input_dataset_qids=["Q5"]), _strict(), inputs=[_input()]).relevant is False
 
@@ -169,10 +169,10 @@ def test_strict_run_listing_the_dataset_twice_is_refused_even_if_one_is_pinned()
 def test_every_filter_of_a_benchmark_must_be_in_the_runs_sql():
     sql = "SELECT * FROM df WHERE typ = 'RSV A' AND CAST(datum AS DATE) <= DATE '2021-12-31'"
     run = _run(data_transformation_sql=[sql])
-    one = qualify_run(run, _benchmark(filter_column="typ", filter_value="RSV A"))
+    one = qualify_run(run, _benchmark(filters=(("typ", "RSV A"),)))
     assert one.reason is None
-    two = qualify_run(run, _benchmark(filter_column="typ", filter_value="RSV A", extra_filters=(("age", "35-59"),)))
+    two = qualify_run(run, _benchmark(filters=(("typ", "RSV A"), ("age", "35-59"))))
     assert two.relevant and "filter age = '35-59' not found" in two.reason
     both = sql.replace("WHERE typ = 'RSV A'", "WHERE typ = 'RSV A' AND age = '35-59'")
     assert qualify_run(_run(data_transformation_sql=[both]),
-                       _benchmark(filter_column="typ", filter_value="RSV A", extra_filters=(("age", "35-59"),))).reason is None
+                       _benchmark(filters=(("typ", "RSV A"), ("age", "35-59")))).reason is None

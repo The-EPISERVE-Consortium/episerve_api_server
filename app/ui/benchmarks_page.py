@@ -48,7 +48,7 @@ def _input_range(row: dict) -> str:
 
 
 def _filter_text(row: dict) -> str:
-    return f"{row['filter_column']} = {row.get('filter_value') or ''}" if row.get("filter_column") else "none"
+    return ", ".join(f"{column} = {value}" for column, value in filters_from_row(row)) or "none"
 
 
 def _pretty_date(value) -> str:
@@ -111,14 +111,12 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
         date_col = text_input("Date column", row.get("date_column") or "datum")
         t_start = text_input("Test start (C)", _fmt(row.get("test_start")), placeholder="YYYY-MM-DD")
         t_end = text_input("Test end (D)", _fmt(row.get("test_end")), placeholder="YYYY-MM-DD")
-        fcol = text_input("Filter column (optional)", row.get("filter_column") or "")
-        fval = text_input("Filter value", row.get("filter_value") or "")
-        stored_extra = filters_from_row(row)[1:]
-        further = []     # up to two more filters, so the series can be narrowed by up to three columns
-        for i in range(2):
-            column, value = stored_extra[i] if i < len(stored_extra) else ("", "")
-            further.append((text_input("Further filter column (optional)", column),
-                            text_input("Further filter value", value)))
+        stored = filters_from_row(row)
+        filter_inputs = []     # up to three filters, so the series can be narrowed by up to three columns
+        for i in range(3):
+            column, value = stored[i] if i < len(stored) else ("", "")
+            filter_inputs.append((text_input("Filter column (optional)" if i == 0 else "Further filter column (optional)", column),
+                                  text_input("Filter value" if i == 0 else "Further filter value", value)))
         h_start = text_input("History start (optional)", _fmt(row.get("history_start")), placeholder="YYYY-MM-DD")
         h_end = text_input("History end (blank = last date before C)", _fmt(row.get("history_end")),
                            placeholder="YYYY-MM-DD")
@@ -143,9 +141,8 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
                 date_column=date_col.value or "",
                 test_start=_parse_date(t_start.value, "test start", required=True),
                 test_end=_parse_date(t_end.value, "test end", required=True),
-                filter_column=(fcol.value or "").strip() or None, filter_value=fval.value or None,
-                extra_filters=tuple(((c.value or "").strip(), v.value or "") for c, v in further
-                                    if (c.value or "").strip() or (v.value or "")),
+                filters=tuple(((c.value or "").strip(), v.value or "") for c, v in filter_inputs
+                              if (c.value or "").strip() or (v.value or "")),
                 history_start=_parse_date(h_start.value, "history start", required=False),
                 history_end=_parse_date(h_end.value, "history end", required=False),
                 input_filename=(filename.value or "").strip() or "input.parquet",
@@ -404,7 +401,7 @@ def register_benchmarks_page() -> None:
                                 ui.label(b["name"]).classes("text-lg font-semibold text-gray-900")
                                 ui.label(description_text(b)).classes("text-sm text-gray-600 line-clamp-2")
                                 meta = [f"Dataset {b['dataset_qid']}", b["target_column"]]
-                                if b.get("filter_column"):
+                                if filters_from_row(b):
                                     meta.append(_filter_text(b))
                                 ui.label(" · ".join(meta)).classes("text-xs text-gray-500 italic")
                             with ui.column().classes("w-44 shrink-0 items-center justify-center gap-2 text-white"

@@ -14,7 +14,7 @@ from tests.ui_harness import click, render
 BENCH = Benchmark("Q1", "v", "datum", date(2022, 1, 1), date(2022, 1, 31))
 COMMIT = "0123abcd" * 8
 ROW = {"id": 3, "name": "Flu", "dataset_qid": "Q1", "target_column": "v", "date_column": "datum",
-       "filter_column": "region", "filter_value": "DE", "test_start": date(2022, 1, 1),
+       "filters": '[["region", "DE"]]', "test_start": date(2022, 1, 1),
        "test_end": date(2022, 1, 31), "prediction_length": 5, "data_commit": COMMIT}
 
 

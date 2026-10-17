@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from app.auth import optional_user, require_right
 from app.users import User
 from app.benchmarks import actions as bactions, store as bstore
-from app.benchmarks.definition import DefinitionError, filters_from_row, split_filters
+from app.benchmarks.definition import DefinitionError, filters_from_row
 from app.leaderboard import actions as lactions
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
@@ -37,13 +37,29 @@ def _iso(value) -> str | None:
     return value.isoformat() if value else None
 
 
+def _single_filter(column: str | None, value: str | None) -> list[dict]:
+    """The older ``filter_column`` / ``filter_value`` pair as a list of filters."""
+    return [{"column": column, "value": value or ""}] if column else []
+
+
+def _patch_fields(request: BenchmarkPatch) -> dict:
+    """The fields sent in a PATCH; the older filter pair is turned into ``filters`` unless ``filters`` is sent."""
+    fields = request.model_dump(exclude_unset=True)
+    if "filters" not in fields and ("filter_column" in fields or "filter_value" in fields):
+        fields["filters"] = _single_filter(fields.get("filter_column"), fields.get("filter_value"))
+    fields.pop("filter_column", None)
+    fields.pop("filter_value", None)
+    return fields
+
+
 def _benchmark_out(row: dict) -> BenchmarkOut:
     return BenchmarkOut(
         id=row["id"], name=row["name"], state=bstore.state(row), description=row.get("description"),
         created_by=row.get("created_by_name"),
         dataset_qid=row["dataset_qid"], target_column=row["target_column"],
-        date_column=row["date_column"], filter_column=row.get("filter_column"),
-        filter_value=row.get("filter_value"), filters=[{"column": c, "value": v} for c, v in filters_from_row(row)],
+        date_column=row["date_column"], filter_column=(filters_from_row(row) or [(None, None)])[0][0],
+        filter_value=(filters_from_row(row) or [(None, None)])[0][1],
+        filters=[{"column": c, "value": v} for c, v in filters_from_row(row)],
         test_start=row["test_start"].isoformat(),
         test_end=row["test_end"].isoformat(), history_start=_iso(row.get("history_start")),
         history_end=_iso(row.get("history_end")), input_filename=row.get("input_filename") or "input.parquet",
@@ -122,17 +138,14 @@ def get_leaderboard(
 def create_benchmark(request: BenchmarkCreate, user: User = Depends(require_right("benchmarks"))):
     """Create a draft benchmark (the series can be narrowed by up to three equality filters)."""
     try:
-        if request.filters is not None:
-            filter_column, filter_value, extra_filters = split_filters(request.filters)
-        else:
-            filter_column, filter_value, extra_filters = request.filter_column, request.filter_value, ()
+        filters = request.filters if request.filters is not None else _single_filter(
+            request.filter_column, request.filter_value)
         benchmark_id = bactions.create_draft(
             name=request.name, description=request.description, dataset_qid=request.dataset_qid,
             target_column=request.target_column, date_column=request.date_column,
-            test_start=request.test_start, test_end=request.test_end, filter_column=filter_column,
-            filter_value=filter_value, history_start=request.history_start,
+            test_start=request.test_start, test_end=request.test_end, filters=filters,
+            history_start=request.history_start,
             history_end=request.history_end, input_filename=request.input_filename, created_by=user.id,
-            extra_filters=extra_filters,
         )
         return _benchmark_out(bactions.get(benchmark_id, include_draft=True))
     except Exception as e:
@@ -143,7 +156,7 @@ def create_benchmark(request: BenchmarkCreate, user: User = Depends(require_righ
 def update_benchmark(benchmark_id: int, request: BenchmarkPatch):
     """Change fields of a draft (only the fields sent; null clears an optional field)."""
     try:
-        bactions.update_draft(benchmark_id, **request.model_dump(exclude_unset=True))
+        bactions.update_draft(benchmark_id, **_patch_fields(request))
         return _benchmark_out(bactions.get(benchmark_id, include_draft=True))
     except Exception as e:
         raise _http(e)

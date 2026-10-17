@@ -20,7 +20,7 @@ client = TestClient(app)
 AUTH = bearer(ADMIN)
 COMMIT = "0123abcd" * 8
 ROW = {"id": 3, "name": "Flu", "description": None, "dataset_qid": "Q1", "target_column": "v",
-       "date_column": "datum", "filter_column": None, "filter_value": None, "test_start": date(2022, 1, 1),
+       "date_column": "datum", "filters": None, "test_start": date(2022, 1, 1),
        "test_end": date(2022, 1, 31), "history_start": None, "history_end": date(2021, 12, 31),
        "input_filename": "input.parquet", "component_name": "d.parquet", "prediction_length": 31,
        "truth_points": 2, "data_commit": COMMIT, "created_at": "2026-10-16 10:00:00",
@@ -212,16 +212,30 @@ def test_finalizing_a_draft_of_someone_else_is_forbidden(monkeypatch):
 def test_a_draft_can_be_created_with_a_list_of_filters_and_the_answer_lists_them(monkeypatch):
     calls = []
     monkeypatch.setattr(router.bactions, "create_draft", lambda **kw: calls.append(kw) or 4)
-    row = {**DRAFT, "filter_column": "Bundesland_id", "filter_value": "5", "extra_filters": '[["Altersgruppe", "35-59"]]'}
+    row = {**DRAFT, "filters": '[["Bundesland_id", "5"], ["Altersgruppe", "35-59"]]'}
     monkeypatch.setattr(router.bactions, "get", lambda bid, include_draft=False: row)
     body = {**BODY, "filters": [{"column": "Bundesland_id", "value": "5"}, {"column": "Altersgruppe", "value": "35-59"}]}
     created = client.post("/benchmarks", json=body, headers=AUTH)
     assert created.status_code == 201
-    assert (calls[0]["filter_column"], calls[0]["filter_value"], calls[0]["extra_filters"]) == (
-        "Bundesland_id", "5", (("Altersgruppe", "35-59"),))
+    assert [(f.column, f.value) for f in calls[0]["filters"]] == [("Bundesland_id", "5"), ("Altersgruppe", "35-59")]
     out = created.json()
     assert out["filters"] == [{"column": "Bundesland_id", "value": "5"}, {"column": "Altersgruppe", "value": "35-59"}]
     assert out["filter_column"] == "Bundesland_id"                     # the first one stays visible for older clients
     # the older single filter fields still work
     client.post("/benchmarks", json={**BODY, "filter_column": "typ", "filter_value": "a"}, headers=AUTH)
-    assert (calls[1]["filter_column"], calls[1]["extra_filters"]) == ("typ", ())
+    assert calls[1]["filters"] == [{"column": "typ", "value": "a"}]
+
+
+def test_patch_accepts_the_older_filter_pair_and_the_new_list(monkeypatch):
+    calls = []
+    monkeypatch.setattr(router.bactions, "update_draft", lambda bid, **kw: calls.append(kw))
+    monkeypatch.setattr(router.bactions, "get", lambda bid, include_draft=False: DRAFT)
+    client.patch("/benchmarks/4", json={"filter_column": "typ", "filter_value": "a"}, headers=AUTH)
+    client.patch("/benchmarks/4", json={"filter_column": None, "filter_value": None}, headers=AUTH)
+    client.patch("/benchmarks/4", json={"filters": [{"column": "a", "value": "1"}, {"column": "b", "value": "2"}]}, headers=AUTH)
+    client.patch("/benchmarks/4", json={"name": "Only the name"}, headers=AUTH)
+    assert calls[0] == {"filters": [{"column": "typ", "value": "a"}]}
+    assert calls[1] == {"filters": []}
+    assert [(f["column"], f["value"]) for f in calls[2]["filters"]] == [("a", "1"), ("b", "2")]
+    assert calls[3] == {"name": "Only the name"}                      # filters untouched when not sent
+

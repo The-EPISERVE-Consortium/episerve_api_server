@@ -65,10 +65,10 @@ def _read_series(
     require_unique: bool, empty_message: str,
 ) -> pd.DataFrame:
     """Read ``date``/``truth`` rows between ``start`` and ``end`` (inclusive), sorted by date."""
-    if benchmark.filter_column and benchmark.filter_value is None:
+    if any(value is None for _, value in benchmark.filters):
         raise LoadError("filter value is required with a filter column")
     needed = [benchmark.date_column, benchmark.target_column]
-    needed += [column for column, _ in benchmark.all_filters()]
+    needed += [column for column, _ in benchmark.filters]
     try:
         names = pq.read_schema(BytesIO(data)).names
         for name in needed:
@@ -81,7 +81,7 @@ def _read_series(
     target_sql = _column_sql(benchmark.target_column, names)
     where = f"TRY_CAST({date_sql} AS DATE) BETWEEN ? AND ?"
     values: list = [start, end]
-    for column, value in benchmark.all_filters():
+    for column, value in benchmark.filters:
         where += f" AND CAST({_column_sql(column, names)} AS VARCHAR) = ?"
         values.append(value)
     try:
