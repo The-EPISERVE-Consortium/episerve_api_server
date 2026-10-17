@@ -155,3 +155,13 @@ def test_step5_blocks_a_config_without_a_required_parameter(monkeypatch):
     _step5(monkeypatch, state, after)
     assert triggered == []
     assert any("missing required parameter 'history_length'" in n for n in notes)
+
+
+def test_the_workflow_pages_show_the_api_box_for_starting_a_run(monkeypatch):
+    seen = {}
+
+    def after(out, client, find, drain):
+        seen["labels"] = labels(find)
+
+    _step5(monkeypatch, _benchmark_state(), after)
+    assert "curl -X POST http://test/model-runs" in seen["labels"]

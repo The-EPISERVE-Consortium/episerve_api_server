@@ -331,3 +331,32 @@ def test_data_tab_survives_a_missing_run_spec(monkeypatch):
     assert out["status"] == 200 and len(out["facts"]) == 1
     assert not any("SELECT" in c for c in out["code"])
     assert "The input URL and SQL are not available right now." in out["labels"]
+
+
+# --- two tabs: Leaderboard (default) and Get Started with a section menu ---------------------------------------
+
+
+def test_page_opens_on_the_leaderboard_and_has_a_get_started_tab_with_sections(monkeypatch):
+    out = _render(monkeypatch, board=_board([_entry()]))
+    tabs = out["find"](ui.tabs)
+    names = [t.props.get("name") for t in out["find"](ui.tab)]
+    assert names == ["leaderboard", "get-started", "overview", "data", "evaluation", "run"]
+    assert tabs[0].value == "leaderboard"
+
+
+def test_a_section_name_in_the_query_opens_get_started_at_that_section(monkeypatch):
+    out = _render(monkeypatch, board=_board([_entry()]), path="/ui/benchmarks/3?tab=evaluation")
+    outer, inner = out["find"](ui.tabs)
+    assert (outer.value, inner.value) == ("get-started", "evaluation")
+
+
+def test_the_header_of_the_page_holds_only_the_title_and_the_api_box(monkeypatch):
+    out = _render(monkeypatch, board=_board([_entry()]))
+    assert "Flu" in out["labels"]
+    assert "curl http://test/benchmarks/3/leaderboard" in out["labels"]
+    assert not any(t.startswith(("Organized by", "Dataset:", "Test window:")) for t in out["labels"])
+
+
+def test_the_run_page_shows_the_api_box_too(monkeypatch):
+    out = _render(monkeypatch, board=_board([_entry()]), path="/ui/benchmarks/3/runs/Q10")
+    assert "curl http://test/benchmarks/3/leaderboard?all_runs=true" in out["labels"]

@@ -302,7 +302,7 @@ def register_benchmarks_page() -> None:
 
     @ui.page("/ui/benchmarks")
     def benchmarks_page(request: Request):
-        _header("/ui/benchmarks")
+        _header("/ui/benchmarks", api="benchmarks")
         logged_in = _is_logged_in()
         reload = ui.navigate.reload
 

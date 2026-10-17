@@ -14,7 +14,7 @@ from app.leaderboard.scoring import NotScorable
 from app.leaderboard.present import (
     LABELS, chart_option, filter_entries, history_window, point_rows, summary, table_rows,
 )
-from app.ui.pages import _api_box, _error_label, _header
+from app.ui.pages import _error_label, _header
 
 logger = logging.getLogger(__name__)
 
@@ -98,8 +98,9 @@ async def _add_run_dialog(benchmark_id: int) -> None:
                     ui.label(f"{c['model_name']} ({c['qid']}): {c['reason']}").classes("text-sm text-gray-600")
 
 
-_TABS = [("overview", "Overview"), ("data", "Data"), ("evaluation", "Evaluation"), ("leaderboard", "Leaderboard")]
-_DEFAULT_TAB = "overview"
+_TABS = [("leaderboard", "Leaderboard"), ("get-started", "Get Started")]
+_SECTIONS = [("overview", "Overview"), ("data", "Data"), ("evaluation", "Evaluation"), ("run", "Run a model")]
+_DEFAULT_TAB = "leaderboard"
 _MODEL_CELL = (
     "<q-td :props='props'>{{ props.value.split('__').join('__\\u200b') }}"
     "<q-badge v-if='props.row.baseline' color='grey-7' class='q-ml-sm'>baseline</q-badge></q-td>"
@@ -165,15 +166,12 @@ def _entry_detail(entry, benchmark_id: int, logged_in: bool) -> None:
         ui.button("Remove from leaderboard", on_click=remove).props("flat color=negative")
 
 
-def _overview_tab(row: dict, benchmark_id: int) -> None:
+def _overview_section(row: dict) -> None:
     ui.label(description_text(row)).classes("text-sm text-gray-600")
-    ui.label("How it works").classes("text-xl font-semibold text-gray-900")
-    with ui.column().classes("gap-1 text-sm text-gray-700"):
-        ui.label("1. Start a run on the Leaderboard tab, or from the command line (below). The run reads the "
-                 "input described on the Data tab.")
-        ui.label("2. When it has finished, add the run to the leaderboard (logged-in users).")
-        ui.label("3. Compare the runs on the Leaderboard tab; the Evaluation tab explains the metrics and the "
-                 "rules a run must meet.")
+
+
+def _run_section(benchmark_id: int) -> None:
+    ui.label("Start a run on the Leaderboard tab, or from the command line:").classes("text-sm text-gray-700")
     ui.code(
         f"episerve benchmark run-spec {benchmark_id} > spec.json\n"
         "# add model_image and the model's own config keys (e.g. history_length), keep input and SQL as they are\n"
@@ -184,7 +182,7 @@ def _overview_tab(row: dict, benchmark_id: int) -> None:
     ).classes("w-full max-w-4xl")
 
 
-def _data_tab(row: dict, benchmark_id: int) -> None:
+def _data_section(row: dict, benchmark_id: int) -> None:
     ui.table(
         columns=[{"name": "property", "label": "", "field": "property", "align": "left"},
                  {"name": "value", "label": "", "field": "value", "align": "left"}],
@@ -205,7 +203,7 @@ def _data_tab(row: dict, benchmark_id: int) -> None:
     ui.add_css(".nicegui-code pre, .nicegui-code code { white-space: pre-wrap !important; word-break: break-word; }")
 
 
-def _evaluation_tab(row: dict, benchmark_id: int) -> None:
+def _evaluation_section(row: dict) -> None:
     ui.label("Metrics").classes("text-lg font-semibold text-gray-900")
     ui.table(
         columns=[{"name": "metric", "label": "Metric", "field": "metric", "align": "left"},
@@ -243,7 +241,7 @@ def register_leaderboard_page() -> None:
     @ui.page("/ui/benchmarks/{benchmark_id}/runs/{run_qid}")
     def run_page(benchmark_id: int, run_qid: str):
         """One scored run of a benchmark (opened in its own window from the leaderboard)."""
-        _header("/ui/benchmarks")
+        _header("/ui/benchmarks", api=f"benchmarks/{benchmark_id}/leaderboard?all_runs=true")
         logged_in = _is_logged_in()
         with ui.column().classes("px-8 py-6 w-full max-w-5xl gap-3"):
             ui.link("← Back to the leaderboard", f"/ui/benchmarks/{benchmark_id}").classes("text-sm")
@@ -263,8 +261,8 @@ def register_leaderboard_page() -> None:
             _entry_detail(entry, benchmark_id, logged_in)
 
     @ui.page("/ui/benchmarks/{benchmark_id}")
-    def leaderboard_page(request: Request, benchmark_id: int, tab: str = _DEFAULT_TAB):
-        _header("/ui/benchmarks")
+    def leaderboard_page(benchmark_id: int, tab: str = _DEFAULT_TAB):
+        _header("/ui/benchmarks", api=f"benchmarks/{benchmark_id}/leaderboard")
         logged_in = _is_logged_in()
         selected = benchmark_id
         try:
@@ -282,23 +280,31 @@ def register_leaderboard_page() -> None:
                 _error_label("Benchmark not found.")
             return
         state = {"rank_by": "interval_score", "all_runs": False, "model": None, "min_days": 0, "text": ""}
-        open_tab = tab if tab in dict(_TABS) else _DEFAULT_TAB
+        # a section name (the former tab names) opens Get Started at that section
+        section = tab if tab in dict(_SECTIONS) else "overview"
+        open_tab = tab if tab in dict(_TABS) else ("get-started" if tab in dict(_SECTIONS) else _DEFAULT_TAB)
 
         with ui.column().classes("px-8 py-6 w-full gap-4"):
             ui.link("← All benchmarks", "/ui/benchmarks").classes("text-sm")
-            with ui.row().classes("w-full items-start justify-between gap-6"):
-                ui.label(row["name"]).classes("text-3xl font-bold text-gray-900")
-                _api_box(f"{request.base_url}benchmarks/{selected}/leaderboard")
+            ui.label(row["name"]).classes("text-3xl font-bold text-gray-900")
             with ui.tabs(value=open_tab).classes("w-full") as tabs:
                 for key, label in _TABS:
                     ui.tab(key, label=label)
             with ui.tab_panels(tabs, value=open_tab).classes("w-full"):
-                with ui.tab_panel("overview").classes("gap-4"):
-                    _overview_tab(row, selected)
-                with ui.tab_panel("data").classes("gap-3"):
-                    _data_tab(row, selected)
-                with ui.tab_panel("evaluation").classes("gap-3"):
-                    _evaluation_tab(row, selected)
+                with ui.tab_panel("get-started"):
+                    with ui.row().classes("w-full no-wrap items-start gap-6"):
+                        with ui.tabs(value=section).props("vertical").classes("shrink-0 w-44") as sections:
+                            for key, label in _SECTIONS:
+                                ui.tab(key, label=label)
+                        with ui.tab_panels(sections, value=section).props("vertical").classes("flex-1"):
+                            with ui.tab_panel("overview").classes("gap-3"):
+                                _overview_section(row)
+                            with ui.tab_panel("data").classes("gap-3"):
+                                _data_section(row, selected)
+                            with ui.tab_panel("evaluation").classes("gap-3"):
+                                _evaluation_section(row)
+                            with ui.tab_panel("run").classes("gap-3"):
+                                _run_section(selected)
                 with ui.tab_panel("leaderboard").classes("gap-3"):
                     with ui.row().classes("items-center gap-3"):
                         ui.button("Start a run from this benchmark",

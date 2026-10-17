@@ -354,3 +354,7 @@ def test_a_draft_can_be_retired_after_a_confirmation_and_the_login_is_rechecked(
     assert "Retire this draft? It disappears from the list." in out["confirm_text"]
     assert out["blocked"] == [] and notes[-1][1]["type"] == "warning"
     assert calls == [7]
+
+
+def test_the_list_page_shows_the_api_box(monkeypatch):
+    assert "curl http://test/benchmarks" in _render(monkeypatch)["labels"]

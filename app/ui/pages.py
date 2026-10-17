@@ -5,7 +5,7 @@ import duckdb
 import pandas as pd
 from fastapi import HTTPException
 from fastapi.responses import HTMLResponse
-from nicegui import ui, run, app as _napp
+from nicegui import context, ui, run, app as _napp
 from starlette.requests import Request
 
 from app.auth import _daily_token
@@ -41,7 +41,8 @@ NAV_ITEMS = [
 ]
 
 
-def _header(current: str = ""):
+def _header(current: str = "", api: str | None = None, method: str = "GET"):
+    """The top bar; ``api`` (a path below the server root) adds the API box for what the page shows."""
     with ui.header().classes("bg-white text-gray-800 border-b border-gray-200 px-8 py-3 flex items-center justify-between shadow-sm"):
         ui.label("EPISERVE").classes("text-lg font-bold tracking-wide")
         with ui.row().classes("gap-8 items-center"):
@@ -82,6 +83,9 @@ def _header(current: str = ""):
                             ui.navigate.to("/login"),
                         ))
 
+    if api:
+        with ui.row().classes("w-full justify-end px-8 pt-4"):
+            _api_box(f"{_base_url()}{api}", method)
     _footer()
 
 
@@ -89,18 +93,31 @@ def _error_label(msg: str):
     ui.label(f"⚠ {msg}").classes("text-red-600 text-sm mt-2")
 
 
-def _api_box(url: str):
+def _api_command(url: str, method: str, token: str) -> str:
+    """The curl command the API box copies: the bearer token, and for POST a JSON file as the body."""
+    if method == "GET":
+        return f'curl -H "Authorization: Bearer {token}" {url}'
+    return (f'curl -X {method} -H "Authorization: Bearer {token}" -H "Content-Type: application/json" '
+            f"-d @run.json {url}")
+
+
+def _api_box(url: str, method: str = "GET"):
     """Render the gray API hint box with a copy button that includes the auth token."""
+    shown = f"curl {url}" if method == "GET" else f"curl -X {method} {url}"
     with ui.element("div").classes("bg-gray-50 border border-gray-200 rounded-lg px-4 py-2 shrink-0"):
         ui.label("API").classes("text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1")
         with ui.row().classes("items-center gap-2"):
-            ui.label(f"curl {url}").classes("font-mono text-xs text-gray-700")
-            def _copy(u=url):
-                token = _napp.storage.user.get("token", "")
-                cmd = f'curl -H "Authorization: Bearer {token}" {u}'
-                ui.run_javascript(f"navigator.clipboard.writeText({repr(cmd)})")
+            ui.label(shown).classes("font-mono text-xs text-gray-700")
+            def _copy(u=url, m=method):
+                command = _api_command(u, m, _napp.storage.user.get("token", ""))
+                ui.run_javascript(f"navigator.clipboard.writeText({repr(command)})")
                 ui.notify("Copied with token", position="top", type="positive")
             ui.button(icon="content_copy", on_click=_copy).props("flat round dense").classes("text-gray-400 hover:text-gray-700")
+
+
+def _base_url() -> str:
+    request = context.client.request
+    return str(request.base_url) if request is not None else "/"
 
 
 def _require_login() -> bool:
@@ -294,7 +311,7 @@ def register_pages():
         """
         from datetime import datetime
 
-        _header("/ui/datasets")
+        _header("/ui/datasets", api="datasets")
 
         def _fmt_date(dt_str: str) -> tuple:
             """Format a catalog timestamp for display.
@@ -637,7 +654,6 @@ def register_pages():
                 with ui.column().classes("gap-0"):
                     ui.label("Datasets").classes("text-3xl font-bold text-gray-900")
                     ui.label("Browse, explore and download available datasets.").classes("text-sm text-gray-500 mt-1")
-                _api_box(f"{request.base_url}datasets")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
@@ -686,7 +702,7 @@ def register_pages():
 
     @ui.page("/ui/models")
     def models(request: Request):
-        _header("/ui/models")
+        _header("/ui/models", api="models")
 
         try:
             raw_rows = ckan_client.list_models()
@@ -811,7 +827,6 @@ def register_pages():
                 with ui.column().classes("gap-0"):
                     ui.label("Models").classes("text-3xl font-bold text-gray-900")
                     ui.label("Browse available forecast models.").classes("text-sm text-gray-500 mt-1")
-                _api_box(f"{request.base_url}models")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
@@ -839,7 +854,7 @@ def register_pages():
             request: Incoming request used to construct the API link.
         """
         from datetime import datetime
-        _header("/ui/model-runs")
+        _header("/ui/model-runs", api="model-runs")
 
         def _fmt_date(dt_str: str) -> tuple:
             if not dt_str:
@@ -1337,7 +1352,6 @@ def register_pages():
                 with ui.column().classes("gap-0"):
                     ui.label("Model Runs").classes("text-3xl font-bold text-gray-900")
                     ui.label("Browse past model run results.").classes("text-sm text-gray-500 mt-1")
-                _api_box(f"{request.base_url}model-runs")
 
             with ui.row().classes("w-full items-center gap-3"):
                 with ui.row().classes("flex-1 border border-gray-200 rounded-lg px-3 py-2 items-center gap-2 bg-white"):
@@ -1985,7 +1999,7 @@ def register_pages():
     def trigger():
         if not _require_login():
             return
-        _header("/ui/trigger")
+        _header("/ui/trigger", api="model-runs", method="POST")
 
         class _StepCtx:
             def __init__(self, row, panel, status_lbl):
@@ -2446,7 +2460,7 @@ def register_pages():
         def run_summary():
             _tv2_summary(state, hint="" if selected_qids else "Select datasets to continue.")
 
-        _header("/ui/run_workflow/1")
+        _header("/ui/run_workflow/1", api="model-runs", method="POST")
         with ui.column().classes("px-8 py-6 w-full gap-5"):
             with ui.column().classes("gap-1"):
                 ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
@@ -2535,7 +2549,7 @@ def register_pages():
             _napp.storage.user["tv2"] = state
             ui.navigate.to("/ui/run_workflow/3")
 
-        _header("/ui/run_workflow/2")
+        _header("/ui/run_workflow/2", api="model-runs", method="POST")
         with ui.column().classes("px-8 py-6 w-full gap-5"):
             with ui.column().classes("gap-1"):
                 ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
@@ -2650,7 +2664,7 @@ def register_pages():
         def run_summary():
             _tv2_summary(state, hint="" if sel_name[0] else "Select a model to continue.")
 
-        _header("/ui/run_workflow/3")
+        _header("/ui/run_workflow/3", api="model-runs", method="POST")
         with ui.column().classes("px-8 py-6 w-full gap-5"):
             with ui.column().classes("gap-1"):
                 ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
@@ -2703,7 +2717,7 @@ def register_pages():
             _napp.storage.user["tv2"] = state
             ui.navigate.to("/ui/run_workflow/5")
 
-        _header("/ui/run_workflow/4")
+        _header("/ui/run_workflow/4", api="model-runs", method="POST")
         with ui.column().classes("px-8 py-6 w-full gap-5"):
             with ui.column().classes("gap-1"):
                 ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
@@ -2813,7 +2827,7 @@ def register_pages():
             except Exception as exc:
                 ui.notify(f"Prefect error: {exc}", type="negative", position="top")
 
-        _header("/ui/run_workflow/5")
+        _header("/ui/run_workflow/5", api="model-runs", method="POST")
         with ui.column().classes("px-8 py-6 w-full gap-5"):
             with ui.column().classes("gap-1"):
                 ui.label("Run a Forecast Model").classes("text-3xl font-bold text-gray-900")
