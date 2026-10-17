@@ -1,5 +1,6 @@
 """The /ui/leaderboard page: stored benchmarks and their ranked entries."""
 
+import html
 import logging
 
 from nicegui import run, ui
@@ -10,7 +11,7 @@ from app.benchmarks import actions as bactions
 from app.leaderboard import actions
 from app.benchmarks.definition import evaluation_sql
 from app.benchmarks.store import benchmark_from_row
-from app.leaderboard.about import METRIC_DOCS, description_text, overview_facts
+from app.leaderboard.about import COLUMN_HELP, METRIC_DOCS, description_text, overview_facts
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
 from app.leaderboard.present import (
@@ -50,6 +51,17 @@ def _run_cell(benchmark_id: int) -> str:
         "<q-td :props='props'><a :href=\"'/ui/benchmarks/" + str(benchmark_id) + "/runs/' + props.row.run_qid\""
         " target='_blank' @click.stop class='text-blue-700'>{{ props.row.run_qid }}</a></q-td>"
     )
+
+
+def _help_headers(table, columns: list[dict]) -> None:
+    """A tooltip with the column's explanation when the mouse is over its title (sorting keeps working)."""
+    for column in columns:
+        text = COLUMN_HELP.get(column["name"])
+        if text:
+            table.add_slot(f"header-cell-{column['name']}", (
+                "<q-th :props='props'>{{ props.col.label }}"
+                f"<q-tooltip max-width='22rem' anchor='bottom middle' self='top middle'>{html.escape(text)}</q-tooltip>"
+                "</q-th>"))
 
 
 _OPEN_RUN_JS = (
@@ -304,6 +316,7 @@ def register_leaderboard_page() -> None:
                     ui.label(f"Showing {len(entries)} of {len(board.entries)} entries").classes("text-xs text-gray-500")
                 table = ui.table(columns=columns, rows=table_rows(board, entries), row_key="run_qid",
                                  pagination={"rowsPerPage": 25}).classes("w-full")
+                _help_headers(table, columns)
                 table.props(':rows-per-page-options="[10, 25, 50, 0]"')   # bound: Quasar needs an array, not a string
                 table.add_slot("body-cell-model", _MODEL_CELL)
                 table.add_slot("body-cell-run", _run_cell(selected))
@@ -370,19 +383,19 @@ def register_leaderboard_page() -> None:
             if not rows:
                 ui.label("No other matching runs right now.").classes("text-sm text-gray-500")
                 return
-            candidates = ui.table(
-                columns=[{"name": "model", "label": "Model", "field": "model", "align": "left",
+            candidate_columns = [{"name": "model", "label": "Model", "field": "model", "align": "left",
                           "style": "white-space: normal; max-width: 20rem"},
                          {"name": "tag", "label": "Tag", "field": "tag", "align": "left"},
-                         {"name": "qid", "label": "Run", "field": "qid", "align": "left"},
+                         {"name": "run", "label": "Run", "field": "qid", "align": "left"},
                          {"name": "date", "label": "Date", "field": "date", "align": "left"},
                          {"name": "params", "label": "Parameters", "field": "params", "align": "left",
                           "style": "white-space: normal; max-width: 14rem"},
                          {"name": "history", "label": "History (A→B)", "field": "history", "align": "left",
                           "style": "white-space: normal; min-width: 8rem"},
-                         {"name": "add", "label": "", "field": "qid", "align": "right"}],
-                rows=rows, row_key="qid",
-            ).props("flat bordered dense hide-bottom").classes("max-w-6xl w-full")
+                         {"name": "add", "label": "", "field": "qid", "align": "right"}]
+            candidates = ui.table(columns=candidate_columns, rows=rows, row_key="qid").props(
+                "flat bordered dense hide-bottom").classes("max-w-6xl w-full")
+            _help_headers(candidates, candidate_columns)
             candidates.add_slot("body-cell-model", _MODEL_CELL)
             candidates.add_slot("body-cell-add", (
                 "<q-td :props='props' class='text-right'><q-btn dense flat no-caps color='primary' "

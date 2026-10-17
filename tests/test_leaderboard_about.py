@@ -22,3 +22,14 @@ def test_overview_facts_name_the_series_the_horizon_and_the_runs():
     assert overview_facts(row) == [("Series", "v · typ = a"), ("Forecast horizon", "8 steps"), ("Runs", "2")]
     bare = {"target_column": "v", "filter_column": None, "prediction_length": None}
     assert overview_facts(bare) == [("Series", "v"), ("Forecast horizon", "—")]
+
+
+def test_every_leaderboard_column_has_a_help_text_and_the_metrics_say_which_value_is_better():
+    from app.leaderboard.about import COLUMN_HELP
+    from app.leaderboard.present import LABELS
+    for name in ("rank", "model", "tag", "run", "date", "params", "history", "scored", *LABELS):
+        assert COLUMN_HELP[name]
+    assert COLUMN_HELP["mae"].endswith("Lower is better.")
+    assert COLUMN_HELP["coverage"].endswith("The closer to 80% the better.")
+    assert "interval width" in COLUMN_HELP["interval_score"] and "Mean absolute error" in COLUMN_HELP["mae"]
+

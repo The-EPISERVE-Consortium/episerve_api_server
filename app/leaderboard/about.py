@@ -17,6 +17,24 @@ METRIC_DOCS = [
 ]
 
 
+_BETTER = {"lower": "Lower is better.", "closest to 80%": "The closer to 80% the better."}
+
+# Hover help for the column titles of the leaderboard and of the candidates table, by column name.
+COLUMN_HELP = {
+    "rank": "Position by the chosen ranking metric (see Rank by).",
+    "model": "The forecast model. Reference models carry a baseline badge.",
+    "tag": "The version (image tag) of the model that made the run.",
+    "run": "The model run (QID). In the leaderboard it links to the details of the run.",
+    "date": "When the run was made.",
+    "params": "The configuration the model was run with.",
+    "history": "The window of the series the model was given as input (first date → last date, '…' if it has no "
+               "start). The test window starts after it.",
+    "scored": "Dates scored / dates in the test window. A run is only accepted when it forecasts every date.",
+    **{key: f"{meaning} {_BETTER.get(better, '')}".strip()
+       for key, (_, meaning, better) in zip(["mae", "rmse", "coverage", "interval_score"], METRIC_DOCS)},
+}
+
+
 def is_baseline(model_name: str) -> bool:
     """Reference models are recognised by 'baseline' in their name."""
     return "baseline" in model_name.lower()

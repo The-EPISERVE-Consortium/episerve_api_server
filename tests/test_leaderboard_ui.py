@@ -467,3 +467,16 @@ def test_the_leaderboard_tab_has_no_start_button_and_no_command_line_block(monke
     assert "Start a run from this benchmark" not in out["buttons"]
     assert out["code"] == [] and out["expansions"] == []
     assert "Add run" not in out["buttons"]                   # runs are added from the candidates table below
+
+
+def test_column_titles_of_the_leaderboard_have_a_tooltip_with_the_explanation(monkeypatch):
+    def grab(out, client, find, drain):
+        table = next(t for t in find(ui.table) if t.props.get("row-key") == "run_qid")
+        out["slots"] = {name: slot.template for name, slot in table.slots.items() if name.startswith("header-cell-")}
+
+    out = _render(monkeypatch, board=_board([_entry()]), after=grab)
+    assert {"header-cell-mae", "header-cell-rmse", "header-cell-coverage", "header-cell-interval_score",
+            "header-cell-history", "header-cell-scored"} <= set(out["slots"])
+    assert "<q-tooltip" in out["slots"]["header-cell-mae"] and "Mean absolute error" in out["slots"]["header-cell-mae"]
+    assert "{{ props.col.label }}" in out["slots"]["header-cell-mae"]       # the title itself stays
+
