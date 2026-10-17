@@ -225,18 +225,6 @@ def _data_tab(row: dict, benchmark_id: int) -> None:
             ui.label("• " + rule)
 
 
-def _command_line_steps(benchmark_id: int) -> None:
-    with ui.expansion("Run from the command line").classes("w-full max-w-4xl"):
-        ui.code(
-            f"episerve benchmark run-spec {benchmark_id} > spec.json\n"
-            "# add model_image and the model's own config keys (e.g. history_length), keep input and SQL as they are\n"
-            "episerve trigger-model-run spec.json\n"
-            f"episerve benchmark add-entry {benchmark_id} <run-QID>      # after the run has finished (needs a login)\n"
-            f"episerve benchmark leaderboard {benchmark_id}",
-            language="bash",
-        ).classes("w-full")
-
-
 def register_leaderboard_page() -> None:
     """Register ``/ui/benchmarks/{id}`` (and redirect ``/ui/leaderboard``). Reads the database only; never CKAN, DOIP or lakeFS."""
 
@@ -305,13 +293,8 @@ def register_leaderboard_page() -> None:
                 with ui.tab_panel("data").classes("gap-3"):
                     _data_tab(row, selected)
                 with ui.tab_panel("leaderboard").classes("gap-3"):
-                    with ui.row().classes("items-center gap-3"):
-                        ui.button("Start a run from this benchmark",
-                                  on_click=lambda: ui.navigate.to(f"/ui/run_workflow/1?benchmark={selected}")
-                                  ).props("no-caps outline")
-                        if logged_in:
-                            ui.button("Add run", on_click=lambda: _add_run_dialog(selected))
-                    _command_line_steps(selected)
+                    if logged_in:
+                        ui.button("Add run", on_click=lambda: _add_run_dialog(selected)).classes("self-start")
                     with ui.row().classes("items-end gap-3"):
                         def set_rank(e):
                             state["rank_by"] = e.value

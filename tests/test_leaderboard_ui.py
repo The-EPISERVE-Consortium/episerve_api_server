@@ -79,18 +79,6 @@ def test_page_renders_the_requested_benchmark_from_the_database_only(monkeypatch
     assert "Best entry: timesfm, ranked by interval score." in out["labels"]
 
 
-def test_start_run_button_opens_the_workflow_with_the_benchmark(monkeypatch):
-    seen = []
-    monkeypatch.setattr(leaderboard_page.ui.navigate, "to", lambda target, *a, **k: seen.append(target))
-
-    async def scenario(out, client, find, drain):
-        await _click(next(b for b in find(ui.button) if b.props.get("label") == "Start a run from this benchmark"),
-                     client)
-
-    _render(monkeypatch, board=_board([_entry()]), after=scenario)
-    assert seen == ["/ui/run_workflow/1?benchmark=3"]
-
-
 def test_leaderboard_read_failure_shows_generic_text_and_logs(monkeypatch, caplog):
     def boom(bid, rank_by="interval_score", best_per_model=True):
         raise RuntimeError("Can't connect to MySQL server on 'db.internal'")
@@ -385,14 +373,6 @@ def test_data_tab_has_training_data_and_evaluation_with_metrics_and_rules(monkey
     assert any("Which runs are accepted" in t for t in out["labels"])
 
 
-def test_the_command_line_steps_sit_on_the_leaderboard_tab(monkeypatch):
-    def grab(out, client, find, drain):
-        out["code"] = [(e.content, _panel_of(e)) for e in find(ui.code)]
-
-    out = _render(monkeypatch, board=_board([_entry()]), after=grab)
-    assert [panel for content, panel in out["code"] if "episerve benchmark run-spec 3" in content] == ["leaderboard"]
-
-
 def test_the_header_of_the_page_holds_only_the_title_and_the_api_box(monkeypatch):
     out = _render(monkeypatch, board=_board([_entry()]))
     assert "Flu" in out["labels"]
@@ -403,3 +383,16 @@ def test_the_header_of_the_page_holds_only_the_title_and_the_api_box(monkeypatch
 def test_the_run_page_shows_the_api_box_too(monkeypatch):
     out = _render(monkeypatch, board=_board([_entry()]), path="/ui/benchmarks/3/runs/Q10")
     assert "curl http://test/benchmarks/3/leaderboard?all_runs=true" in out["labels"]
+
+
+def test_the_leaderboard_tab_has_no_start_button_and_no_command_line_block(monkeypatch):
+    def grab(out, client, find, drain):
+        out["buttons"] = [b.props.get("label") for b in find(ui.button) if _panel_of(b) == "leaderboard"]
+        out["code"] = [e.content for e in find(ui.code) if _panel_of(e) == "leaderboard"]
+        out["expansions"] = [e.props.get("label") for e in find(ui.expansion)]
+
+    out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=grab)
+    assert "Start a run from this benchmark" not in out["buttons"]
+    assert out["code"] == [] and out["expansions"] == []
+    assert "Add run" in out["buttons"]                       # adding a finished run stays
+
