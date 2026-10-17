@@ -166,3 +166,5 @@ All configuration via environment variables. In K8s these come from sealed secre
 - **Tests**: `pytest tests/` runs the unit and in-memory UI tests (previews, SQL validation, secrets, benchmarks, leaderboard, workflow); no network needed.
 - **CKAN plugins**: `CKAN__PLUGINS` hot-patches to `wsgi.py` persist across container restarts within the same pod — a `kubectl rollout restart` is needed to clear them.
 - **WebSocket**: requires the `shared-gateway-websocket` HTTPListenerPolicy (already applied via `episerve-k8s`).
+
+- **Mail**: `app/mailer.py` (`send_mail(to, subject, text)`) sends through AgentMail (`AGENTMAIL_API_KEY`, `AGENTMAIL_INBOX` = the sending inbox address, from the optional secret `agentmail-credentials`, keys `api-key` and `inbox`). Without them nothing is sent and the call returns False. Check with `python -m app.mailer <to> <subject> <text>` in the pod.

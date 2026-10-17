@@ -49,6 +49,11 @@ class Settings:
     benchmarks_user: str = os.environ.get("BENCHMARKS_USER") or os.environ.get("BLACKBOARD_USER", "")
     benchmarks_password: str = os.environ.get("BENCHMARKS_PASSWORD") or os.environ.get("BLACKBOARD_PASSWORD", "")
 
+    # Mail (AgentMail): the API key and the inbox (its address) mails are sent from
+    agentmail_api_key: str = os.environ.get("AGENTMAIL_API_KEY", "")
+    agentmail_inbox: str = os.environ.get("AGENTMAIL_INBOX", "")
+    agentmail_url: str = os.environ.get("AGENTMAIL_URL") or "https://api.agentmail.to"
+
     # Server
     port: int = int(os.environ.get("PORT", "8000"))
 
