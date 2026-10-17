@@ -132,8 +132,8 @@ def _base_url() -> str:
     return str(request.base_url) if request is not None else "/"
 
 
-def _starter() -> str | None:
-    """The pseudonym of the logged-in user, recorded as the one who started a run."""
+def _executor() -> str | None:
+    """The pseudonym of the logged-in user, recorded as the one who executed a run."""
     user = session.current_user()
     return users.pseudonym(user) if user else None
 
@@ -1028,7 +1028,7 @@ def register_pages():
                     {"name": "qid",           "label": "QID",      "field": "qid",           "align": "left"},
                     {"name": "input_datasets","label": "Datasets", "field": "_input_names",  "align": "left"},
                     {"name": "run_timestamp", "label": "Run",      "field": "run_timestamp", "align": "left", "sortable": True},
-                    {"name": "started_by",    "label": "Started by", "field": "started_by",  "align": "left"},
+                    {"name": "executed_by",    "label": "Executed by", "field": "executed_by",  "align": "left"},
                     {"name": "status",        "label": "Status",   "field": "status",        "align": "left"},
                     {"name": "actions",       "label": "",         "field": "qid",           "align": "right"},
                 ],
@@ -2323,7 +2323,7 @@ def register_pages():
                         model_tag=m["docker_tag"],
                         config_json=json.dumps(config),
                         data_transformation_sql=data_transformation_sql,
-                        started_by=_starter(),
+                        executed_by=_executor(),
                     )
                     result_label.set_text(f"Triggered: {result['prefect_flow_run_id']} ({result['status']})")
                     ui.notify("Model run triggered", type="positive", position="top")
@@ -2898,7 +2898,7 @@ def register_pages():
                     model_tag=p["model_tag"],
                     config_json=p["config_json"],
                     data_transformation_sql=p["data_transformation_sql"],
-                    started_by=_starter(),
+                    executed_by=_executor(),
                 )
                 result_lbl.set_text(f"Triggered: {result['prefect_flow_run_id']} ({result['status']})")
                 result_lbl.classes(remove="text-gray-500", add="text-green-600 font-medium")

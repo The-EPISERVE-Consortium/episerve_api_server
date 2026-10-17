@@ -35,7 +35,7 @@ def _fresh_state():
 def _setup(monkeypatch, state, finals=None, spec=SPEC, get=None):
     def setup():
         monkeypatch.setattr(pages, "_require_login", lambda right=None: True)
-        monkeypatch.setattr(pages, "_starter", lambda: "episerve_user_1")
+        monkeypatch.setattr(pages, "_executor", lambda: "episerve_user_1")
         monkeypatch.setattr(pages, "_tv2_state", lambda: state)
         # the handlers persist the state in the per-user storage, which needs a browser session
         monkeypatch.setattr(pages, "_napp", SimpleNamespace(storage=SimpleNamespace(user={})))
@@ -90,7 +90,7 @@ def test_step5_warns_when_the_sql_leaks_and_the_run_can_still_be_triggered(monke
     assert "This run would not qualify for the leaderboard:" in seen["labels"]
     assert any("test start" in t for t in seen["labels"])
     assert triggered and triggered[0]["input_data_files"][0][0] == URL
-    assert triggered[0]["started_by"] == "episerve_user_1"                    # the pseudonym, never name or email
+    assert triggered[0]["executed_by"] == "episerve_user_1"                    # the pseudonym, never name or email
     assert "Add the run there once it has finished." in seen["after"]
     assert ("/ui/benchmarks/3", "Open the leaderboard") in seen["links"]
 

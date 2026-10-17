@@ -24,7 +24,7 @@ def start_model_run(request: ModelRunRequest, user: User = Depends(require_right
             model_tag=request.model_tag,
             config_json=json.dumps(request.config),
             data_transformation_sql=request.data_transformation_sql,
-            started_by=users.pseudonym(user),
+            executed_by=users.pseudonym(user),
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Prefect error: {e}")

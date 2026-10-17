@@ -92,7 +92,7 @@ def test_the_pseudonym_carries_only_the_id_never_name_or_email():
         assert text not in users.pseudonym(ADA)
 
 
-def test_the_prefect_run_carries_the_starter_pseudonym_only_when_there_is_one(monkeypatch):
+def test_the_prefect_run_carries_the_executor_pseudonym_only_when_there_is_one(monkeypatch):
     from app.clients import prefect as prefect_client
     sent = []
 
@@ -107,8 +107,8 @@ def test_the_prefect_run_carries_the_starter_pseudonym_only_when_there_is_one(mo
     monkeypatch.setattr(prefect_client, "_headers", lambda: {})
     monkeypatch.setattr(prefect_client.settings, "prefect_api_url", "http://prefect")
     monkeypatch.setattr(prefect_client.httpx, "post", lambda url, headers, content: sent.append(json.loads(content)) or Response())
-    prefect_client.trigger_model_run([["u", "f"]], "image", "{}", started_by="episerve_user_18")
+    prefect_client.trigger_model_run([["u", "f"]], "image", "{}", executed_by="episerve_user_18")
     prefect_client.trigger_model_run([["u", "f"]], "image", "{}")
-    assert sent[0]["parameters"]["started_by"] == "episerve_user_18"
-    assert "started_by" not in sent[1]["parameters"]
+    assert sent[0]["parameters"]["executed_by"] == "episerve_user_18"
+    assert "executed_by" not in sent[1]["parameters"]
 
