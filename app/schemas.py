@@ -54,6 +54,13 @@ class ModelRunStatus(BaseModel):
     doip_url: str
 
 
+class FilterIn(BaseModel):
+    """One equality filter of a benchmark's series: ``column = value``."""
+
+    column: str
+    value: str
+
+
 class BenchmarkOut(BaseModel):
     created_by: str | None = None  # the display name of the user who created it, if known
     id: int
@@ -63,8 +70,9 @@ class BenchmarkOut(BaseModel):
     dataset_qid: str
     target_column: str
     date_column: str
-    filter_column: str | None
+    filter_column: str | None  # the first filter (kept for older clients); all of them are in ``filters``
     filter_value: str | None
+    filters: list[FilterIn] = []
     test_start: str
     test_end: str
     history_start: str | None = None
@@ -89,6 +97,7 @@ class BenchmarkCreate(BaseModel):
     test_end: date
     filter_column: str | None = None
     filter_value: str | None = None
+    filters: list[FilterIn] | None = None  # up to 3; when given it replaces filter_column / filter_value
     history_start: date | None = None
     history_end: date | None = None
     input_filename: str = "input.parquet"
@@ -108,6 +117,7 @@ class BenchmarkPatch(BaseModel):
     test_end: date | None = None
     filter_column: str | None = None
     filter_value: str | None = None
+    filters: list[FilterIn] | None = None  # replaces all filters (an empty list removes them)
     history_start: date | None = None
     history_end: date | None = None
     input_filename: str | None = None

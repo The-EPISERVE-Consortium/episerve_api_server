@@ -259,3 +259,14 @@ def test_a_draft_without_a_recorded_creator_can_only_be_finalized_by_an_admin(wo
     actions.finalize(3, by=ADMIN_USER)
     assert len(world["log"]["finalized"]) == 1
 
+
+def test_create_and_update_a_draft_with_several_filters(world):
+    _create(extra_filters=[("age", "35-59")], created_by=CREATOR.id)
+    benchmark = world["log"]["created"][0][2]
+    assert benchmark.all_filters() == [("typ", "Influenza A+B"), ("age", "35-59")]
+    actions.update_draft(3, filters=[{"column": "typ", "value": "x"}, {"column": "age", "value": "1"}])
+    assert world["log"]["updated"][0][3].all_filters() == [("typ", "x"), ("age", "1")]
+    actions.update_draft(3, filters=[])
+    assert world["log"]["updated"][1][3].all_filters() == []
+    actions.update_draft(3, filter_column=None, filter_value=None)       # removing the first filter drops the others
+    assert world["log"]["updated"][2][3].all_filters() == []

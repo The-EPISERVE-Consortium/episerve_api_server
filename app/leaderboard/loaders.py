@@ -68,8 +68,7 @@ def _read_series(
     if benchmark.filter_column and benchmark.filter_value is None:
         raise LoadError("filter value is required with a filter column")
     needed = [benchmark.date_column, benchmark.target_column]
-    if benchmark.filter_column:
-        needed.append(benchmark.filter_column)
+    needed += [column for column, _ in benchmark.all_filters()]
     try:
         names = pq.read_schema(BytesIO(data)).names
         for name in needed:
@@ -82,9 +81,9 @@ def _read_series(
     target_sql = _column_sql(benchmark.target_column, names)
     where = f"TRY_CAST({date_sql} AS DATE) BETWEEN ? AND ?"
     values: list = [start, end]
-    if benchmark.filter_column:
-        where += f" AND CAST({_column_sql(benchmark.filter_column, names)} AS VARCHAR) = ?"
-        values.append(benchmark.filter_value)
+    for column, value in benchmark.all_filters():
+        where += f" AND CAST({_column_sql(column, names)} AS VARCHAR) = ?"
+        values.append(value)
     try:
         with duckdb.connect(config={
             "enable_external_access": "false",

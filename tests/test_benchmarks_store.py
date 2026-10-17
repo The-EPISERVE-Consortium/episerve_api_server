@@ -104,3 +104,13 @@ def test_create_draft_stores_the_creator(monkeypatch):
     sql, params = conn.executed[0]
     assert "created_by" in sql and params[-1] == 18
 
+
+def test_the_extra_filters_are_stored_as_json_and_read_back():
+    row = {"dataset_qid": "Q1", "target_column": "v", "date_column": "datum", "filter_column": "typ", "filter_value": "a",
+           "extra_filters": '[["age", "35-59"]]', "test_start": date(2026, 4, 1), "test_end": date(2026, 9, 30)}
+    assert store.benchmark_from_row(row).extra_filters == (("age", "35-59"),)
+    assert store.benchmark_from_row({**row, "extra_filters": None}).extra_filters == ()
+    bench = Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30), "typ", "a",
+                      extra_filters=(("age", "35-59"),))
+    assert store._definition_params("n", None, bench)[-1] == '[["age", "35-59"]]'
+    assert store._definition_params("n", None, Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30)))[-1] is None

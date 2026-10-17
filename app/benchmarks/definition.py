@@ -1,11 +1,12 @@
 """Benchmark definition: one series cut into an input range and a reference range.
 
-The series is a dataset column (optionally filtered to one value). The *input* range
+The series is a dataset column (optionally filtered by up to three equality filters, column = value). The *input* range
 (``history_start``..``history_end``) is what a model run may see; the *reference* range
 (``test_start``..``test_end``) is what its forecast is compared against. Both are read
 from lakeFS at the commit pinned when the benchmark is finalized.
 """
 
+import json
 import math
 import re
 import statistics
@@ -15,6 +16,7 @@ from datetime import date
 MAX_NAME = 200
 MAX_COLUMN = 200
 MAX_FILTER_VALUE = 500
+MAX_FILTERS = 3
 _QID = re.compile(r"Q[0-9]+")
 _FILENAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]{0,99}")
 
@@ -39,6 +41,39 @@ class Benchmark:
     input_filename: str = "input.parquet"
     prediction_length: int | None = None
     data_commit: str | None = None
+    # the second and further equality filters; the first one is ``filter_column`` / ``filter_value``
+    extra_filters: tuple[tuple[str, str], ...] = ()
+
+    def all_filters(self) -> list[tuple[str, str]]:
+        """Every equality filter as (column, value), the first one first."""
+        first = [(self.filter_column, self.filter_value or "")] if self.filter_column else []
+        return first + [tuple(pair) for pair in self.extra_filters]
+
+
+def filters_from_row(row: dict) -> list[tuple[str, str]]:
+    """Every equality filter of a stored benchmark row as (column, value); ``extra_filters`` is JSON text or a list."""
+    first = [(row["filter_column"], row.get("filter_value") or "")] if row.get("filter_column") else []
+    extra = row.get("extra_filters")
+    if isinstance(extra, str) and extra:
+        extra = json.loads(extra)
+    return first + [(column, value) for column, value in (extra or [])]
+
+
+def split_filters(filters) -> tuple[str | None, str | None, tuple[tuple[str, str], ...]]:
+    """(filter_column, filter_value, extra_filters) for a list of (column, value) pairs, {column, value} dicts or
+    objects with ``column`` and ``value``."""
+    pairs = []
+    for item in filters or []:
+        if isinstance(item, dict):
+            column, value = item["column"], item["value"]
+        elif hasattr(item, "column"):
+            column, value = item.column, item.value
+        else:
+            column, value = item[0], item[1]
+        pairs.append(((column or "").strip(), value))
+    if not pairs:
+        return None, None, ()
+    return pairs[0][0], pairs[0][1], tuple(pairs[1:])
 
 
 @dataclass(frozen=True)
@@ -74,6 +109,18 @@ def validate(benchmark: Benchmark, name: str) -> None:
             raise DefinitionError(f"A filter value of 1 to {MAX_FILTER_VALUE} characters is required with a filter column (filter value).")
     elif benchmark.filter_value:
         raise DefinitionError("A filter value needs a filter column.")
+    if benchmark.extra_filters and not benchmark.filter_column:
+        raise DefinitionError("The further filters need the first filter to be set.")
+    if len(benchmark.all_filters()) > MAX_FILTERS:
+        raise DefinitionError(f"At most {MAX_FILTERS} filters are allowed.")
+    for column, value in benchmark.extra_filters:
+        if not (column or "").strip() or len(column) > MAX_COLUMN:
+            raise DefinitionError(f"Every filter column must be 1 to {MAX_COLUMN} characters (filter column).")
+        if not value or len(value) > MAX_FILTER_VALUE:
+            raise DefinitionError(f"Every filter needs a value of 1 to {MAX_FILTER_VALUE} characters (filter value).")
+    columns = [column.strip().lower() for column, _ in benchmark.all_filters()]
+    if len(set(columns)) != len(columns):
+        raise DefinitionError("A column can be filtered only once (filter column).")
     if benchmark.test_start is None or benchmark.test_end is None:
         raise DefinitionError("The test start and end are required.")
     if benchmark.test_start > benchmark.test_end:
@@ -107,9 +154,7 @@ def input_sql(benchmark: Benchmark) -> str:
         raise DefinitionError("The history end is not set.")
     date_col = _ident(benchmark.date_column)
     cast = f"CAST({date_col} AS DATE)"
-    where = []
-    if benchmark.filter_column:
-        where.append(f"{_ident(benchmark.filter_column)} = {_literal(benchmark.filter_value or '')}")
+    where = [f"{_ident(column)} = {_literal(value)}" for column, value in benchmark.all_filters()]
     if benchmark.history_start is not None:
         where.append(f"{cast} >= DATE '{benchmark.history_start.isoformat()}'")
     where.append(f"{cast} <= DATE '{benchmark.history_end.isoformat()}'")
@@ -123,9 +168,7 @@ def evaluation_sql(benchmark: Benchmark) -> str:
     """The SQL (table ``df``) that cuts the test window (the evaluation data) out of the dataset."""
     date_col = _ident(benchmark.date_column)
     cast = f"CAST({date_col} AS DATE)"
-    where = []
-    if benchmark.filter_column:
-        where.append(f"{_ident(benchmark.filter_column)} = {_literal(benchmark.filter_value or '')}")
+    where = [f"{_ident(column)} = {_literal(value)}" for column, value in benchmark.all_filters()]
     where.append(f"{cast} >= DATE '{benchmark.test_start.isoformat()}'")
     where.append(f"{cast} <= DATE '{benchmark.test_end.isoformat()}'")
     return (

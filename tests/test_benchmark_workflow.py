@@ -23,7 +23,7 @@ def test_apply_benchmark_prefills_dataset_url_sql_filename_and_resets_config():
     assert state["sql"] == {"Q1": SQL} and state["filenames"] == {"Q1": "input.parquet"}
     assert state["config"] is None and state["model"] == {"name": "m"}
     assert state["benchmark"]["id"] == 3 and state["benchmark"]["prediction_length"] == 27
-    assert state["benchmark"]["filter_value"] == "a" and state["benchmark"]["name"] == "Flu"
+    assert state["benchmark"]["filters"] == [["typ", "a"]] and state["benchmark"]["name"] == "Flu"
 
 
 def test_overlay_config_only_touches_declared_parameters():
@@ -37,9 +37,20 @@ def test_overlay_config_only_touches_declared_parameters():
 
 def test_problems_are_explained():
     b = apply_benchmark(_state(), SPEC, DATASET, ROW)["benchmark"]
-    assert any("commit" in p for p in workflow_problems(b, DATASET["data_path"], SQL, "datum", "typ", "a"))
+    assert any("commit" in p for p in workflow_problems(b, DATASET["data_path"], SQL, "datum", [["typ", "a"]]))
     leaky = SQL.replace("2026-03-25", "2026-04-10")
-    assert any("test" in p for p in workflow_problems(b, URL, leaky, "datum", "typ", "a"))
-    assert any("filter" in p for p in workflow_problems(b, URL, SQL.replace("\"typ\" = 'a' AND ", ""), "datum", "typ", "a"))
-    assert any("history" in p for p in workflow_problems(b, URL, "SELECT 1", "datum", "typ", "a"))
-    assert workflow_problems(None, URL, "SELECT 1", "datum", None, None) == []
+    assert any("test" in p for p in workflow_problems(b, URL, leaky, "datum", [["typ", "a"]]))
+    assert any("filter" in p for p in workflow_problems(b, URL, SQL.replace("\"typ\" = 'a' AND ", ""), "datum", [["typ", "a"]]))
+    assert any("history" in p for p in workflow_problems(b, URL, "SELECT 1", "datum", [["typ", "a"]]))
+    assert workflow_problems(None, URL, "SELECT 1", "datum", []) == []
+
+
+def test_every_filter_of_a_benchmark_with_several_filters_must_be_in_the_sql():
+    row = {**ROW, "extra_filters": '[["age", "35-59"]]'}
+    b = apply_benchmark(_state(), SPEC, DATASET, row)["benchmark"]
+    assert b["filters"] == [["typ", "a"], ["age", "35-59"]]
+    two = SQL.replace("WHERE \"typ\" = 'a'", "WHERE \"typ\" = 'a' AND \"age\" = '35-59'")
+    assert workflow_problems(b, URL, two, "datum", b["filters"]) == []
+    problems = workflow_problems(b, URL, SQL, "datum", b["filters"])
+    assert problems == ["the filter 'age' = '35-59' is missing from the SQL".replace("'age'", "age")]
+

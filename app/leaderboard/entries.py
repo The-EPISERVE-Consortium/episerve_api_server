@@ -120,13 +120,9 @@ def _check_sql(sql: str | None, benchmark: Benchmark) -> Qualification:
         return Qualification(True, "history window not found in the run's SQL")
     if window.end >= benchmark.test_start:
         return Qualification(True, f"history ends {window.end}, on or after the test start", window)
-    if benchmark.filter_column and benchmark.filter_value is not None:
-        if not has_equality_filter(sql, benchmark.filter_column, benchmark.filter_value):
-            return Qualification(
-                True,
-                f"filter {benchmark.filter_column} = {benchmark.filter_value!r} not found in the run's SQL",
-                window,
-            )
+    for column, value in benchmark.all_filters():
+        if not has_equality_filter(sql, column, value):
+            return Qualification(True, f"filter {column} = {value!r} not found in the run's SQL", window)
     return Qualification(True, None, window)
 
 

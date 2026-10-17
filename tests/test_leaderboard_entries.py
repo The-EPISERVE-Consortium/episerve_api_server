@@ -164,3 +164,15 @@ def test_strict_run_listing_the_dataset_twice_is_refused_even_if_one_is_pinned()
     for inputs in ([pinned, unpinned], [unpinned, pinned], [pinned, _input()]):
         reason = qualify_run(_run(), _strict(), inputs=inputs).reason
         assert "several inputs from this benchmark's dataset" in reason and "exactly one" in reason
+
+
+def test_every_filter_of_a_benchmark_must_be_in_the_runs_sql():
+    sql = "SELECT * FROM df WHERE typ = 'RSV A' AND CAST(datum AS DATE) <= DATE '2021-12-31'"
+    run = _run(data_transformation_sql=[sql])
+    one = qualify_run(run, _benchmark(filter_column="typ", filter_value="RSV A"))
+    assert one.reason is None
+    two = qualify_run(run, _benchmark(filter_column="typ", filter_value="RSV A", extra_filters=(("age", "35-59"),)))
+    assert two.relevant and "filter age = '35-59' not found" in two.reason
+    both = sql.replace("WHERE typ = 'RSV A'", "WHERE typ = 'RSV A' AND age = '35-59'")
+    assert qualify_run(_run(data_transformation_sql=[both]),
+                       _benchmark(filter_column="typ", filter_value="RSV A", extra_filters=(("age", "35-59"),))).reason is None

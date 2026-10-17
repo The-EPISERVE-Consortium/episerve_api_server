@@ -8,7 +8,7 @@ from starlette.requests import Request
 
 from app.ui import session
 from app.benchmarks import actions as bactions
-from app.benchmarks.definition import DefinitionError
+from app.benchmarks.definition import DefinitionError, filters_from_row
 from app.clients import ckan as ckan_client
 from app.leaderboard import actions as lboard_actions
 from app.leaderboard.about import description_text
@@ -113,6 +113,12 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
         t_end = text_input("Test end (D)", _fmt(row.get("test_end")), placeholder="YYYY-MM-DD")
         fcol = text_input("Filter column (optional)", row.get("filter_column") or "")
         fval = text_input("Filter value", row.get("filter_value") or "")
+        stored_extra = filters_from_row(row)[1:]
+        further = []     # up to two more filters, so the series can be narrowed by up to three columns
+        for i in range(2):
+            column, value = stored_extra[i] if i < len(stored_extra) else ("", "")
+            further.append((text_input("Further filter column (optional)", column),
+                            text_input("Further filter value", value)))
         h_start = text_input("History start (optional)", _fmt(row.get("history_start")), placeholder="YYYY-MM-DD")
         h_end = text_input("History end (blank = last date before C)", _fmt(row.get("history_end")),
                            placeholder="YYYY-MM-DD")
@@ -138,6 +144,8 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
                 test_start=_parse_date(t_start.value, "test start", required=True),
                 test_end=_parse_date(t_end.value, "test end", required=True),
                 filter_column=(fcol.value or "").strip() or None, filter_value=fval.value or None,
+                extra_filters=tuple(((c.value or "").strip(), v.value or "") for c, v in further
+                                    if (c.value or "").strip() or (v.value or "")),
                 history_start=_parse_date(h_start.value, "history start", required=False),
                 history_end=_parse_date(h_end.value, "history end", required=False),
                 input_filename=(filename.value or "").strip() or "input.parquet",

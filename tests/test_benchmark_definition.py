@@ -5,7 +5,7 @@ from datetime import date, timedelta
 import pytest
 
 from app.benchmarks.definition import (
-    Benchmark, DefinitionError, derive_horizon, evaluation_sql, input_sql, validate,
+    Benchmark, DefinitionError, derive_horizon, evaluation_sql, filters_from_row, input_sql, split_filters, validate,
 )
 from app.leaderboard.entries import HistoryWindow, has_equality_filter, parse_history_window
 
@@ -90,4 +90,40 @@ def test_evaluation_sql_selects_the_test_window_of_the_series():
         "WHERE \"typ\" = 'Influenza A+B' AND CAST(\"datum\" AS DATE) >= DATE '2026-04-01' "
         "AND CAST(\"datum\" AS DATE) <= DATE '2026-09-30' ORDER BY \"datum\""
     )
+
+
+def _two(**overrides):
+    return _b(extra_filters=(("Altersgruppe", "35-59"),), **overrides)
+
+
+def test_sql_applies_every_filter_and_the_qualification_rules_accept_it():
+    b = _two()
+    assert b.all_filters() == [("typ", "Influenza A+B"), ("Altersgruppe", "35-59")]
+    sql = input_sql(b)
+    assert "\"typ\" = 'Influenza A+B' AND \"Altersgruppe\" = '35-59' AND CAST" in sql
+    assert evaluation_sql(b).count(" = '") == 2
+    assert all(has_equality_filter(sql, column, value) for column, value in b.all_filters())
+
+
+def test_several_filters_are_validated():
+    validate(_two(), "Name")
+    validate(_b(extra_filters=(("a", "1"), ("b", "2"))), "Name")                   # three in all
+    with pytest.raises(DefinitionError, match="At most 3"):
+        validate(_b(extra_filters=(("a", "1"), ("b", "2"), ("c", "3"))), "Name")
+    with pytest.raises(DefinitionError, match="only once"):
+        validate(_b(extra_filters=(("TYP", "x"),)), "Name")
+    with pytest.raises(DefinitionError, match="first filter"):
+        validate(_b(filter_column=None, filter_value=None, extra_filters=(("a", "1"),)), "Name")
+    with pytest.raises(DefinitionError, match="value"):
+        validate(_b(extra_filters=(("a", ""),)), "Name")
+
+
+def test_filters_convert_between_the_row_the_api_and_the_definition():
+    assert filters_from_row({"filter_column": "typ", "filter_value": "a", "extra_filters": '[["age", "35-59"]]'}) == [
+        ("typ", "a"), ("age", "35-59")]
+    assert filters_from_row({"filter_column": "typ", "filter_value": "a", "extra_filters": None}) == [("typ", "a")]
+    assert filters_from_row({"filter_column": None, "filter_value": None}) == []
+    assert split_filters([{"column": " typ ", "value": "a"}, {"column": "age", "value": "1"}]) == (
+        "typ", "a", (("age", "1"),))
+    assert split_filters([]) == (None, None, ())
 

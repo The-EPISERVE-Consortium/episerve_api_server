@@ -117,7 +117,7 @@ def test_designer_saves_a_new_draft_with_parsed_fields(monkeypatch):
     assert created == [dict(
         name="Flu", description=None, dataset_qid="Q1", target_column="v", date_column="datum",
         test_start=date(2022, 1, 1), test_end=date(2022, 1, 31), filter_column=None, filter_value=None,
-        history_start=date(2021, 6, 1), history_end=None, input_filename="input.parquet", created_by=1)]   # the logged-in user
+        history_start=date(2021, 6, 1), history_end=None, input_filename="input.parquet", extra_filters=(), created_by=1)]   # the logged-in user
 
 
 def test_designer_rejects_bad_dates_without_calling_the_action(monkeypatch):

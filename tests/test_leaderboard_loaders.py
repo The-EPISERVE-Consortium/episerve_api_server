@@ -118,3 +118,18 @@ def test_last_observed_date_without_observations_raises():
     source = pd.DataFrame({"datum": ["2026-05-01"], "value": [1.0]})
     with pytest.raises(loaders.LoadError, match="no observations on or before"):
         loaders.last_observed_date(_parquet_bytes(source), BENCH, date(2026, 3, 31))
+
+
+def test_parse_truth_with_two_filters_reads_exactly_one_series():
+    source = pd.DataFrame({
+        "datum": ["2022-01-05", "2022-01-05", "2022-01-05", "2022-01-12"],
+        "typ": ["a", "a", "b", "a"],
+        "age": ["young", "old", "young", "young"],
+        "value": [1.0, 2.0, 3.0, 4.0],
+    })
+    bench = Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": "a",
+                         "extra_filters": (("age", "young"),)})
+    truth = loaders.parse_truth(_parquet_bytes(source), bench)
+    assert truth["truth"].tolist() == [1.0, 4.0]                    # one row per date: no duplicates
+    with pytest.raises(loaders.LoadError, match="several observations"):
+        loaders.parse_truth(_parquet_bytes(source), Benchmark(**{**BENCH.__dict__, "filter_column": "typ", "filter_value": "a"}))

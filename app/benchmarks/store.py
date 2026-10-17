@@ -5,10 +5,11 @@ A final benchmark (``finalized_at`` set) is immutable: updates re-check the stat
 one transaction (``SELECT … FOR UPDATE``) before changing anything.
 """
 
+import json
 from datetime import date
 
 from app import db
-from app.benchmarks.definition import Benchmark
+from app.benchmarks.definition import Benchmark, filters_from_row
 from app.benchmarks.errors import NotDraft
 
 
@@ -19,7 +20,7 @@ def _connect():
 _SELECT = (
     "SELECT b.id, b.name, b.description, b.dataset_qid, b.target_column, b.date_column, b.filter_column, "
     "b.filter_value, b.test_start, b.test_end, b.history_start, b.history_end, b.input_filename, "
-    "b.component_name, b.prediction_length, b.truth_points, b.data_commit, b.created_by, "
+    "b.component_name, b.prediction_length, b.truth_points, b.data_commit, b.created_by, b.extra_filters, "
     "(SELECT u.name FROM users u WHERE u.id = b.created_by) AS created_by_name, "
     "CAST(b.created_at AS CHAR) AS created_at, CAST(b.finalized_at AS CHAR) AS finalized_at, "
     "CAST(b.retired_at AS CHAR) AS retired_at, "
@@ -48,12 +49,14 @@ def benchmark_from_row(row: dict) -> Benchmark:
         filter_value=row.get("filter_value"), history_start=row.get("history_start"),
         history_end=row.get("history_end"), input_filename=row.get("input_filename") or "input.parquet",
         prediction_length=row.get("prediction_length"), data_commit=row.get("data_commit"),
+        extra_filters=tuple(filters_from_row(row)[1:]),
     )
 
 
 def _definition_params(name: str, description: str | None, b: Benchmark) -> tuple:
     return (name, description, b.dataset_qid, b.target_column, b.date_column, b.filter_column, b.filter_value,
-            b.test_start, b.test_end, b.history_start, b.history_end, b.input_filename)
+            b.test_start, b.test_end, b.history_start, b.history_end, b.input_filename,
+            json.dumps([list(pair) for pair in b.extra_filters]) if b.extra_filters else None)
 
 
 def create_draft(name: str, description: str | None, benchmark: Benchmark, created_by: int | None = None) -> int:
@@ -64,7 +67,7 @@ def create_draft(name: str, description: str | None, benchmark: Benchmark, creat
             cur.execute(
                 "INSERT INTO benchmarks (name, description, dataset_qid, target_column, date_column, "
                 "filter_column, filter_value, test_start, test_end, history_start, history_end, input_filename, "
-                "created_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                "extra_filters, created_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (*_definition_params(name, description, benchmark), created_by),
             )
             conn.commit()
@@ -99,7 +102,7 @@ def update_draft(benchmark_id: int, name: str, description: str | None, benchmar
             cur.execute(
                 "UPDATE benchmarks SET name = %s, description = %s, dataset_qid = %s, target_column = %s, "
                 "date_column = %s, filter_column = %s, filter_value = %s, test_start = %s, test_end = %s, "
-                "history_start = %s, history_end = %s, input_filename = %s WHERE id = %s",
+                "history_start = %s, history_end = %s, input_filename = %s, extra_filters = %s WHERE id = %s",
                 (*_definition_params(name, description, benchmark), benchmark_id),
             )
         conn.commit()

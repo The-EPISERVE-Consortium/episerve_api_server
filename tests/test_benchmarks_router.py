@@ -208,3 +208,20 @@ def test_finalizing_a_draft_of_someone_else_is_forbidden(monkeypatch):
     resp = client.post("/benchmarks/4/finalize", headers=AUTH)
     assert resp.status_code == 403 and "Only the creator" in resp.json()["detail"]
 
+
+def test_a_draft_can_be_created_with_a_list_of_filters_and_the_answer_lists_them(monkeypatch):
+    calls = []
+    monkeypatch.setattr(router.bactions, "create_draft", lambda **kw: calls.append(kw) or 4)
+    row = {**DRAFT, "filter_column": "Bundesland_id", "filter_value": "5", "extra_filters": '[["Altersgruppe", "35-59"]]'}
+    monkeypatch.setattr(router.bactions, "get", lambda bid, include_draft=False: row)
+    body = {**BODY, "filters": [{"column": "Bundesland_id", "value": "5"}, {"column": "Altersgruppe", "value": "35-59"}]}
+    created = client.post("/benchmarks", json=body, headers=AUTH)
+    assert created.status_code == 201
+    assert (calls[0]["filter_column"], calls[0]["filter_value"], calls[0]["extra_filters"]) == (
+        "Bundesland_id", "5", (("Altersgruppe", "35-59"),))
+    out = created.json()
+    assert out["filters"] == [{"column": "Bundesland_id", "value": "5"}, {"column": "Altersgruppe", "value": "35-59"}]
+    assert out["filter_column"] == "Bundesland_id"                     # the first one stays visible for older clients
+    # the older single filter fields still work
+    client.post("/benchmarks", json={**BODY, "filter_column": "typ", "filter_value": "a"}, headers=AUTH)
+    assert (calls[1]["filter_column"], calls[1]["extra_filters"]) == ("typ", ())

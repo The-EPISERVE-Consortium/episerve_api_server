@@ -10,7 +10,7 @@ from datetime import date, timedelta
 
 from app.benchmarks import store
 from app.benchmarks.definition import (
-    Benchmark, DefinitionError, derive_horizon, input_sql, validate,
+    Benchmark, DefinitionError, derive_horizon, input_sql, split_filters, validate,
 )
 from app.benchmarks.errors import Conflict, Forbidden, NotDraft, NotFound  # noqa: F401  (re-exported)
 from app.clients import ckan as ckan_client
@@ -26,7 +26,7 @@ from app.users import User
 
 _EDITABLE = {
     "name", "description", "dataset_qid", "target_column", "date_column", "test_start", "test_end",
-    "filter_column", "filter_value", "history_start", "history_end", "input_filename",
+    "filter_column", "filter_value", "extra_filters", "history_start", "history_end", "input_filename",
 }
 
 
@@ -82,6 +82,7 @@ def create_draft(
     history_end: date | None = None,
     input_filename: str = "input.parquet",
     created_by: int | None = None,
+    extra_filters=(),
 ) -> int:
     """Validate a definition and store it as a draft made by the user with id ``created_by``.
 
@@ -94,6 +95,7 @@ def create_draft(
         test_start=test_start, test_end=test_end, filter_column=filter_column or None,
         filter_value=filter_value if filter_column else None, history_start=history_start,
         history_end=history_end, input_filename=input_filename,
+        extra_filters=tuple(tuple(pair) for pair in extra_filters) if filter_column else (),
     )
     validate(benchmark, name)
     _dataset(dataset_qid)
@@ -108,7 +110,7 @@ def update_draft(benchmark_id: int, **fields) -> None:
         NotDraft: The benchmark is final or retired.
         DefinitionError: The merged definition is invalid.
     """
-    unknown = set(fields) - _EDITABLE
+    unknown = set(fields) - _EDITABLE - {"filters"}
     if unknown:
         raise DefinitionError(f"Unknown field(s): {', '.join(sorted(unknown))}.")
     row = _draft_row(benchmark_id)
@@ -119,8 +121,12 @@ def update_draft(benchmark_id: int, **fields) -> None:
     for key in ("target_column", "date_column"):
         if isinstance(changes.get(key), str):
             changes[key] = changes[key].strip()
+    if "filters" in changes:       # the whole list of filters at once
+        changes["filter_column"], changes["filter_value"], changes["extra_filters"] = split_filters(changes.pop("filters"))
     if "filter_column" in changes and not changes["filter_column"]:
-        changes["filter_column"], changes["filter_value"] = None, None
+        changes["filter_column"], changes["filter_value"], changes["extra_filters"] = None, None, ()
+    if "extra_filters" in changes:
+        changes["extra_filters"] = tuple(tuple(pair) for pair in (changes["extra_filters"] or ()))
     merged = replace(current, **changes)
     validate(merged, name)
     if "dataset_qid" in changes:
@@ -183,9 +189,7 @@ def _evaluate(benchmark: Benchmark, dataset: dict, commit: str) -> CheckReport:
         )
     report.input_sql = input_sql(resolved)
     window = parse_history_window(report.input_sql, benchmark.date_column)
-    filter_ok = not benchmark.filter_column or has_equality_filter(
-        report.input_sql, benchmark.filter_column, benchmark.filter_value or ""
-    )
+    filter_ok = all(has_equality_filter(report.input_sql, column, value) for column, value in benchmark.all_filters())
     if window is None or window.end != history_end or not filter_ok:
         report.problems.append(
             "The generated input SQL is not accepted by the qualification rules "

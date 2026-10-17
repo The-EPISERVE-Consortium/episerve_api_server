@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from app.auth import optional_user, require_right
 from app.users import User
 from app.benchmarks import actions as bactions, store as bstore
-from app.benchmarks.definition import DefinitionError
+from app.benchmarks.definition import DefinitionError, filters_from_row, split_filters
 from app.leaderboard import actions as lactions
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
@@ -43,7 +43,8 @@ def _benchmark_out(row: dict) -> BenchmarkOut:
         created_by=row.get("created_by_name"),
         dataset_qid=row["dataset_qid"], target_column=row["target_column"],
         date_column=row["date_column"], filter_column=row.get("filter_column"),
-        filter_value=row.get("filter_value"), test_start=row["test_start"].isoformat(),
+        filter_value=row.get("filter_value"), filters=[{"column": c, "value": v} for c, v in filters_from_row(row)],
+        test_start=row["test_start"].isoformat(),
         test_end=row["test_end"].isoformat(), history_start=_iso(row.get("history_start")),
         history_end=_iso(row.get("history_end")), input_filename=row.get("input_filename") or "input.parquet",
         prediction_length=row.get("prediction_length"), truth_points=row.get("truth_points"),
@@ -119,14 +120,19 @@ def get_leaderboard(
 
 @router.post("", response_model=BenchmarkOut, status_code=201)
 def create_benchmark(request: BenchmarkCreate, user: User = Depends(require_right("benchmarks"))):
-    """Create a draft benchmark."""
+    """Create a draft benchmark (the series can be narrowed by up to three equality filters)."""
     try:
+        if request.filters is not None:
+            filter_column, filter_value, extra_filters = split_filters(request.filters)
+        else:
+            filter_column, filter_value, extra_filters = request.filter_column, request.filter_value, ()
         benchmark_id = bactions.create_draft(
             name=request.name, description=request.description, dataset_qid=request.dataset_qid,
             target_column=request.target_column, date_column=request.date_column,
-            test_start=request.test_start, test_end=request.test_end, filter_column=request.filter_column,
-            filter_value=request.filter_value, history_start=request.history_start,
+            test_start=request.test_start, test_end=request.test_end, filter_column=filter_column,
+            filter_value=filter_value, history_start=request.history_start,
             history_end=request.history_end, input_filename=request.input_filename, created_by=user.id,
+            extra_filters=extra_filters,
         )
         return _benchmark_out(bactions.get(benchmark_id, include_draft=True))
     except Exception as e:

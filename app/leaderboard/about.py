@@ -1,5 +1,6 @@
 """Generated description of a benchmark: the data it uses, how it scores and which runs it accepts."""
 
+from app.benchmarks.definition import filters_from_row
 from app.leaderboard.metrics import ALPHA
 
 # (name, meaning, which value is better) in the order of metrics.METRICS
@@ -41,7 +42,7 @@ def is_baseline(model_name: str) -> bool:
 
 
 def _filter_text(row: dict) -> str:
-    return f"{row['filter_column']} = {row.get('filter_value') or ''}" if row.get("filter_column") else "none"
+    return ", ".join(f"{column} = {value}" for column, value in filters_from_row(row)) or "none"
 
 
 def description_text(row: dict) -> str:

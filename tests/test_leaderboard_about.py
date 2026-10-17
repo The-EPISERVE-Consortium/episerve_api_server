@@ -40,3 +40,9 @@ def test_overview_names_the_creator_when_known():
     assert ("Created by", "Ada") in overview_facts({**row, "created_by_name": "Ada"})
     assert all(caption != "Created by" for caption, _ in overview_facts({**row, "created_by_name": None}))
 
+
+def test_the_overview_names_every_filter():
+    from app.leaderboard.about import overview_facts
+    row = {"target_column": "Faelle_7-Tage", "filter_column": "Bundesland_id", "filter_value": "5",
+           "extra_filters": '[["Altersgruppe", "35-59"]]', "prediction_length": 28}
+    assert ("Series", "Faelle_7-Tage · Bundesland_id = 5, Altersgruppe = 35-59") in overview_facts(row)
