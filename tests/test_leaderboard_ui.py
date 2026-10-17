@@ -182,15 +182,11 @@ def _candidate_table(find):
     return next((t for t in find(ui.table) if t.props.get("row-key") == "qid"), None)
 
 
-async def _press_add(find, client, qid):
-    """The 'Add to leaderboard' button of a row emits an 'add' event with the row."""
+async def _add_selected(find, client, *qids):
+    """Select the rows with these QIDs in the candidates table and press 'Add selected'."""
     table = _candidate_table(find)
-    row = next(r for r in table.rows if r["qid"] == qid)
-    for listener in table._event_listeners.values():
-        if listener.type == "add":
-            res = listener.handler(events.GenericEventArguments(sender=table, client=client, args=row))
-            if asyncio.iscoroutine(res):
-                await res
+    table.selected = [r for r in table.rows if r["qid"] in qids]
+    await _click(_button(find, "Add selected"), client)
 
 
 def test_anonymous_users_see_no_management_controls(monkeypatch):
@@ -199,30 +195,68 @@ def test_anonymous_users_see_no_management_controls(monkeypatch):
     assert not labels & {"New benchmark", "Retire benchmark"}
 
 
-def test_candidates_table_lists_only_fitting_runs_and_adding_one_scores_it_and_refreshes(monkeypatch):
+def test_candidates_table_lists_only_fitting_runs_with_checkboxes_and_two_buttons(monkeypatch):
     _candidates(monkeypatch)
-    added = []
-    monkeypatch.setattr(leaderboard_page.actions, "add_run", lambda bid, qid: added.append((bid, qid)) or 42)
-    notes = _capture_notify(monkeypatch)
 
     async def grab(out, client, find, drain):
-        await _load_candidates(find)  # the candidates load after the page is shown
+        await _load_candidates(find)
         out["labels"] = _labels(find)
-        out["rows"] = [dict(r) for r in _candidate_table(find).rows]
+        table = _candidate_table(find)
+        out["rows"] = [dict(r) for r in table.rows]
+        out["selection"] = table.props["selection"]
+        out["buttons"] = [(b.props.get("label") or b.text) for b in find(ui.button)]
+        out["slots"] = set(table.slots)
 
     out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=grab)
     assert "Potential candidates for this leaderboard" in out["labels"]
     assert out["rows"] == [{"qid": "Q10", "model": "timesfm", "tag": "v2", "date": "2026-01-02",
                             "params": "history_length=91", "history": "… → 2025-12-31"}]  # failed / added: not listed
+    assert out["selection"] == "multiple"
+    assert "Select all" in out["buttons"] and "Add selected" in out["buttons"]
+    assert "Add to leaderboard" not in out["buttons"] and "body-cell-add" not in out["slots"]
+
+
+def test_select_all_selects_every_row_and_shows_the_count(monkeypatch):
+    two = [dict(CANDIDATES[0]), dict(CANDIDATES[0], qid="Q13")]
+    _candidates(monkeypatch, two)
 
     async def scenario(out, client, find, drain):
         await _load_candidates(find)
-        await _press_add(find, client, "Q10")
+        out["before"] = _button(find, "Add selected").enabled
+        await _click(_button(find, "Select all"), client)
+        out["selected"] = [r["qid"] for r in _candidate_table(find).selected]
+        out["after"] = (_button(find, "Add selected (2)") or _button(find, "Add selected")).enabled
+
+    out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
+    assert out["before"] is False and out["after"] is True
+    assert out["selected"] == ["Q10", "Q13"]
+
+
+def test_adding_the_selection_scores_each_run_and_reports_the_ones_that_were_refused(monkeypatch):
+    from app.leaderboard.scoring import NotScorable
+
+    two = [dict(CANDIDATES[0]), dict(CANDIDATES[0], qid="Q13")]
+    _candidates(monkeypatch, two)
+    added = []
+
+    def add(bid, qid):
+        if qid == "Q13":
+            raise NotScorable("forecast covers 1 of 2 dates in the test window")
+        added.append((bid, qid))
+        return 42
+
+    monkeypatch.setattr(leaderboard_page.actions, "add_run", add)
+    notes = _capture_notify(monkeypatch)
+
+    async def scenario(out, client, find, drain):
+        await _load_candidates(find)
+        await _add_selected(find, client, "Q10", "Q13")
         await drain()
 
     _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
     assert added == [(3, "Q10")]
-    assert notes[-1][1]["type"] == "positive" and "Q10" in notes[-1][0]
+    assert any(kw["type"] == "positive" and "Q10" in msg for msg, kw in notes)
+    assert any(kw["type"] == "negative" and "Q13" in msg and "forecast covers 1 of 2 dates" in msg for msg, kw in notes)
 
 
 def test_candidates_table_says_so_when_there_is_nothing_to_add(monkeypatch):
@@ -240,26 +274,6 @@ def test_anonymous_users_get_no_candidates_and_no_backend_call(monkeypatch):
                         lambda bid: (_ for _ in ()).throw(AssertionError("must not be called")))
     out = _render(monkeypatch, board=_board([_entry()]))
     assert "Potential candidates for this leaderboard" not in out["labels"]
-
-
-def test_add_shows_the_reason_when_scoring_fails(monkeypatch):
-    from app.leaderboard.scoring import NotScorable
-
-    _candidates(monkeypatch)
-
-    def refuse(bid, qid):
-        raise NotScorable("forecast covers 1 of 2 dates in the test window")
-
-    monkeypatch.setattr(leaderboard_page.actions, "add_run", refuse)
-    notes = _capture_notify(monkeypatch)
-
-    async def scenario(out, client, find, drain):
-        await _load_candidates(find)
-        await _press_add(find, client, "Q10")
-        await drain()
-
-    _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
-    assert notes[-1][1]["type"] == "negative" and "forecast covers 1 of 2 dates" in notes[-1][0]
 
 
 def test_remove_button_on_the_run_page_removes_the_entry_and_returns_to_the_board(monkeypatch):
@@ -301,7 +315,7 @@ def test_expired_login_blocks_add_run(monkeypatch):
     async def scenario(out, client, find, drain):
         await _load_candidates(find)
         _expired(monkeypatch)
-        await _press_add(find, client, "Q10")
+        await _add_selected(find, client, "Q10")
         await drain()
 
     _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
@@ -333,12 +347,12 @@ def test_unexpected_write_errors_are_generic_and_logged(monkeypatch, caplog):
 
     async def scenario(out, client, find, drain):
         await _load_candidates(find)
-        await _press_add(find, client, "Q10")
+        await _add_selected(find, client, "Q10")
         await drain()
 
     with caplog.at_level("ERROR"):
         _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=scenario)
-    assert notes[-1][0] == "Could not add the run." and "db.internal" not in notes[-1][0]
+    assert notes[-1][0] == "Q10: could not be added" and "db.internal" not in notes[-1][0]
     assert any("db.internal" in (r.exc_text or "") for r in caplog.records)
 
 

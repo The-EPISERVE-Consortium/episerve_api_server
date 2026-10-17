@@ -384,47 +384,62 @@ def register_leaderboard_page() -> None:
                 ui.label("No other matching runs right now.").classes("text-sm text-gray-500")
                 return
             candidate_columns = [{"name": "model", "label": "Model", "field": "model", "align": "left",
-                          "style": "white-space: normal; max-width: 20rem"},
-                         {"name": "tag", "label": "Tag", "field": "tag", "align": "left"},
-                         {"name": "run", "label": "Run", "field": "qid", "align": "left"},
-                         {"name": "date", "label": "Date", "field": "date", "align": "left"},
-                         {"name": "params", "label": "Parameters", "field": "params", "align": "left",
-                          "style": "white-space: normal; max-width: 14rem"},
-                         {"name": "history", "label": "History (A→B)", "field": "history", "align": "left",
-                          "style": "white-space: normal; min-width: 8rem"},
-                         {"name": "add", "label": "", "field": "qid", "align": "right"}]
-            candidates = ui.table(columns=candidate_columns, rows=rows, row_key="qid").props(
+                                  "style": "white-space: normal; max-width: 20rem"},
+                                 {"name": "tag", "label": "Tag", "field": "tag", "align": "left"},
+                                 {"name": "run", "label": "Run", "field": "qid", "align": "left"},
+                                 {"name": "date", "label": "Date", "field": "date", "align": "left"},
+                                 {"name": "params", "label": "Parameters", "field": "params", "align": "left",
+                                  "style": "white-space: normal; max-width: 14rem"},
+                                 {"name": "history", "label": "History (A→B)", "field": "history", "align": "left",
+                                  "style": "white-space: normal; min-width: 8rem"}]
+            with ui.row().classes("items-center gap-2"):
+                select_all = ui.button("Select all").props("flat no-caps dense")
+                add_selected = ui.button("Add selected").props("no-caps dense")
+            candidates = ui.table(columns=candidate_columns, rows=rows, row_key="qid", selection="multiple").props(
                 "flat bordered dense hide-bottom").classes("max-w-6xl w-full")
             _help_headers(candidates, candidate_columns)
             candidates.add_slot("body-cell-model", _MODEL_CELL)
-            candidates.add_slot("body-cell-add", (
-                "<q-td :props='props' class='text-right'><q-btn dense flat no-caps color='primary' "
-                "label='Add to leaderboard' @click=\"() => $parent.$emit('add', props.row)\" /></q-td>"))
 
-            async def add_candidate(e):
-                qid = (e.args or {}).get("qid")
+            def show_selection(_=None):
+                count = len(candidates.selected)
+                add_selected.set_text(f"Add selected ({count})" if count else "Add selected")
+                add_selected.set_enabled(count > 0)
+
+            def choose_all():
+                candidates.selected = list(candidates.rows)
+                show_selection()
+
+            async def add_selection():
+                qids = [row["qid"] for row in candidates.selected]
                 if not _is_logged_in():
                     ui.notify(_LOGIN_EXPIRED, type="warning")
                     return
-                if not qid:
+                if not qids:
                     return
                 candidates.props("loading")
-                try:
-                    await run.io_bound(lambda: actions.add_run(selected, qid))
-                except (NotScorable, actions.Conflict, actions.NotFound, LoadError) as err:
-                    candidates.props(remove="loading")
-                    ui.notify(str(err), type="negative", multi_line=True)
-                    return
-                except Exception:
-                    logger.exception("could not add the run")
-                    candidates.props(remove="loading")
-                    ui.notify("Could not add the run.", type="negative")
-                    return
-                ui.notify(f"{qid} added to the leaderboard", type="positive")
+                add_selected.disable()
+                select_all.disable()
+                added, refused = [], []
+                for qid in qids:  # one after the other: every run is scored and stored on its own
+                    try:
+                        await run.io_bound(lambda q=qid: actions.add_run(selected, q))
+                        added.append(qid)
+                    except (NotScorable, actions.Conflict, actions.NotFound, LoadError) as err:
+                        refused.append(f"{qid}: {err}")
+                    except Exception:
+                        logger.exception("could not add the run %s", qid)
+                        refused.append(f"{qid}: could not be added")
+                if added:
+                    ui.notify(f"Added to the leaderboard: {', '.join(added)}", type="positive")
+                for reason in refused:
+                    ui.notify(reason, type="negative", multi_line=True)
                 board_view.refresh()
                 candidates_view.refresh()
 
-            candidates.on("add", add_candidate)
+            select_all.on_click(choose_all)
+            add_selected.on_click(add_selection)
+            candidates.on_select(show_selection)
+            show_selection()
 
         with view:
             board_view()
