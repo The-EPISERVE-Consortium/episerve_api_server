@@ -156,17 +156,20 @@ def _generated_data_sections(row: dict, manifest: dict) -> None:
              f"({manifest.get('qid') or manifest['input'].get('qid')}) that the DOIP server serves. A model run reads "
              "exactly the input file, as it is; forecasts are scored against the reference file, which is never "
              "given to a model.").classes("text-sm text-gray-600")
-    for layout in recipe.file_layouts(row, manifest):
+    layouts = recipe.file_layouts(row, manifest)
+    for layout in layouts:
         ui.link(layout["title"], layout["url"], new_tab=True).classes("text-base font-semibold mt-3")
         span = (f", {layout['first_date']} → {layout['last_date']}"
                 if layout["first_date"] and layout["last_date"] else "")
         ui.label(f"Each row is {layout['meaning']}. {layout['rows']} rows{span}; SHA-256 {layout['sha256'][:16]}…"
                  ).classes("text-sm text-gray-600")
-        ui.table(
-            columns=[{"name": "column", "label": "Column", "field": "column", "align": "left"},
-                     {"name": "role", "label": "Role", "field": "role", "align": "left"}],
-            rows=layout["columns"], row_key="column",
-        ).props("dense flat bordered").classes("w-full max-w-xl")
+    ui.table(
+        columns=[{"name": "column", "label": "Column", "field": "column", "align": "left"},
+                 {"name": "role", "label": "Role", "field": "role", "align": "left"},
+                 {"name": "input", "label": "input.parquet", "field": "input", "align": "left"},
+                 {"name": "reference", "label": "reference.parquet", "field": "reference", "align": "left"}],
+        rows=recipe.column_rows(layouts), row_key="column",
+    ).props("dense flat bordered").classes("w-full max-w-3xl mt-2")
     ui.label("Source datasets").classes("text-xl font-semibold text-gray-900 mt-4")
     ui.label("Every source is read at the same pinned version of the data (the lakeFS commit "
              f"{(row.get('data_commit') or '?')[:12]}…), so later updates of a source never change the files."
@@ -185,7 +188,9 @@ def _generated_data_sections(row: dict, manifest: dict) -> None:
                           """{{ props.value }}</a><span v-else>-</span></q-td>""")
     ui.label("How the files are generated").classes("text-xl font-semibold text-gray-900 mt-4")
     for number, step in enumerate(recipe.steps(row, manifest), start=1):
-        ui.label(f"{number}. {step}").classes("text-sm text-gray-700 max-w-4xl")
+        ui.label(f"{number}. {step['text']}").classes("text-sm text-gray-700 max-w-4xl mt-2")
+        if step["code"]:
+            ui.code(step["code"], language=step["language"]).classes("w-full max-w-4xl")
 
 
 def _data_tab(row: dict, benchmark_id: int) -> None:

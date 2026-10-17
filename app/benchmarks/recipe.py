@@ -56,38 +56,85 @@ def source_rows(row: dict, manifest: dict) -> list[dict]:
     return rows
 
 
-def steps(row: dict, manifest: dict) -> list[str]:
-    """The steps that turn the sources into the two files, in order."""
+def column_rows(layouts: list[dict]) -> list[dict]:
+    """One table for both files: every column once, with its role and the files it is in."""
+    in_files = {layout["kind"]: {c["column"] for c in layout["columns"]} for layout in layouts}
+    first = layouts[0]["columns"]
+    return [{"column": c["column"], "role": c["role"],
+             "input": "yes" if c["column"] in in_files["input"] else "-",
+             "reference": "yes" if c["column"] in in_files.get("reference", set()) else "-"} for c in first]
+
+
+def _sql_text(value: str) -> str:
+    return "'" + value.replace("'", "''") + "'"
+
+
+def steps(row: dict, manifest: dict) -> list[dict]:
+    """The steps that turn the sources into the two files, in order.
+
+    Each step is ``{"text", "code", "language"}``; ``code`` (a few lines, may be empty) is the technical core of the
+    step, equivalent to what ``app/benchmarks/materialize.py`` does.
+    """
     filters = filters_from_row(row)
-    target = next((s for s in source_rows(row, manifest) if s["role"] == "target"), None)
-    file_text = f"the file {target['file']} of " if target and target["file"] else "the file of "
+    sources = source_rows(row, manifest)
+    target = next((s for s in sources if s["role"] == "target"), None)
     date_column, target_column = row["date_column"], row["target_column"]
+    history_end = row.get("history_end") or "?"
     start = row.get("history_start")
-    out = [
-        f"Pin the data: all sources are read from the lakeFS repository data-processed at commit "
-        f"{row.get('data_commit') or '?'}, recorded when the benchmark was finalized.",
-        f"Target series: read {file_text}dataset {row['dataset_qid']}"
-        + (f" and keep the rows where {_filters_text(filters)}" if filters else "")
-        + f". Take the date from {date_column} and the value from {target_column}; rows whose date or value is "
-          "empty or not a finite number are dropped. The result must have at most one row per date.",
-        f"Cut the windows: input = the observations from {start or 'the start of the data'} to {row.get('history_end') or '?'} "
-        f"(the last observation before the test start {row['test_start']}); reference = the observations from "
-        f"{row['test_start']} to {row['test_end']}.",
-    ]
+    commit = row.get("data_commit") or "?"
+    out = [{
+        "text": f"Read the target dataset {row['dataset_qid']} at the pinned data commit {commit[:12]}… "
+                "(recorded when the benchmark was finalized; every source is read at this commit).",
+        "language": "python",
+        "code": f"df = pd.read_parquet({(target or {}).get('url') or '<file URL>'!r})",
+    }]
+    where = "".join(f" AND {column} = {_sql_text(value)}" for column, value in filters)
+    out.append({
+        "text": "Select the series: apply the filters, keep valid dates and finite values (at most one row per date "
+                "is allowed).",
+        "language": "sql",
+        "code": f"CREATE VIEW series AS SELECT TRY_CAST({date_column} AS DATE) AS {date_column}, "
+                f"TRY_CAST({target_column} AS DOUBLE) AS {target_column} FROM df\n"
+                f"WHERE isfinite(TRY_CAST({target_column} AS DOUBLE)){where};",
+    })
+    lower = f" AND {date_column} >= DATE {_sql_text(str(start))}" if start else ""
+    out.append({
+        "text": f"Cut the windows. The first query is the input (it ends at the last observation before the test "
+                f"start {row['test_start']}), the second the reference (the test window).",
+        "language": "sql",
+        "code": f"SELECT * FROM series WHERE {date_column} <= DATE {_sql_text(str(history_end))}{lower} "
+                f"ORDER BY {date_column};\n"
+                f"SELECT * FROM series WHERE {date_column} BETWEEN DATE {_sql_text(str(row['test_start']))} "
+                f"AND DATE {_sql_text(str(row['test_end']))} ORDER BY {date_column};",
+    })
     for covariate in covariates_from_row(row):
-        where = f", keeping the rows where {_filters_text(covariate.filters)}" if covariate.filters else ""
-        out.append(
-            f"Covariate {covariate.name}: read dataset {covariate.dataset_qid}{where}; date column "
-            f"{covariate.date_column}, numeric columns {', '.join(covariate.columns)}. Every row belongs to the first "
-            f"input date on or after its own date (and after the previous input date); the rows of one input date "
-            f"are combined by {covariate.aggregation} into {', '.join(covariate.output_columns())}. Input dates "
-            f"without rows stay empty, nothing is filled in, and rows after {row.get('history_end') or '?'} are never used.")
-    columns = ", ".join(manifest["input"].get("columns") or [date_column, target_column])
-    out.append(f"Write input.parquet (columns {columns}) from the input window and reference.parquet (columns "
-               f"{date_column}, {target_column}) from the test window, both as Parquet; the SHA-256 of each file is "
-               "recorded.")
-    out.append(f"Store both files as one FDO object with its own QID ({manifest.get('qid') or manifest['input'].get('qid')}) "
-               f"in the lakeFS repository {manifest['repo']}; the commit {manifest['commit']} is the version a model "
-               "run reads. The procedure is implemented in app/benchmarks/materialize.py of episerve_api_server; "
-               "re-creating the files from the pinned sources gives files with the same SHA-256.")
+        source = next((s for s in sources if s["role"] == covariate.name), None)
+        cond = "".join(f' & (cov["{c}"] == {v!r})' for c, v in covariate.filters)
+        cols = list(covariate.columns)
+        out.append({
+            "text": f"Covariate {covariate.name} (dataset {covariate.dataset_qid}): the rows between two input dates "
+                    f"are combined by {covariate.aggregation} into the later date (cov is read like df in step 1"
+                    f"{', from ' + source['file'] if source and source.get('file') else ''}); dates without rows stay empty, "
+                    f"nothing is filled in, and rows after {history_end} are never used. Output columns: "
+                    f"{', '.join(covariate.output_columns())}.",
+            "language": "python",
+            "code": f"rows = cov[(pd.to_datetime(cov[\"{covariate.date_column}\"]) <= \"{history_end}\"){cond}]\n"
+                    f"slot = np.searchsorted(grid, pd.to_datetime(rows[\"{covariate.date_column}\"]), side=\"left\")\n"
+                    f"aligned = rows.groupby(slot)[{cols!r}].{covariate.aggregation}()"
+                    f".reindex(range(len(grid)))",
+        })
+    columns = manifest["input"].get("columns") or [date_column, target_column]
+    out.append({
+        "text": f"Write both Parquet files (input columns: {', '.join(columns)}) and record the SHA-256 of each; "
+                "re-creating them gives the same content (the hash can differ with another pyarrow version).",
+        "language": "python",
+        "code": "input.to_parquet('input.parquet', index=False)\nreference.to_parquet('reference.parquet', index=False)\n"
+                "hashlib.sha256(open('input.parquet', 'rb').read()).hexdigest()",
+    })
+    out.append({
+        "text": f"Store both files as one FDO object ({manifest.get('qid') or manifest['input'].get('qid')}) in the "
+                f"lakeFS repository {manifest['repo']}; the commit {manifest['commit'][:12]}… is the version a model "
+                "run reads. Implementation: app/benchmarks/materialize.py in episerve_api_server.",
+        "language": "", "code": "",
+    })
     return out

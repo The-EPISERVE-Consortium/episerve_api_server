@@ -21,16 +21,34 @@ def test_an_older_manifest_without_sources_still_names_the_target_file():
     assert target["catalog"] == "https://data.episerve.zib.de/dataset/q1"
 
 
-def test_layouts_describe_one_row_per_date_and_fall_back_to_date_and_target():
-    input_layout, reference_layout = recipe.file_layouts(ROW, MANIFEST)
-    assert input_layout["rows"] == 233 and input_layout["first_date"] == "2022-03-02"
-    assert reference_layout["columns"] == [{"column": "datum", "role": "date"}, {"column": "v", "role": "target"}]
-    assert "test window" in reference_layout["meaning"]
+def test_one_column_table_serves_both_files():
+    layouts = recipe.file_layouts(ROW, MANIFEST)
+    assert layouts[0]["rows"] == 233 and layouts[0]["first_date"] == "2022-03-02"
+    assert "test window" in layouts[1]["meaning"]
+    assert recipe.column_rows(layouts) == [
+        {"column": "datum", "role": "date", "input": "yes", "reference": "yes"},
+        {"column": "v", "role": "target", "input": "yes", "reference": "yes"}]
 
 
-def test_the_steps_name_filters_windows_and_the_stored_commit():
+def test_the_steps_carry_short_sql_and_python_for_the_core_of_each_step():
     steps = recipe.steps(ROW, MANIFEST)
-    assert len(steps) == 5                                              # pin, target, windows, write, store
-    assert "typ = 'a' and age = '35-59'" in steps[1] and "d.parquet" in steps[1]
-    assert "start of the data to 2026-08-12" in steps[2] and "2026-08-19 to 2026-10-07" in steps[2]
-    assert "ee" * 32 in steps[-1] and "same SHA-256" in steps[-1]
+    assert [s["language"] for s in steps] == ["python", "sql", "sql", "python", ""]
+    assert "pd.read_parquet('https://doip" in steps[0]["code"] and "version=" + "c" * 64 in steps[0]["code"]
+    view = steps[1]["code"]
+    assert "typ = 'a' AND age = '35-59'" in view and "isfinite(TRY_CAST(v AS DOUBLE))" in view
+    windows = steps[2]["code"]
+    assert "datum <= DATE '2026-08-12'" in windows and "BETWEEN DATE '2026-08-19' AND DATE '2026-10-07'" in windows
+    assert all(len(s["code"].splitlines()) <= 3 for s in steps)
+    assert "ee" * 6 in steps[-1]["text"] and "Q1791000000001" in steps[-1]["text"]
+
+
+def test_a_covariate_step_aligns_with_the_grid_in_three_lines():
+    cov = [{"name": "wetter", "dataset_qid": "Q2", "date_column": "day", "columns": ["temp"],
+            "filters": [["city", "Berlin"]], "aggregation": "mean"}]
+    row = {**ROW, "covariates": json.dumps(cov)}
+    manifest = {**MANIFEST, "sources": [{"role": "target", "qid": "Q1", "component": "d.parquet"},
+                                        {"role": "wetter", "qid": "Q2", "component": "w.parquet"}]}
+    step = recipe.steps(row, manifest)[3]
+    assert len(step["code"].splitlines()) == 3 and 'cov["city"] == \'Berlin\'' in step["code"]
+    assert "np.searchsorted(grid" in step["code"] and ".mean()" in step["code"]
+    assert "from w.parquet" in step["text"] and "wetter__temp" in step["text"]

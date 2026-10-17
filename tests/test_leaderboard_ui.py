@@ -364,15 +364,15 @@ def test_data_tab_describes_layout_sources_and_steps_of_a_benchmark_with_covaria
     assert urls["input.parquet"].endswith(f"/doip/retrieve/Q1791000000001/input.parquet?version={'ee' * 32}")
     assert urls["reference.parquet"].endswith(f"/doip/retrieve/Q1791000000001/reference.parquet?version={'ee' * 32}")
     layouts = [rows for key, rows in out["tables"] if key == "column"]
-    assert layouts[0] == [{"column": "datum", "role": "date"}, {"column": "v", "role": "target"},
-                          {"column": "wetter__temp", "role": "covariate (wetter)"}]
-    assert layouts[1] == [{"column": "datum", "role": "date"}, {"column": "v", "role": "target"}]
+    assert layouts == [[{"column": "datum", "role": "date", "input": "yes", "reference": "yes"},
+                        {"column": "v", "role": "target", "input": "yes", "reference": "yes"},
+                        {"column": "wetter__temp", "role": "covariate (wetter)", "input": "yes", "reference": "-"}]]
     sources = next(rows for key, rows in out["tables"] if key == "role")
     assert [(r["role"], r["qid"], r["file"]) for r in sources] == [("target", "Q1", "d.parquet"), ("wetter", "Q2", "w.parquet")]
     assert sources[1]["url"].endswith(f"/doip/retrieve/Q2/w.parquet?version={COMMIT}")
     assert sources[1]["catalog"].endswith("/dataset/q2")
     steps = [t for t in out["labels"] if t[:2] in ("1.", "2.", "3.", "4.", "5.", "6.")]
-    assert len(steps) == 6 and "city = 'Berlin'" in steps[3] and "wetter__temp" in steps[3]
+    assert len(steps) == 6 and "wetter__temp" in steps[3] and steps[3].startswith("4. Covariate wetter")
     assert "120 rows, 2021-01-06 → 2021-12-29" in " ".join(out["labels"])
     assert "metric" in dict(out["tables"])                                         # the evaluation criteria stay
 
