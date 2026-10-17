@@ -19,6 +19,7 @@ from app.ui.pages import _error_label, _header
 logger = logging.getLogger(__name__)
 
 _LOGIN_EXPIRED = "Your login has expired; please log in again."
+MAX_FORM_FILTERS = 5     # only the designer form is limited; the API takes any number
 _DOMAIN_ERRORS = (DefinitionError, LoadError, bactions.NotFound, bactions.NotDraft, bactions.Conflict,
                   bactions.Forbidden)
 
@@ -111,12 +112,33 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
         date_col = text_input("Date column", row.get("date_column") or "datum")
         t_start = text_input("Test start (C)", _fmt(row.get("test_start")), placeholder="YYYY-MM-DD")
         t_end = text_input("Test end (D)", _fmt(row.get("test_end")), placeholder="YYYY-MM-DD")
-        stored = filters_from_row(row)
-        filter_inputs = []     # up to three filters, so the series can be narrowed by up to three columns
-        for i in range(3):
-            column, value = stored[i] if i < len(stored) else ("", "")
-            filter_inputs.append((text_input("Filter column (optional)" if i == 0 else "Further filter column (optional)", column),
-                                  text_input("Filter value" if i == 0 else "Further filter value", value)))
+        ui.label("Filters (optional): each one is column = value; together they select one series"
+                 ).classes("text-sm text-gray-600 mt-1")
+        filter_box = ui.column().classes("w-full gap-1")
+        filter_inputs: list = []     # (column input, value input, row); the form allows MAX_FORM_FILTERS of them
+
+        def update_add_button():
+            add_filter_btn.set_enabled(len(filter_inputs) < MAX_FORM_FILTERS)
+
+        def add_filter(column: str = "", value: str = ""):
+            with filter_box:
+                with ui.row().classes("w-full items-center gap-2 no-wrap") as line:
+                    entry = (text_input("Filter column", column), text_input("Filter value", value), line)
+
+                    def remove_filter(_=None, entry=entry):
+                        filter_inputs.remove(entry)
+                        filter_box.remove(entry[2])
+                        update_add_button()
+                        invalidate()
+
+                    ui.button(icon="close", on_click=remove_filter).props("flat round dense aria-label='Remove filter'")
+            filter_inputs.append(entry)
+            update_add_button()
+
+        add_filter_btn = ui.button("Add filter", icon="add", on_click=lambda: (add_filter(), invalidate())
+                                   ).props("flat no-caps dense").classes("self-start")
+        for column, value in filters_from_row(row):
+            add_filter(column, value)
         h_start = text_input("History start (optional)", _fmt(row.get("history_start")), placeholder="YYYY-MM-DD")
         h_end = text_input("History end (blank = last date before C)", _fmt(row.get("history_end")),
                            placeholder="YYYY-MM-DD")
@@ -141,7 +163,7 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
                 date_column=date_col.value or "",
                 test_start=_parse_date(t_start.value, "test start", required=True),
                 test_end=_parse_date(t_end.value, "test end", required=True),
-                filters=tuple(((c.value or "").strip(), v.value or "") for c, v in filter_inputs
+                filters=tuple(((c.value or "").strip(), v.value or "") for c, v, _ in filter_inputs
                               if (c.value or "").strip() or (v.value or "")),
                 history_start=_parse_date(h_start.value, "history start", required=False),
                 history_end=_parse_date(h_end.value, "history end", required=False),

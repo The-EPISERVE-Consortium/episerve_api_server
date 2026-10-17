@@ -69,7 +69,7 @@ def render(monkeypatch, module, path, *, logged_in=False, setup=None, after=None
 
 
 async def click(button, client, args=None):
-    for listener in button._event_listeners.values():
+    for listener in list(button._event_listeners.values()):   # a handler may remove the button itself
         if listener.type == "click":
             res = listener.handler(events.GenericEventArguments(sender=button, client=client, args=args or {}))
             if asyncio.iscoroutine(res):

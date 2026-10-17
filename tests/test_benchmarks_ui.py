@@ -358,3 +358,56 @@ def test_a_draft_can_be_retired_after_a_confirmation_and_the_login_is_rechecked(
 
 def test_the_list_page_shows_the_api_box(monkeypatch):
     assert "curl http://test/benchmarks" in _render(monkeypatch)["labels"]
+
+
+def _filter_fields(find):
+    columns = [e for e in find(ui.input) if e.props.get("label") == "Filter column"]
+    values = [e for e in find(ui.input) if e.props.get("label") == "Filter value"]
+    return columns, values
+
+
+def _remove_buttons(find):
+    return [b for b in find(ui.button) if b.props.get("aria-label") == "Remove filter"]
+
+
+def test_designer_adds_filter_rows_up_to_five_and_saves_them_in_order(monkeypatch):
+    created = []
+    monkeypatch.setattr(benchmarks_page.bactions, "create_draft", lambda **kw: created.append(kw) or 9)
+
+    async def scenario(out, client, find, drain):
+        _datasets(monkeypatch)
+        await click(button(find, "New benchmark"), client)
+        assert _filter_fields(find) == ([], [])                            # no filter rows until one is added
+        for _ in range(5):
+            await click(button(find, "Add filter"), client)
+        columns, values = _filter_fields(find)
+        out["rows"] = len(columns)
+        out["add_enabled"] = button(find, "Add filter").enabled
+        for i, (column, value) in enumerate([("region", "DE"), ("age", "35-59")]):
+            columns[i].value, values[i].value = column, value
+        _fill(find)
+        await click(button(find, "Save"), client)
+        await drain()
+
+    out = _render(monkeypatch, logged_in=True, after=scenario)
+    assert out["rows"] == 5 and out["add_enabled"] is False                  # the form stops at five
+    assert created[0]["filters"] == (("region", "DE"), ("age", "35-59"))      # empty rows are left out
+
+
+def test_designer_removes_a_filter_row_and_shows_the_stored_filters_of_a_draft(monkeypatch):
+    draft = {**DRAFT, "filters": '[["region", "DE"], ["age", "35-59"], ["sex", "f"]]'}
+
+    async def scenario(out, client, find, drain):
+        _datasets(monkeypatch)
+        await click(button(find, "Edit"), client)
+        columns, values = _filter_fields(find)
+        out["stored"] = [(c.value, v.value) for c, v in zip(columns, values)]
+        await click(_remove_buttons(find)[1], client)                        # drop the second one
+        columns, values = _filter_fields(find)
+        out["left"] = [(c.value, v.value) for c, v in zip(columns, values)]
+        out["add_enabled"] = button(find, "Add filter").enabled
+
+    out = _render(monkeypatch, drafts=(draft,), logged_in=True, after=scenario)
+    assert out["stored"] == [("region", "DE"), ("age", "35-59"), ("sex", "f")]
+    assert out["left"] == [("region", "DE"), ("sex", "f")] and out["add_enabled"] is True
+

@@ -1,6 +1,6 @@
 """Benchmark definition: one series cut into an input range and a reference range.
 
-The series is a dataset column (optionally filtered by up to three equality filters, column = value). The *input* range
+The series is a dataset column (optionally narrowed by any number of equality filters, column = value). The *input* range
 (``history_start``..``history_end``) is what a model run may see; the *reference* range
 (``test_start``..``test_end``) is what its forecast is compared against. Both are read
 from lakeFS at the commit pinned when the benchmark is finalized.
@@ -16,7 +16,6 @@ from datetime import date
 MAX_NAME = 200
 MAX_COLUMN = 200
 MAX_FILTER_VALUE = 500
-MAX_FILTERS = 3
 _QID = re.compile(r"Q[0-9]+")
 _FILENAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.\-]{0,99}")
 
@@ -91,8 +90,6 @@ def validate(benchmark: Benchmark, name: str) -> None:
     for label, value in (("target", benchmark.target_column), ("date", benchmark.date_column)):
         if not (value or "").strip() or len(value) > MAX_COLUMN:
             raise DefinitionError(f"The {label} column is required (column, at most {MAX_COLUMN} characters).")
-    if len(benchmark.filters) > MAX_FILTERS:
-        raise DefinitionError(f"At most {MAX_FILTERS} filters are allowed.")
     for column, value in benchmark.filters:
         if not (column or "").strip() or len(column) > MAX_COLUMN:
             raise DefinitionError(f"The filter column must be 1 to {MAX_COLUMN} characters (filter column).")

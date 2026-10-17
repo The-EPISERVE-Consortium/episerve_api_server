@@ -105,15 +105,17 @@ def test_sql_applies_every_filter_and_the_qualification_rules_accept_it():
     assert all(has_equality_filter(sql, column, value) for column, value in b.filters)
 
 
-def test_several_filters_are_validated():
+def test_several_filters_are_validated_and_there_is_no_limit_on_their_number():
     validate(_two(), "Name")
-    validate(_b(filters=(("typ", "x"), ("a", "1"), ("b", "2"))), "Name")                   # three in all
-    with pytest.raises(DefinitionError, match="At most 3"):
-        validate(_b(filters=(("typ", "x"), ("a", "1"), ("b", "2"), ("c", "3"))), "Name")
+    many = tuple((f"col{i}", str(i)) for i in range(12))
+    validate(_b(filters=many), "Name")                                           # the API takes any number
+    assert len(input_sql(_b(filters=many)).split(" AND ")) == 12 + 1             # every filter is in the SQL
     with pytest.raises(DefinitionError, match="only once"):
         validate(_b(filters=(("typ", "x"), ("TYP", "y"))), "Name")
     with pytest.raises(DefinitionError, match="value"):
         validate(_b(filters=(("typ", "x"), ("a", ""))), "Name")
+    with pytest.raises(DefinitionError, match="filter column must be"):
+        validate(_b(filters=(("typ", "x"), (" ", "1"))), "Name")
 
 
 def test_filters_convert_between_the_row_the_api_and_the_definition():
