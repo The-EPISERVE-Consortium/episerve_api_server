@@ -474,6 +474,7 @@ def test_the_check_lists_the_columns_of_the_generated_input(monkeypatch):
     report = _report()
     report.columns, report.missing, report.input_rows = ["datum", "v", "wetter__temp"], {"wetter__temp": 0.25}, 120
     monkeypatch.setattr(benchmarks_page.bactions, "check", lambda i: report)
+    monkeypatch.setattr(benchmarks_page.bactions, "update_draft", lambda i, **kw: None)
 
     async def scenario(out, client, find, drain):
         _datasets(monkeypatch)
