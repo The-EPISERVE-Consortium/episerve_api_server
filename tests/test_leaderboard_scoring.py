@@ -135,3 +135,22 @@ def test_unreadable_predictions_are_cannot_be_scored():
     with pytest.raises(NotScorable, match="no column"):
         score_run(BENCH, _run(), TRUTH, truth_commit=COMMIT, truth_as_of="", load_predictions=boom,
                   load_params=lambda qid: {})
+
+
+def test_candidates_carry_tag_history_and_parameters_where_they_are_cheap_to_know():
+    runs = [_run("Q10", docker_tag="v2"), _run("Q11", status="failed"), _run("Q13"), _run("Q14")]
+    asked = []
+
+    def params(qid):
+        asked.append(qid)
+        if qid == "Q14":
+            raise RuntimeError("DOIP down")
+        return {"history_length": 91}
+
+    result = {c["qid"]: c for c in candidate_runs(BENCH, runs, {"Q13"}, load_params=params)}
+    assert result["Q10"]["docker_tag"] == "v2" and result["Q10"]["params"] == {"history_length": 91}
+    assert result["Q10"]["history_end"] is not None                          # parsed from the run's SQL
+    assert result["Q14"]["params"] == {}                                     # a failing loader gives no parameters
+    assert result["Q11"]["params"] is None and result["Q13"]["params"] is None
+    assert sorted(asked) == ["Q10", "Q14"]                                   # only for runs that can be added
+

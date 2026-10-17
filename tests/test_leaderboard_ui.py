@@ -156,7 +156,9 @@ def _button(find, label):
 
 
 CANDIDATES = [
-    {"qid": "Q10", "model_name": "timesfm", "run_timestamp": "2026-01-02T00:00:00Z", "reason": None},
+    {"qid": "Q10", "model_name": "timesfm", "run_timestamp": "2026-01-02T00:00:00Z", "reason": None,
+     "docker_tag": "v2", "params": {"history_length": 91}, "history_start": None,
+     "history_end": date(2025, 12, 31)},
     {"qid": "Q11", "model_name": "chronos", "run_timestamp": "2026-01-01T00:00:00Z",
      "reason": "run status is failed, not success"},
     {"qid": "Q12", "model_name": "chronos", "run_timestamp": "2026-01-01T00:00:00Z",
@@ -210,7 +212,8 @@ def test_candidates_table_lists_only_fitting_runs_and_adding_one_scores_it_and_r
 
     out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=grab)
     assert "Potential candidates for this leaderboard" in out["labels"]
-    assert out["rows"] == [{"qid": "Q10", "model": "timesfm", "date": "2026-01-02"}]  # failed / already added: not listed
+    assert out["rows"] == [{"qid": "Q10", "model": "timesfm", "tag": "v2", "date": "2026-01-02",
+                            "params": "history_length=91", "history": "… → 2025-12-31"}]  # failed / added: not listed
 
     async def scenario(out, client, find, drain):
         await _load_candidates(find)

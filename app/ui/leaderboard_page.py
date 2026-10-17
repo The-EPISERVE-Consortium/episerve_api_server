@@ -14,7 +14,7 @@ from app.leaderboard.about import METRIC_DOCS, description_text, overview_facts
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
 from app.leaderboard.present import (
-    LABELS, chart_option, filter_entries, history_window, point_rows, summary, table_rows,
+    LABELS, chart_option, filter_entries, history_text, history_window, params_text, point_rows, summary, table_rows,
 )
 from app.ui.pages import _error_label, _header
 
@@ -362,19 +362,27 @@ def register_leaderboard_page() -> None:
                 _error_label("Could not list the candidate runs.")
                 return
             loading.delete()
-            rows = [{"qid": c["qid"], "model": c["model_name"], "date": c["run_timestamp"][:10]}
-                    for c in found if c["reason"] is None]
+            rows = [{
+                "qid": c["qid"], "model": c["model_name"], "tag": c.get("docker_tag") or "—",
+                "date": c["run_timestamp"][:10], "params": params_text(c.get("params") or {}),
+                "history": history_text(c.get("history_start"), c["history_end"]) if c.get("history_end") else "—",
+            } for c in found if c["reason"] is None]
             if not rows:
                 ui.label("No other matching runs right now.").classes("text-sm text-gray-500")
                 return
             candidates = ui.table(
                 columns=[{"name": "model", "label": "Model", "field": "model", "align": "left",
                           "style": "white-space: normal; max-width: 20rem"},
+                         {"name": "tag", "label": "Tag", "field": "tag", "align": "left"},
                          {"name": "qid", "label": "Run", "field": "qid", "align": "left"},
                          {"name": "date", "label": "Date", "field": "date", "align": "left"},
+                         {"name": "params", "label": "Parameters", "field": "params", "align": "left",
+                          "style": "white-space: normal; max-width: 14rem"},
+                         {"name": "history", "label": "History (A→B)", "field": "history", "align": "left",
+                          "style": "white-space: normal; min-width: 8rem"},
                          {"name": "add", "label": "", "field": "qid", "align": "right"}],
                 rows=rows, row_key="qid",
-            ).props("flat bordered dense hide-bottom").classes("max-w-4xl w-full")
+            ).props("flat bordered dense hide-bottom").classes("max-w-6xl w-full")
             candidates.add_slot("body-cell-model", _MODEL_CELL)
             candidates.add_slot("body-cell-add", (
                 "<q-td :props='props' class='text-right'><q-btn dense flat no-caps color='primary' "

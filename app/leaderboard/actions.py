@@ -141,4 +141,5 @@ def candidates(benchmark_id: int) -> list[dict]:
     active = {e.run_qid for e in store.list_entries(benchmark_id)}
     return scoring.candidate_runs(
         bstore.benchmark_from_row(row), ckan_client.list_model_runs(), active, load_inputs=_load_inputs,
+        load_params=lambda qid: loaders.fetch_run_params(qid, settings.doip_url),
     )

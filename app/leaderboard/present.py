@@ -60,6 +60,15 @@ def _distance(metric: str, value: float) -> float:
     return round(abs(value - TARGET_COVERAGE), 9) if metric == "coverage" else value
 
 
+def params_text(params: dict) -> str:
+    return ", ".join(f"{k}={v}" for k, v in params.items()) or "—"
+
+
+def history_text(start, end) -> str:
+    """The history window as 'A → B'; an open start shows as '…'."""
+    return f"{start.isoformat() if start else '…'} → {end.isoformat()}"
+
+
 def table_rows(board: Leaderboard, entries: list[Entry] | None = None) -> list[dict]:
     """One display row per entry (default: all of the board's), with the best value of each column marked.
 
@@ -72,15 +81,14 @@ def table_rows(board: Leaderboard, entries: list[Entry] | None = None) -> list[d
         best_values[metric] = min(distances) if distances else None
     rows = []
     for rank, entry in enumerate(entries, start=1):
-        start = entry.history_start.isoformat() if entry.history_start else "…"
         rows.append({
             "rank": rank,
             "model": f"{entry.model_name}",
             "baseline": is_baseline(entry.model_name),
             "run_qid": entry.run_qid,
             "date": _run_date(entry.run_timestamp),
-            "params": ", ".join(f"{k}={v}" for k, v in entry.params.items()) or "—",
-            "history": f"{start} → {entry.history_end.isoformat()}",
+            "params": params_text(entry.params),
+            "history": history_text(entry.history_start, entry.history_end),
             "history_days": history_days(entry),
             "scored": f"{entry.n_scored}/{entry.n_expected}",
             **{m: _fmt(m, entry.metrics.get(m)) for m in METRICS},
@@ -113,8 +121,7 @@ def point_rows(entry: Entry) -> list[dict]:
 
 
 def history_window(entry: Entry) -> str:
-    start = entry.history_start.isoformat() if entry.history_start else "…"
-    return f"{start} → {entry.history_end.isoformat()}"
+    return history_text(entry.history_start, entry.history_end)
 
 
 def chart_option(entry: Entry) -> dict:

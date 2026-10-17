@@ -72,8 +72,12 @@ def score_run(
 def candidate_runs(
     benchmark: Benchmark, runs: list[dict], active_run_qids: set[str],
     load_inputs: Callable[[str], list[RunInput] | None] | None = None,
+    load_params: Callable[[str], dict] | None = None,
 ) -> list[dict]:
     """Runs on the benchmark's dataset, with the reason each cannot be added (None if it can).
+
+    Each candidate also carries what is cheap to know before scoring: the image tag, the history window (when
+    the provenance proves it) and, for runs that can be added and with ``load_params``, the run's parameters.
 
     Only the cheap checks run here (status, dataset, history window, filter); a run that
     passes them can still be rejected when added if its predictions are unusable. For a
@@ -107,5 +111,22 @@ def candidate_runs(
         candidates.append({
             "qid": run["qid"], "model_name": run.get("model_name", ""),
             "run_timestamp": run.get("run_timestamp", ""), "reason": reason,
+            "docker_tag": run.get("docker_tag", ""),
+            "history_start": verdict.window.start if verdict.window else None,
+            "history_end": verdict.window.end if verdict.window else None,
+            "params": None,
         })
+    addable = [c["qid"] for c in candidates if c["reason"] is None]
+    if load_params and addable:
+        def safe_params(qid: str) -> dict:
+            try:
+                return load_params(qid)
+            except Exception:
+                return {}
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            params = dict(zip(addable, pool.map(safe_params, addable)))
+        for c in candidates:
+            if c["qid"] in params:
+                c["params"] = params[c["qid"]]
     return sorted(candidates, key=lambda c: c["run_timestamp"], reverse=True)
