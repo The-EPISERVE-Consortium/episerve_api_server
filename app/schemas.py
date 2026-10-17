@@ -54,6 +54,7 @@ class ModelRunStatus(BaseModel):
 
 
 class BenchmarkOut(BaseModel):
+    created_by: str | None = None  # the display name of the user who created it, if known
     id: int
     name: str
     state: str

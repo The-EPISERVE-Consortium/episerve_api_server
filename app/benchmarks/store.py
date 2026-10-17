@@ -19,7 +19,8 @@ def _connect():
 _SELECT = (
     "SELECT b.id, b.name, b.description, b.dataset_qid, b.target_column, b.date_column, b.filter_column, "
     "b.filter_value, b.test_start, b.test_end, b.history_start, b.history_end, b.input_filename, "
-    "b.component_name, b.prediction_length, b.truth_points, b.data_commit, "
+    "b.component_name, b.prediction_length, b.truth_points, b.data_commit, b.created_by, "
+    "(SELECT u.name FROM users u WHERE u.id = b.created_by) AS created_by_name, "
     "CAST(b.created_at AS CHAR) AS created_at, CAST(b.finalized_at AS CHAR) AS finalized_at, "
     "CAST(b.retired_at AS CHAR) AS retired_at, "
     "(SELECT COUNT(*) FROM entries e WHERE e.benchmark_id = b.id AND e.removed_at IS NULL) AS entry_count "
@@ -55,16 +56,16 @@ def _definition_params(name: str, description: str | None, b: Benchmark) -> tupl
             b.test_start, b.test_end, b.history_start, b.history_end, b.input_filename)
 
 
-def create_draft(name: str, description: str | None, benchmark: Benchmark) -> int:
-    """Insert a draft benchmark and return its id."""
+def create_draft(name: str, description: str | None, benchmark: Benchmark, created_by: int | None = None) -> int:
+    """Insert a draft benchmark (made by the user with id ``created_by``) and return its id."""
     conn = _connect()
     try:
         with conn.cursor() as cur:
             cur.execute(
                 "INSERT INTO benchmarks (name, description, dataset_qid, target_column, date_column, "
-                "filter_column, filter_value, test_start, test_end, history_start, history_end, input_filename) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                _definition_params(name, description, benchmark),
+                "filter_column, filter_value, test_start, test_end, history_start, history_end, input_filename, "
+                "created_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (*_definition_params(name, description, benchmark), created_by),
             )
             conn.commit()
             return cur.lastrowid

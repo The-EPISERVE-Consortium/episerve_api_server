@@ -9,5 +9,9 @@ class Conflict(Exception):
     """The request conflicts with the current state (for example the run is already on the board)."""
 
 
+class Forbidden(Exception):
+    """The user may not do this to this benchmark (for example finalize a draft someone else created)."""
+
+
 class NotDraft(Conflict):
     """The benchmark is final or retired and cannot be changed."""

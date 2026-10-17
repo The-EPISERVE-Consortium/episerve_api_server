@@ -11,8 +11,12 @@ import pytest
 from app.benchmarks import actions
 from app.benchmarks.definition import DefinitionError
 from app.leaderboard.loaders import LoadError
+from tests.fakes import make_user
 
 COMMIT = "0123abcd" * 8
+CREATOR = make_user(7, ("benchmarks",), email="creator@example.org")
+OTHER = make_user(8, ("benchmarks",), email="other@example.org")
+ADMIN_USER = make_user(9, ("admin",), email="admin@example.org")
 DATASET = {"qid": "Q1", "name": "Wastewater", "last_modified": "2026-10-14",
            "components": [{"name": "d.parquet", "url": "https://doip.example/doip/retrieve/Q1/d.parquet"}]}
 
@@ -30,7 +34,7 @@ def _row(**overrides):
             "date_column": "datum", "filter_column": "typ", "filter_value": "Influenza A+B",
             "test_start": date(2026, 4, 1), "test_end": date(2026, 9, 30), "history_start": None,
             "history_end": None, "input_filename": "input.parquet", "component_name": None,
-            "prediction_length": None, "truth_points": None, "data_commit": None,
+            "prediction_length": None, "truth_points": None, "data_commit": None, "created_by": 7,
             "created_at": "2026-10-16 10:00:00", "finalized_at": None, "retired_at": None, "entry_count": 0}
     return {**base, **overrides}
 
@@ -48,7 +52,8 @@ def world(monkeypatch):
 
     monkeypatch.setattr(actions.lakefs_client, "read_processed_component", read)
     monkeypatch.setattr(actions.store, "get", lambda bid: dict(state["row"]) if bid == 3 else None)
-    monkeypatch.setattr(actions.store, "create_draft", lambda name, desc, b: log["created"].append((name, desc, b)) or 8)
+    monkeypatch.setattr(actions.store, "create_draft",
+                        lambda name, desc, b, created_by=None: log["created"].append((name, desc, b, created_by)) or 8)
 
     def update(bid, name, desc, b):
         log["updated"].append((bid, name, desc, b))
@@ -67,10 +72,11 @@ def _create(**kw):
     return actions.create_draft(**{**args, **kw})
 
 
-def test_create_draft_validates_and_stores_a_trimmed_name(world):
-    assert _create() == 8
-    name, _, benchmark = world["log"]["created"][0]
+def test_create_draft_validates_and_stores_a_trimmed_name_and_the_creator(world):
+    assert _create(created_by=CREATOR.id) == 8
+    name, _, benchmark, creator = world["log"]["created"][0]
     assert name == "Flu 2026" and benchmark.dataset_qid == "Q1" and benchmark.history_end is None
+    assert creator == CREATOR.id
 
 
 def test_create_draft_rejects_invalid_definitions_and_unknown_datasets(world):
@@ -131,7 +137,7 @@ def test_check_only_works_on_drafts(world):
 
 
 def test_finalize_pins_the_commit_read_during_the_check(world):
-    actions.finalize(3)
+    actions.finalize(3, by=CREATOR)
     bid, kw = world["log"]["finalized"][0]
     assert bid == 3 and kw == {"data_commit": COMMIT, "component_name": "d.parquet", "truth_points": 27,
                                "prediction_length": 27, "history_end": date(2026, 3, 25)}
@@ -139,14 +145,14 @@ def test_finalize_pins_the_commit_read_during_the_check(world):
 
 def test_finalize_with_a_different_expected_commit_conflicts_and_stores_nothing(world):
     with pytest.raises(actions.Conflict, match="checked deadbeefdead, now 0123abcd0123"):
-        actions.finalize(3, expected_commit="deadbeef" * 8)
+        actions.finalize(3, expected_commit="deadbeef" * 8, by=CREATOR)
     assert world["log"]["finalized"] == [] and world["log"]["reads"] == []
 
 
 def test_finalize_stores_nothing_when_the_check_finds_problems_or_lakefs_fails(world, monkeypatch):
     world["state"]["row"] = _row(test_start=date(2030, 1, 1), test_end=date(2030, 2, 1))
     with pytest.raises(LoadError, match="no observations"):
-        actions.finalize(3)
+        actions.finalize(3, by=CREATOR)
     world["state"]["row"] = _row()
 
     def boom():
@@ -154,14 +160,14 @@ def test_finalize_stores_nothing_when_the_check_finds_problems_or_lakefs_fails(w
 
     monkeypatch.setattr(actions.lakefs_client, "processed_head_commit", boom)
     with pytest.raises(RuntimeError):
-        actions.finalize(3)
+        actions.finalize(3, by=CREATOR)
     assert world["log"]["finalized"] == []
 
 
 def test_finalize_refuses_a_final_benchmark(world):
     world["state"]["row"] = _row(finalized_at="t", data_commit=COMMIT)
     with pytest.raises(actions.NotDraft):
-        actions.finalize(3)
+        actions.finalize(3, by=CREATOR)
 
 
 def _final(**kw):
@@ -200,8 +206,9 @@ def test_get_hides_drafts_unless_asked(world):
 
 def test_copy_as_draft_keeps_the_definition_with_a_new_name(world):
     world["state"]["row"] = _final(name="N" * 195, history_start=date(2025, 12, 3))
-    assert actions.copy_as_draft(3) == 8
-    name, _, b = world["log"]["created"][0]
+    assert actions.copy_as_draft(3, created_by=OTHER.id) == 8
+    name, _, b, creator = world["log"]["created"][0]
+    assert creator == OTHER.id                              # the copy belongs to whoever copied it
     assert name.endswith("(copy)") and len(name) <= 200
     assert b.history_start == date(2025, 12, 3) and b.data_commit is None and b.prediction_length is None
     with pytest.raises(actions.NotFound):
@@ -212,7 +219,7 @@ def test_finalize_conflicts_when_the_draft_changes_meanwhile(world, monkeypatch)
     rows = iter([_row(), _row(name="Other")])
     monkeypatch.setattr(actions.store, "get", lambda bid: next(rows))
     with pytest.raises(actions.Conflict):
-        actions.finalize(3)
+        actions.finalize(3, by=CREATOR)
     assert world["log"]["finalized"] == []
 
 
@@ -233,3 +240,22 @@ def test_check_rejects_a_history_start_after_the_last_observation(world):
     report = actions.check(3)
     assert not report.ok and any("no observations in the input range" in p for p in report.problems)
     assert not any("qualification rules" in p for p in report.problems)
+
+
+def test_only_the_creator_may_finalize_a_draft(world):
+    with pytest.raises(actions.Forbidden, match="Only the creator"):
+        actions.finalize(3, by=OTHER)
+    with pytest.raises(actions.Forbidden):
+        actions.finalize(3, by=ADMIN_USER)                    # not even an admin, if the draft has a creator
+    assert world["log"]["finalized"] == [] and world["log"]["reads"] == []
+    actions.finalize(3, by=CREATOR)
+    assert len(world["log"]["finalized"]) == 1
+
+
+def test_a_draft_without_a_recorded_creator_can_only_be_finalized_by_an_admin(world):
+    world["state"]["row"] = _row(created_by=None)
+    with pytest.raises(actions.Forbidden, match="no recorded creator"):
+        actions.finalize(3, by=CREATOR)
+    actions.finalize(3, by=ADMIN_USER)
+    assert len(world["log"]["finalized"]) == 1
+

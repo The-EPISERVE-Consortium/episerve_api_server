@@ -33,3 +33,10 @@ def test_every_leaderboard_column_has_a_help_text_and_the_metrics_say_which_valu
     assert COLUMN_HELP["coverage"].endswith("The closer to 80% the better.")
     assert "interval width" in COLUMN_HELP["interval_score"] and "Mean absolute error" in COLUMN_HELP["mae"]
 
+
+def test_overview_names_the_creator_when_known():
+    from app.leaderboard.about import overview_facts
+    row = {"target_column": "v", "prediction_length": 5, "entry_count": 1}
+    assert ("Created by", "Ada") in overview_facts({**row, "created_by_name": "Ada"})
+    assert all(caption != "Created by" for caption, _ in overview_facts({**row, "created_by_name": None}))
+

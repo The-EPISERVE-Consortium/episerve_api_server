@@ -96,3 +96,11 @@ def test_set_description_updates_any_benchmark(monkeypatch):
     store.set_description(3, "Text")
     assert conn.executed[0][1] == ("Text", 3)
     assert "UPDATE benchmarks SET description" in conn.executed[0][0] and "finalized" not in conn.executed[0][0]
+
+
+def test_create_draft_stores_the_creator(monkeypatch):
+    conn = _use(monkeypatch, ([], 1, 7))
+    assert store.create_draft("Flu", None, BENCH, created_by=18) == 7
+    sql, params = conn.executed[0]
+    assert "created_by" in sql and params[-1] == 18
+

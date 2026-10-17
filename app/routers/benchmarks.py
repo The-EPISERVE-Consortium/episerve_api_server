@@ -4,6 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from app.auth import optional_user, require_right
+from app.users import User
 from app.benchmarks import actions as bactions, store as bstore
 from app.benchmarks.definition import DefinitionError
 from app.leaderboard import actions as lactions
@@ -22,6 +23,8 @@ router = APIRouter(prefix="/benchmarks", tags=["benchmarks"])
 def _http(exc: Exception) -> HTTPException:
     if isinstance(exc, (bactions.NotFound, lactions.NotFound)):
         return HTTPException(status_code=404, detail=str(exc))
+    if isinstance(exc, bactions.Forbidden):
+        return HTTPException(status_code=403, detail=str(exc))
     if isinstance(exc, (bactions.Conflict, lactions.Conflict)):
         return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, (LoadError, NotScorable, DefinitionError)):
@@ -37,6 +40,7 @@ def _iso(value) -> str | None:
 def _benchmark_out(row: dict) -> BenchmarkOut:
     return BenchmarkOut(
         id=row["id"], name=row["name"], state=bstore.state(row), description=row.get("description"),
+        created_by=row.get("created_by_name"),
         dataset_qid=row["dataset_qid"], target_column=row["target_column"],
         date_column=row["date_column"], filter_column=row.get("filter_column"),
         filter_value=row.get("filter_value"), test_start=row["test_start"].isoformat(),
@@ -113,8 +117,8 @@ def get_leaderboard(
     )
 
 
-@router.post("", response_model=BenchmarkOut, status_code=201, dependencies=[Depends(require_right("benchmarks"))])
-def create_benchmark(request: BenchmarkCreate):
+@router.post("", response_model=BenchmarkOut, status_code=201)
+def create_benchmark(request: BenchmarkCreate, user: User = Depends(require_right("benchmarks"))):
     """Create a draft benchmark."""
     try:
         benchmark_id = bactions.create_draft(
@@ -122,7 +126,7 @@ def create_benchmark(request: BenchmarkCreate):
             target_column=request.target_column, date_column=request.date_column,
             test_start=request.test_start, test_end=request.test_end, filter_column=request.filter_column,
             filter_value=request.filter_value, history_start=request.history_start,
-            history_end=request.history_end, input_filename=request.input_filename,
+            history_end=request.history_end, input_filename=request.input_filename, created_by=user.id,
         )
         return _benchmark_out(bactions.get(benchmark_id, include_draft=True))
     except Exception as e:
@@ -165,22 +169,21 @@ def check_benchmark(benchmark_id: int):
     )
 
 
-@router.post("/{benchmark_id}/finalize", response_model=BenchmarkOut, dependencies=[Depends(require_right("benchmarks"))])
-def finalize_benchmark(benchmark_id: int):
-    """Pin a draft to the current data and make it final."""
+@router.post("/{benchmark_id}/finalize", response_model=BenchmarkOut)
+def finalize_benchmark(benchmark_id: int, user: User = Depends(require_right("benchmarks"))):
+    """Pin a draft to the current data and make it final (only its creator may)."""
     try:
-        bactions.finalize(benchmark_id)
+        bactions.finalize(benchmark_id, by=user)
         return _benchmark_out(bactions.get(benchmark_id, include_draft=True))
     except Exception as e:
         raise _http(e)
 
 
-@router.post("/{benchmark_id}/copy", response_model=BenchmarkOut, status_code=201,
-             dependencies=[Depends(require_right("benchmarks"))])
-def copy_benchmark(benchmark_id: int):
-    """Copy a benchmark as a new draft."""
+@router.post("/{benchmark_id}/copy", response_model=BenchmarkOut, status_code=201)
+def copy_benchmark(benchmark_id: int, user: User = Depends(require_right("benchmarks"))):
+    """Copy a benchmark as a new draft (the copy belongs to the user who made it)."""
     try:
-        return _benchmark_out(bactions.get(bactions.copy_as_draft(benchmark_id), include_draft=True))
+        return _benchmark_out(bactions.get(bactions.copy_as_draft(benchmark_id, user.id), include_draft=True))
     except Exception as e:
         raise _http(e)
 

@@ -12,7 +12,7 @@ from app.benchmarks import store
 from app.benchmarks.definition import (
     Benchmark, DefinitionError, derive_horizon, input_sql, validate,
 )
-from app.benchmarks.errors import Conflict, NotDraft, NotFound  # noqa: F401  (re-exported)
+from app.benchmarks.errors import Conflict, Forbidden, NotDraft, NotFound  # noqa: F401  (re-exported)
 from app.clients import ckan as ckan_client
 from app.clients import lakefs as lakefs_client
 from lakefs.exceptions import NotFoundException
@@ -22,6 +22,7 @@ from app.dataset_preview import MAX_DOWNLOAD_BYTES
 from app.leaderboard import loaders
 from app.leaderboard.entries import has_equality_filter, parse_history_window
 from app.leaderboard.loaders import LoadError
+from app.users import User
 
 _EDITABLE = {
     "name", "description", "dataset_qid", "target_column", "date_column", "test_start", "test_end",
@@ -80,8 +81,9 @@ def create_draft(
     history_start: date | None = None,
     history_end: date | None = None,
     input_filename: str = "input.parquet",
+    created_by: int | None = None,
 ) -> int:
-    """Validate a definition and store it as a draft.
+    """Validate a definition and store it as a draft made by the user with id ``created_by``.
 
     Raises:
         DefinitionError: Invalid definition.
@@ -95,7 +97,7 @@ def create_draft(
     )
     validate(benchmark, name)
     _dataset(dataset_qid)
-    return store.create_draft(name.strip(), description, benchmark)
+    return store.create_draft(name.strip(), description, benchmark, created_by)
 
 
 def update_draft(benchmark_id: int, **fields) -> None:
@@ -204,18 +206,29 @@ def check(benchmark_id: int) -> CheckReport:
     return _evaluate(benchmark, _dataset(benchmark.dataset_qid), lakefs_client.processed_head_commit())
 
 
-def finalize(benchmark_id: int, expected_commit: str | None = None) -> None:
-    """Freeze a draft and pin the lakeFS head commit.
+def may_finalize(row: dict, user: User) -> bool:
+    """Only the creator finalizes a draft; one without a recorded creator (made before creators were kept)
+    can be finalized by an admin."""
+    creator = row.get("created_by")
+    return user.can("admin") if creator is None else user.id == creator
+
+
+def finalize(benchmark_id: int, expected_commit: str | None = None, *, by: User) -> None:
+    """Freeze a draft and pin the lakeFS head commit; only its creator (``by``) may do this.
 
     With ``expected_commit`` (the commit of the last check) the finalization is refused when
     the head moved since.
 
     Raises:
+        Forbidden: ``by`` is not the creator of the draft.
         Conflict: ``expected_commit`` differs from the current head commit.
         NotFound / NotDraft: Unknown benchmark or not a draft.
         LoadError: The check found problems (all of them in the message).
     """
     row = _draft_row(benchmark_id)
+    if not may_finalize(row, by):
+        raise Forbidden("Only the creator of this draft can finalize it." if row.get("created_by") is not None
+                        else "This draft has no recorded creator; only an admin can finalize it.")
     benchmark = store.benchmark_from_row(row)
     dataset = _dataset(benchmark.dataset_qid)
     commit = lakefs_client.processed_head_commit()
@@ -306,8 +319,8 @@ def run_spec(benchmark_id: int) -> dict:
     }
 
 
-def copy_as_draft(benchmark_id: int) -> int:
-    """New draft with the same definition (the way to change a final benchmark).
+def copy_as_draft(benchmark_id: int, created_by: int | None = None) -> int:
+    """New draft with the same definition (the way to change a final benchmark); the copy is made by ``created_by``.
 
     Raises:
         NotFound: Unknown benchmark.
@@ -316,4 +329,4 @@ def copy_as_draft(benchmark_id: int) -> int:
     benchmark = replace(store.benchmark_from_row(row), prediction_length=None, data_commit=None)
     suffix = " (copy)"
     name = row["name"][: 200 - len(suffix)] + suffix
-    return store.create_draft(name, row.get("description"), benchmark)
+    return store.create_draft(name, row.get("description"), benchmark, created_by)

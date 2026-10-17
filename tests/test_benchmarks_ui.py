@@ -117,7 +117,7 @@ def test_designer_saves_a_new_draft_with_parsed_fields(monkeypatch):
     assert created == [dict(
         name="Flu", description=None, dataset_qid="Q1", target_column="v", date_column="datum",
         test_start=date(2022, 1, 1), test_end=date(2022, 1, 31), filter_column=None, filter_value=None,
-        history_start=date(2021, 6, 1), history_end=None, input_filename="input.parquet")]
+        history_start=date(2021, 6, 1), history_end=None, input_filename="input.parquet", created_by=1)]   # the logged-in user
 
 
 def test_designer_rejects_bad_dates_without_calling_the_action(monkeypatch):
@@ -175,7 +175,7 @@ def test_finalize_is_disabled_until_a_successful_check_and_confirms_with_the_com
     done = []
     monkeypatch.setattr(benchmarks_page.bactions, "update_draft", lambda i, **kw: None)
     monkeypatch.setattr(benchmarks_page.bactions, "check", lambda i: _report())
-    monkeypatch.setattr(benchmarks_page.bactions, "finalize", lambda i, expected_commit=None: done.append((i, expected_commit)))
+    monkeypatch.setattr(benchmarks_page.bactions, "finalize", lambda i, expected_commit=None, by=None: done.append((i, expected_commit)))
     navigated = []
     monkeypatch.setattr(benchmarks_page.ui.navigate, "to", lambda url: navigated.append(url))
 
@@ -208,9 +208,9 @@ def test_finalize_and_retire_and_copy_call_the_actions_and_recheck_the_login(mon
     after_expiry = []
     monkeypatch.setattr(benchmarks_page.bactions, "update_draft", lambda i, **kw: None)
     monkeypatch.setattr(benchmarks_page.bactions, "check", lambda i: _report())
-    monkeypatch.setattr(benchmarks_page.bactions, "finalize", lambda i, expected_commit=None: calls.append(("finalize", i)))
+    monkeypatch.setattr(benchmarks_page.bactions, "finalize", lambda i, expected_commit=None, by=None: calls.append(("finalize", i)))
     monkeypatch.setattr(benchmarks_page.bactions, "retire", lambda i: calls.append(("retire", i)))
-    monkeypatch.setattr(benchmarks_page.bactions, "copy_as_draft", lambda i: calls.append(("copy", i)) or 11)
+    monkeypatch.setattr(benchmarks_page.bactions, "copy_as_draft", lambda i, created_by=None: calls.append(("copy", i, created_by)) or 11)
     notes = _notes(monkeypatch)
     monkeypatch.setattr(benchmarks_page.ui.navigate, "to", lambda url: None)
     monkeypatch.setattr(benchmarks_page.ui.navigate, "reload", lambda: None)
@@ -233,7 +233,7 @@ def test_finalize_and_retire_and_copy_call_the_actions_and_recheck_the_login(mon
         await click(_retire_buttons(find)[-1], client)           # the final benchmark's (drafts come first)
         await click(button(find, "Retire benchmark"), client)
         await drain()
-        assert calls == [("copy", 5), ("retire", 5)]
+        assert calls == [("copy", 5, 1), ("retire", 5)]
         # finalize works, then fails the re-check once the login expires
         await click(button(find, "Edit"), client)
         await click(button(find, "Check against data"), client)
@@ -253,7 +253,7 @@ def test_finalize_and_retire_and_copy_call_the_actions_and_recheck_the_login(mon
                 expired_note()
 
     _render(monkeypatch, logged_in=True, after=scenario)
-    assert calls == [("copy", 5), ("retire", 5)] and after_expiry == []
+    assert calls == [("copy", 5, 1), ("retire", 5)] and after_expiry == []
 
 
 def test_domain_errors_show_their_message_and_unexpected_ones_are_generic_and_logged(monkeypatch, caplog):

@@ -19,11 +19,16 @@ from app.ui.pages import _error_label, _header
 logger = logging.getLogger(__name__)
 
 _LOGIN_EXPIRED = "Your login has expired; please log in again."
-_DOMAIN_ERRORS = (DefinitionError, LoadError, bactions.NotFound, bactions.NotDraft, bactions.Conflict)
+_DOMAIN_ERRORS = (DefinitionError, LoadError, bactions.NotFound, bactions.NotDraft, bactions.Conflict,
+                  bactions.Forbidden)
 
 
 def _is_logged_in() -> bool:
     return session.can("benchmarks")
+
+
+def _current_user():
+    return session.current_user()
 
 
 def _fmt(value) -> str:
@@ -158,7 +163,8 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
                 return False
             try:
                 if state["id"] is None:
-                    state["id"] = await run.io_bound(lambda: bactions.create_draft(**values))
+                    user = _current_user()
+                    state["id"] = await run.io_bound(lambda: bactions.create_draft(**values, created_by=user.id))
                 else:
                     await run.io_bound(lambda: bactions.update_draft(state["id"], **values))
             except Exception as exc:
@@ -231,7 +237,9 @@ def _designer_dialog(existing: dict | None, on_done) -> None:
                     freeze_btn.disable()
                     spinner.set_visibility(True)
                     try:
-                        await run.io_bound(lambda: bactions.finalize(state["id"], expected_commit=report.data_commit))
+                        user = _current_user()
+                        await run.io_bound(
+                            lambda: bactions.finalize(state["id"], expected_commit=report.data_commit, by=user))
                     except Exception as exc:
                         fail(exc, "finalize the benchmark")
                         confirm.close()
@@ -318,7 +326,8 @@ def register_benchmarks_page() -> None:
                 ui.notify(_LOGIN_EXPIRED, type="warning")
                 return
             try:
-                await run.io_bound(lambda: bactions.copy_as_draft(benchmark_id))
+                user = _current_user()
+                await run.io_bound(lambda: bactions.copy_as_draft(benchmark_id, user.id))
             except bactions.NotFound as exc:
                 ui.notify(str(exc), type="negative")
                 return

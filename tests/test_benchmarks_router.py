@@ -168,8 +168,8 @@ def test_create_patch_check_finalize_copy_and_retire(monkeypatch):
     calls = []
     monkeypatch.setattr(router.bactions, "create_draft", lambda **kw: calls.append(("create", kw)) or 4)
     monkeypatch.setattr(router.bactions, "update_draft", lambda bid, **kw: calls.append(("patch", bid, kw)))
-    monkeypatch.setattr(router.bactions, "finalize", lambda bid: calls.append(("finalize", bid)))
-    monkeypatch.setattr(router.bactions, "copy_as_draft", lambda bid: calls.append(("copy", bid)) or 5)
+    monkeypatch.setattr(router.bactions, "finalize", lambda bid, by: calls.append(("finalize", bid, by.id)))
+    monkeypatch.setattr(router.bactions, "copy_as_draft", lambda bid, created_by: calls.append(("copy", bid, created_by)) or 5)
     monkeypatch.setattr(router.bactions, "retire", lambda bid: calls.append(("retire", bid)))
     monkeypatch.setattr(router.bactions, "get", lambda bid, include_draft=False: DRAFT)
     monkeypatch.setattr(router.bactions, "check", lambda bid: _report())
@@ -183,6 +183,8 @@ def test_create_patch_check_finalize_copy_and_retire(monkeypatch):
     assert client.post("/benchmarks/4/copy", headers=AUTH).status_code == 201
     assert client.post("/benchmarks/4/retire", headers=AUTH).status_code == 204
     assert [c[0] for c in calls] == ["create", "patch", "finalize", "copy", "retire"]
+    assert calls[0][1]["created_by"] == ADMIN.id                                    # the user is recorded as the creator
+    assert calls[2] == ("finalize", 4, ADMIN.id) and calls[3] == ("copy", 4, ADMIN.id)
 
 
 def test_only_an_admin_changes_the_description_of_any_benchmark(monkeypatch):
@@ -196,3 +198,13 @@ def test_only_an_admin_changes_the_description_of_any_benchmark(monkeypatch):
     assert client.put("/benchmarks/3/description", json=body, headers=bearer(member)).status_code == 403
     assert client.put("/benchmarks/3/description", json=body, headers=AUTH).status_code == 200
     assert saved == [(3, "Hello")]
+
+
+def test_finalizing_a_draft_of_someone_else_is_forbidden(monkeypatch):
+    def refuse(bid, by):
+        raise router.bactions.Forbidden("Only the creator of this draft can finalize it.")
+
+    monkeypatch.setattr(router.bactions, "finalize", refuse)
+    resp = client.post("/benchmarks/4/finalize", headers=AUTH)
+    assert resp.status_code == 403 and "Only the creator" in resp.json()["detail"]
+

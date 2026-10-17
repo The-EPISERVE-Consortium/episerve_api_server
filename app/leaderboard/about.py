@@ -57,6 +57,8 @@ def overview_facts(row: dict) -> list[tuple[str, str]]:
     series = f"{row['target_column']} · {_filter_text(row)}" if row.get("filter_column") else row["target_column"]
     length = row.get("prediction_length")
     facts = [("Series", series), ("Forecast horizon", f"{length} steps" if length else "—")]
+    if row.get("created_by_name"):
+        facts.append(("Created by", row["created_by_name"]))
     if row.get("entry_count") is not None:
         facts.append(("Runs", str(row["entry_count"])))
     return facts

@@ -24,6 +24,8 @@ def render(monkeypatch, module, path, *, logged_in=False, setup=None, after=None
     monkeypatch.setattr(pages.ckan_client, "list_processed_datasets", external)
     monkeypatch.setattr(pages.ckan_client, "list_model_runs", external)
     monkeypatch.setattr(module, "_is_logged_in", lambda: logged_in)
+    from tests.conftest import ADMIN
+    monkeypatch.setattr(module, "_current_user", lambda: ADMIN if logged_in else None, raising=False)
     if setup:
         setup()
     out = {}
