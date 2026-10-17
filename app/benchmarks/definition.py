@@ -45,7 +45,9 @@ class Covariate:
     aggregation: str = "mean"
 
     def output_columns(self) -> list[str]:
-        return [f"{self.name}__{column}" for column in self.columns]
+        """The column names in the input file: ``<name>__<column>`` with everything but letters, digits and _ in the
+        column replaced by _ (so ``temperature_2m_mean (°C)`` becomes ``temperature_2m_mean_C``)."""
+        return [f"{self.name}__{re.sub(r'[^0-9A-Za-z_]+', '_', column).strip('_')}" for column in self.columns]
 
 
 @dataclass(frozen=True)

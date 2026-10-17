@@ -102,3 +102,17 @@ def test_the_parquet_is_reproducible_and_hashed():
     again, digest_again = materialize.to_parquet(built.input)
     assert digest == digest_again and len(digest) == 64 and data == again
     assert pq.read_table(BytesIO(data)).column_names == built.columns
+
+
+def test_column_names_are_made_safe_for_the_input_file():
+    odd = _parquet(pd.DataFrame({"day": [d.isoformat() for d in DAYS], "temperature_2m_mean (°C)": [1.0] * 120,
+                                 "city": ["Berlin"] * 120}))
+    cov = _covariate(columns=("temperature_2m_mean (°C)",))
+    assert cov.output_columns() == ["wetter__temperature_2m_mean_C"]
+    built = materialize.build(_benchmark(covariates=(cov,)), date(2026, 3, 11), TARGET, {"wetter": odd})
+    assert built.columns == ["datum", "v", "wetter__temperature_2m_mean_C"]
+    from app.benchmarks.definition import DefinitionError, validate
+    clash = _covariate(columns=("a b", "a-b"))
+    with pytest.raises(DefinitionError, match="exist twice"):
+        validate(_benchmark(covariates=(clash,)), "Name")
+

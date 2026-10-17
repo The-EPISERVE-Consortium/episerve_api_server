@@ -86,7 +86,7 @@ def _align(grid: pd.DatetimeIndex, rows: pd.DataFrame, covariate: Covariate) -> 
     else:
         aggregated = grouped.last()                                              # last value that is not empty
     aggregated = aggregated.reindex(range(len(grid)))
-    aggregated.columns = [f"{covariate.name}__{name}" for name in aggregated.columns]
+    aggregated.columns = covariate.output_columns()
     return aggregated.reset_index(drop=True)
 
 
