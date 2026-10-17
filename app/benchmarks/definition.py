@@ -14,6 +14,8 @@ import statistics
 from dataclasses import dataclass
 from datetime import date
 
+from app.config import settings
+
 MAX_NAME = 200
 MAX_COLUMN = 200
 MAX_FILTER_VALUE = 500
@@ -121,10 +123,17 @@ def materialized_from_row(row: dict) -> dict | None:
     return stored or None
 
 
+def object_url(manifest: dict, kind: str = "input", *, versioned: bool = True) -> str:
+    """The DOIP URL of a generated file (``input`` or ``reference``); with ``versioned`` it carries the commit of the
+    benchmarks repository it was stored in."""
+    entry = manifest[kind]
+    url = f"{settings.doip_url.rstrip('/')}/doip/retrieve/{entry['qid']}/{entry['component']}"
+    return f"{url}?version={manifest['commit']}" if versioned else url
+
+
 def input_uri(manifest: dict, *, versioned: bool = True) -> str:
-    """The lakeFS URI of the generated input file; with ``versioned`` it carries the commit it was stored in."""
-    uri = f"lakefs://{manifest['repo']}/{manifest['branch']}/{manifest['input']['path']}"
-    return f"{uri}?version={manifest['commit']}" if versioned else uri
+    """The DOIP URL a model run reads the generated input file from."""
+    return object_url(manifest, "input", versioned=versioned)
 
 
 def filters_from_row(row: dict) -> list[tuple[str, str]]:

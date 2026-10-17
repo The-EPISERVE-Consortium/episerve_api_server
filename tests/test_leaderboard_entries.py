@@ -5,8 +5,8 @@ from datetime import date
 from app.leaderboard.entries import HistoryWindow, qualify_run
 
 MANIFEST = {"repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
-            "input": {"path": "3/input.parquet", "first_date": "2021-01-06", "last_date": "2021-12-29"}}
-URI = "lakefs://benchmarks/main/3/input.parquet"
+            "input": {"qid": "Q1791000000001", "component": "input.parquet", "first_date": "2021-01-06", "last_date": "2021-12-29"}}
+URI = "https://doip.example/doip/retrieve/Q1791000000001/input.parquet"
 
 
 def _run(**overrides):
@@ -34,6 +34,6 @@ def test_a_failed_run_is_listed_with_the_reason():
 
 
 def test_runs_that_did_not_read_the_file_are_not_relevant():
-    other = _run(input_sources=["lakefs://benchmarks/main/4/input.parquet"])
+    other = _run(input_sources=["https://doip.example/doip/retrieve/Q1791000000009/input.parquet"])
     assert qualify_run(other, MANIFEST).relevant is False
     assert qualify_run({"qid": "Q12", "status": "success"}, MANIFEST).relevant is False

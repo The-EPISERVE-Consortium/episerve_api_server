@@ -9,7 +9,7 @@ from starlette.requests import Request
 from app.ui import session
 from app.benchmarks import actions as bactions
 from app.leaderboard import actions
-from app.benchmarks.definition import covariates_from_row, materialized_from_row
+from app.benchmarks.definition import covariates_from_row, materialized_from_row, object_url
 from app.benchmarks.store import benchmark_from_row
 from app.leaderboard.about import COLUMN_HELP, METRIC_DOCS, description_text, overview_facts
 from app.leaderboard.loaders import LoadError
@@ -155,7 +155,8 @@ def _generated_data_sections(row: dict, manifest: dict, benchmark_id: int) -> No
     ui.label("Training data").classes("text-xl font-semibold text-gray-900")
     ui.label("One file, generated once from the sources below when the benchmark was finalized. "
              "A model run reads exactly this file, as it is.").classes("text-sm text-gray-600")
-    ui.link("Download the input file (Parquet)", f"/benchmarks/{benchmark_id}/data/input").classes("text-sm")
+    ui.link("Download the input file (Parquet)", object_url(manifest, "input", versioned=True), new_tab=True).classes("text-sm")
+    ui.label(f"Object {inp['qid']}, served by the DOIP server").classes("text-xs text-gray-500")
     ui.label(f"{inp['rows']} rows, {inp.get('first_date', '?')} → {inp.get('last_date', '?')}; "
              f"SHA-256 {inp['sha256'][:16]}…").classes("text-xs text-gray-500")
     owner = {name: covariate.name for covariate in sources for name in covariate.output_columns()}
@@ -187,7 +188,9 @@ def _generated_data_sections(row: dict, manifest: dict, benchmark_id: int) -> No
     ui.label("Evaluation data").classes("text-xl font-semibold text-gray-900 mt-4")
     ui.label("Forecasts are scored against this file (date and target value only); it is never given to a model."
              ).classes("text-sm text-gray-600")
-    ui.link("Download the reference file (Parquet)", f"/benchmarks/{benchmark_id}/data/reference").classes("text-sm")
+    ui.link("Download the reference file (Parquet)", object_url(manifest, "reference", versioned=True),
+            new_tab=True).classes("text-sm")
+    ui.label(f"Object {ref['qid']}, served by the DOIP server").classes("text-xs text-gray-500")
     ui.label(f"{ref['rows']} rows; SHA-256 {ref['sha256'][:16]}…").classes("text-xs text-gray-500")
 
 

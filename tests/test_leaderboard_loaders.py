@@ -111,12 +111,12 @@ def test_truth_from_reference_reads_the_file_at_the_commit_and_checks_its_hash(m
     import hashlib
     source = pd.DataFrame({"datum": [date(2022, 1, 5), date(2022, 1, 12)], "value": [10.0, float("nan")]})
     data = _parquet_bytes(source)
-    manifest = {"commit": "ee" * 32, "reference": {"path": "3/reference.parquet", "sha256": hashlib.sha256(data).hexdigest()}}
+    manifest = {"commit": "ee" * 32, "reference": {"qid": "Q1791000000002", "component": "reference.parquet", "sha256": hashlib.sha256(data).hexdigest()}}
     calls = []
-    monkeypatch.setattr(loaders.lakefs_client, "read_benchmark_file",
-                        lambda commit, path, limit: calls.append((commit, path)) or data)
+    monkeypatch.setattr(loaders.lakefs_client, "read_benchmark_component",
+                        lambda commit, qid, name, limit: calls.append((commit, qid, name)) or data)
     truth = loaders.truth_from_reference(manifest, BENCH)
-    assert calls == [("ee" * 32, "3/reference.parquet")]
+    assert calls == [("ee" * 32, "Q1791000000002", "reference.parquet")]
     assert truth["date"].tolist() == [pd.Timestamp("2022-01-05")] and truth["truth"].tolist() == [10.0]   # NaN dropped
     with pytest.raises(loaders.LoadError, match="hash"):
         loaders.truth_from_reference({**manifest, "reference": {**manifest["reference"], "sha256": "0" * 64}}, BENCH)

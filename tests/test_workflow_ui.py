@@ -16,7 +16,7 @@ def render(monkeypatch, _module, path, **kw):
     return _render(monkeypatch, _SHIM, path, **kw)
 
 COMMIT = "ab" * 32
-URL = "lakefs://benchmarks/main/3/input.parquet?version=" + "ee" * 32
+URL = "https://doip.example/doip/retrieve/Q1791000000001/input.parquet?version=" + "ee" * 32
 SQL = ""
 SPEC = {"benchmark_id": 3, "dataset_qid": "Q1", "data_commit": COMMIT, "input_data_files": [[URL, "input.parquet"]],
         "data_transformation_sql": [SQL], "input_columns": ["datum", "v"], "config": {"prediction_length": 27, "prediction_offset": 0},

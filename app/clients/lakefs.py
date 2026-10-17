@@ -167,6 +167,7 @@ def get_model_run(run_id: str) -> dict | None:
 _QID = re.compile(r"Q[0-9]+")
 _FILENAME = re.compile(r"[A-Za-z0-9_.\-]+")
 _COMMIT = re.compile(r"[0-9a-f]{40,64}")
+_BENCHMARK_PATH = re.compile(r"\d\d/\d\d/\d\d/Q\d+(/components)?/[A-Za-z0-9_.\-]+")
 
 
 def processed_head_commit() -> str:
@@ -203,42 +204,40 @@ def read_processed_component(commit: str, qid: str, filename: str, max_bytes: in
     return data
 
 
-def write_benchmark_files(benchmark_id: int, files: dict[str, bytes]) -> tuple[str, str]:
-    """Store generated files of a benchmark in the benchmarks repository and commit them.
+def write_benchmark_objects(files: dict[str, bytes], message: str) -> tuple[str, str]:
+    """Store generated files in the benchmarks repository and commit them in one commit.
 
     Args:
-        benchmark_id: The benchmark; its files go below ``<id>/``.
-        files: File name (no directories) to content.
+        files: Branch-relative path (``pp/qq/rr/Q…/…``, as built by ``app.benchmarks.fdo``) to content.
+        message: The commit message.
 
     Returns:
         ``(branch, commit id)``; the files are read back at that commit.
 
     Raises:
-        ValueError: If a file name is unsafe.
+        ValueError: If a path is unsafe.
     """
-    if any(not _FILENAME.fullmatch(name) or name in (".", "..") for name in files):
-        raise ValueError("Invalid file name.")
+    if any(not _BENCHMARK_PATH.fullmatch(path) or ".." in path for path in files):
+        raise ValueError("Invalid file path.")
     repo = lakefs.Repository(settings.lakefs_benchmarks_repo, client=_client())
     branch = repo.branch(settings.lakefs_branch)
-    for name, data in files.items():
-        branch.object(f"{int(benchmark_id)}/{name}").upload(data=data, mode="wb", pre_sign=False)
-    branch.commit(message=f"benchmark {int(benchmark_id)}: generated input and reference files")
+    for path, data in files.items():
+        branch.object(path).upload(data=data, mode="wb", pre_sign=False)
+    branch.commit(message=message)
     return settings.lakefs_branch, branch.head.id
 
 
-def read_benchmark_file(commit: str, path: str, max_bytes: int) -> bytes:
-    """Read a file of the benchmarks repository at a commit (``path`` like ``12/input.parquet``).
+def read_benchmark_component(commit: str, qid: str, filename: str, max_bytes: int) -> bytes:
+    """Read a component of a generated benchmark object at a commit of the benchmarks repository.
 
     Raises:
         ValueError: If an argument is unsafe or the file exceeds ``max_bytes``.
     """
-    benchmark_dir, _, name = (path or "").partition("/")
-    if not _COMMIT.fullmatch(commit or "") or not benchmark_dir.isdigit() or not _FILENAME.fullmatch(name or "") \
-            or name in (".", ".."):
-        raise ValueError("Invalid commit or file.")
+    if not _COMMIT.fullmatch(commit or "") or not _QID.fullmatch(qid or "") \
+            or not _FILENAME.fullmatch(filename or "") or filename in (".", ".."):
+        raise ValueError("Invalid commit, object or file name.")
     repo = lakefs.Repository(settings.lakefs_benchmarks_repo, client=_client())
-    data = repo.ref(commit).object(path).reader().read(max_bytes + 1)
+    data = repo.ref(commit).object(f"{_shard_qid(qid)}/components/{filename}").reader().read(max_bytes + 1)
     if len(data) > max_bytes:
         raise ValueError("The file exceeds the size limit.")
     return data
-

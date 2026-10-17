@@ -13,10 +13,10 @@ from app.leaderboard.service import Entry
 COMMIT = "0123abcd" * 8
 DATES = pd.to_datetime(["2022-01-05", "2022-01-12"])
 MANIFEST = {"version": 1, "repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
-            "input": {"path": "3/input.parquet", "columns": ["datum", "v"], "first_date": "2021-01-06",
+            "input": {"qid": "Q1791000000001", "component": "input.parquet", "columns": ["datum", "v"], "first_date": "2021-01-06",
                       "last_date": "2021-12-29"},
-            "reference": {"path": "3/reference.parquet", "sha256": "ab" * 32, "rows": 2}}
-SOURCE = "lakefs://benchmarks/main/3/input.parquet?version=" + "ee" * 32
+            "reference": {"qid": "Q1791000000002", "component": "reference.parquet", "sha256": "ab" * 32, "rows": 2}}
+SOURCE = "https://doip.example/doip/retrieve/Q1791000000001/input.parquet?version=" + "ee" * 32
 ROW = {"id": 3, "name": "Flu", "dataset_qid": "Q1", "target_column": "v", "date_column": "datum",
        "filters": None, "test_start": date(2022, 1, 1),
        "test_end": date(2022, 1, 31), "truth_points": 2, "created_at": "t", "retired_at": None,

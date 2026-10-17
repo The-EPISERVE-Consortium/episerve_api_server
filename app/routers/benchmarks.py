@@ -7,7 +7,7 @@ from app.auth import optional_user, require_right
 from app.users import User
 from app.benchmarks import actions as bactions, store as bstore
 from app.benchmarks.definition import (
-    DefinitionError, covariates_from_row, filters_from_row, materialized_from_row,
+    DefinitionError, covariates_from_row, filters_from_row, materialized_from_row, object_url,
 )
 from app.leaderboard import actions as lactions
 from app.leaderboard.loaders import LoadError
@@ -54,6 +54,14 @@ def _patch_fields(request: BenchmarkPatch) -> dict:
     return fields
 
 
+def _generated_files(row: dict) -> dict | None:
+    """The manifest of a final benchmark's generated objects with their DOIP download URLs."""
+    manifest = materialized_from_row(row)
+    if not manifest or manifest.get("version", 1) < 2:
+        return manifest
+    return {**manifest, **{kind: {**manifest[kind], "url": object_url(manifest, kind)} for kind in ("input", "reference")}}
+
+
 def _benchmark_out(row: dict) -> BenchmarkOut:
     return BenchmarkOut(
         id=row["id"], name=row["name"], state=bstore.state(row), description=row.get("description"),
@@ -67,7 +75,7 @@ def _benchmark_out(row: dict) -> BenchmarkOut:
              "filters": [{"column": col, "value": val} for col, val in c.filters], "aggregation": c.aggregation}
             for c in covariates_from_row(row)
         ],
-        generated_files=materialized_from_row(row),
+        generated_files=_generated_files(row),
         test_start=row["test_start"].isoformat(),
         test_end=row["test_end"].isoformat(), history_start=_iso(row.get("history_start")),
         history_end=_iso(row.get("history_end")), input_filename=row.get("input_filename") or "input.parquet",
@@ -112,17 +120,6 @@ def get_run_spec(benchmark_id: int):
         return bactions.run_spec(benchmark_id)
     except Exception as e:
         raise _http(e)
-
-
-@router.get("/{benchmark_id}/data/{kind}")
-def get_generated_file(benchmark_id: int, kind: Literal["input", "reference"]):
-    """Download the generated input or reference file of a final benchmark with covariates (Parquet)."""
-    try:
-        data, filename = bactions.generated_file(benchmark_id, kind)
-    except Exception as e:
-        raise _http(e)
-    return Response(content=data, media_type="application/vnd.apache.parquet",
-                    headers={"Content-Disposition": f'attachment; filename="{filename}"'})
 
 
 @router.get("/{benchmark_id}/leaderboard", response_model=BenchmarkLeaderboardOut)

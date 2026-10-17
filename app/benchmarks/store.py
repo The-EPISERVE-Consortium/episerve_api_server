@@ -138,12 +138,11 @@ def finalize(
 
 
 def set_materialized(benchmark_id: int, materialized: dict) -> None:
-    """Record the manifest of the generated files of a final benchmark that has none yet."""
+    """Record (or replace, when the files are regenerated) the manifest of a final benchmark's generated objects."""
     conn = _connect()
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE benchmarks SET materialized = %s WHERE id = %s AND materialized IS NULL "
-                        "AND finalized_at IS NOT NULL", (json.dumps(materialized), benchmark_id))
+            cur.execute("UPDATE benchmarks SET materialized = %s WHERE id = %s AND finalized_at IS NOT NULL", (json.dumps(materialized), benchmark_id))
         conn.commit()
     finally:
         conn.close()

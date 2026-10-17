@@ -121,7 +121,7 @@ def read_series(
 
 
 def truth_from_reference(manifest: dict, benchmark: Benchmark) -> pd.DataFrame:
-    """Read the observed series from the reference file a benchmark with covariates generated.
+    """Read the observed series from the benchmark's generated reference file.
 
     The file is read at the commit recorded in the manifest and checked against its stored hash.
 
@@ -133,7 +133,8 @@ def truth_from_reference(manifest: dict, benchmark: Benchmark) -> pd.DataFrame:
     """
     reference = manifest["reference"]
     try:
-        data = lakefs_client.read_benchmark_file(manifest["commit"], reference["path"], MAX_DOWNLOAD_BYTES)
+        data = lakefs_client.read_benchmark_component(
+            manifest["commit"], reference["qid"], reference["component"], MAX_DOWNLOAD_BYTES)
     except NotFoundException as exc:
         raise LoadError("The benchmark's reference file does not exist.") from exc
     except ValueError as exc:

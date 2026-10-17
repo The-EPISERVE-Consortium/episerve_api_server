@@ -97,25 +97,27 @@ class _FakeBenchmarksRepo:
         return _Ref(self, commit)
 
 
-def test_benchmark_files_are_written_below_the_id_and_read_back_at_the_commit(monkeypatch):
+def test_benchmark_objects_are_written_at_their_sharded_paths_and_read_back_at_the_commit(monkeypatch):
     repo = _FakeBenchmarksRepo()
     monkeypatch.setattr(lakefs_client.lakefs, "Repository", lambda name, client=None: repo)
     monkeypatch.setattr(lakefs_client, "_client", lambda: None)
-    branch, commit = lakefs_client.write_benchmark_files(12, {"input.parquet": b"in", "reference.parquet": b"ref"})
+    files = {"17/91/00/Q1791000000001/Q1791000000001.fdo.json": b"{}",
+             "17/91/00/Q1791000000001/components/input.parquet": b"in"}
+    branch, commit = lakefs_client.write_benchmark_objects(files, "msg")
     assert (branch, commit) == ("main", COMMIT) and len(repo.commits) == 1
-    assert repo.files == {"12/input.parquet": b"in", "12/reference.parquet": b"ref"}
-    assert lakefs_client.read_benchmark_file(COMMIT, "12/input.parquet", 100) == b"in"
-    assert repo.reads == [(COMMIT, "12/input.parquet")]
+    assert repo.files == files
+    assert lakefs_client.read_benchmark_component(COMMIT, "Q1791000000001", "input.parquet", 100) == b"in"
+    assert repo.reads == [(COMMIT, "17/91/00/Q1791000000001/components/input.parquet")]
     with pytest.raises(ValueError, match="size limit"):
-        lakefs_client.read_benchmark_file(COMMIT, "12/input.parquet", 1)
+        lakefs_client.read_benchmark_component(COMMIT, "Q1791000000001", "input.parquet", 1)
 
 
-@pytest.mark.parametrize("commit,path", [("main", "12/input.parquet"), (COMMIT, "../input.parquet"),
-                                         (COMMIT, "12/../x"), (COMMIT, "x/input.parquet"), (COMMIT, "12/a/b")])
-def test_benchmark_files_refuse_unsafe_arguments(monkeypatch, commit, path):
+@pytest.mark.parametrize("commit,qid,name", [("main", "Q1791000000001", "input.parquet"),
+                                             (COMMIT, "../x", "input.parquet"), (COMMIT, "Q1791000000001", "../x"),
+                                             (COMMIT, "Q1791000000001", "a/b")])
+def test_benchmark_objects_refuse_unsafe_arguments(monkeypatch, commit, qid, name):
     monkeypatch.setattr(lakefs_client, "_client", lambda: (_ for _ in ()).throw(AssertionError("no client")))
     with pytest.raises(ValueError):
-        lakefs_client.read_benchmark_file(commit, path, 10)
+        lakefs_client.read_benchmark_component(commit, qid, name, 10)
     with pytest.raises(ValueError):
-        lakefs_client.write_benchmark_files(12, {"../x": b""})
-
+        lakefs_client.write_benchmark_objects({"../x": b""}, "m")

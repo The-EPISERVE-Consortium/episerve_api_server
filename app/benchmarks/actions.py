@@ -5,12 +5,11 @@ head commit of ``data-processed``: the reference data is read at that commit and
 spec makes model runs read their input at the same commit.
 """
 
-import hashlib
 import json
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
-from app.benchmarks import materialize, store
+from app.benchmarks import fdo, materialize, store
 from app.benchmarks.definition import (
     Benchmark, DefinitionError, derive_horizon, input_uri, materialized_from_row,
     normalize_covariates, normalize_filters, validate,
@@ -144,6 +143,9 @@ def _evaluate(benchmark: Benchmark, dataset: dict, commit: str, component_name: 
     """Read the data at ``commit``, build the model input and the reference, and report problems, warnings and the
     derived values. ``component_name`` is the pinned file of an already finalized benchmark."""
     report = CheckReport(ok=False, data_commit=commit)
+    if dataset.get("access") == "restricted":
+        report.problems.append(f"Dataset {dataset['qid']} is restricted; benchmarks are always open.")
+        return report
     components = dataset.get("components") or []
     if not components:
         report.problems.append("The dataset has no downloadable component.")
@@ -200,6 +202,9 @@ def _covariate_data(benchmark: Benchmark, commit: str) -> dict[str, bytes]:
             dataset = _dataset(covariate.dataset_qid)
         except NotFound as exc:
             raise LoadError(f"covariate {covariate.name!r}: {exc}") from exc
+        if dataset.get("access") == "restricted":
+            raise LoadError(f"covariate {covariate.name!r}: dataset {dataset['qid']} is restricted; "
+                            "benchmarks are always open")
         components = dataset.get("components") or []
         if not components:
             raise LoadError(f"covariate {covariate.name!r}: the dataset has no downloadable component")
@@ -213,22 +218,31 @@ def _covariate_data(benchmark: Benchmark, commit: str) -> dict[str, bytes]:
     return out
 
 
-def _manifest(benchmark_id: int, benchmark: Benchmark, built: "materialize.Built") -> dict:
-    """Store the generated files and return the manifest recorded with the finalized benchmark."""
+def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materialize.Built") -> dict:
+    """Store the generated files as two FDO objects and return the manifest recorded with the finalized benchmark."""
     input_bytes, input_sha = materialize.to_parquet(built.input)
     reference_bytes, reference_sha = materialize.to_parquet(built.reference)
-    manifest = {
-        "version": 1, "repo": settings.lakefs_benchmarks_repo,
-        "input": {"path": f"{benchmark_id}/input.parquet", "sha256": input_sha, "rows": len(built.input),
-                  "columns": built.columns, "first_date": str(built.input[benchmark.date_column].min()),
-                  "last_date": str(built.input[benchmark.date_column].max())},
-        "reference": {"path": f"{benchmark_id}/reference.parquet", "sha256": reference_sha,
-                      "rows": len(built.reference)},
+    input_qid, reference_qid = fdo.mint_qids(2)
+    sources = sorted({benchmark.dataset_qid, *(c.dataset_qid for c in benchmark.covariates)})
+    parts = {
+        "input": (input_qid, input_bytes, input_sha, built.input, "input.parquet",
+                  "Model input of the benchmark: the history window, the target series and its covariates."),
+        "reference": (reference_qid, reference_bytes, reference_sha, built.reference, "reference.parquet",
+                      "Reference data of the benchmark: the test window the forecasts are scored against."),
     }
-    branch, commit = lakefs_client.write_benchmark_files(benchmark_id, {
-        "input.parquet": input_bytes, "reference.parquet": reference_bytes,
-        "manifest.json": json.dumps(manifest, indent=2).encode(),
-    })
+    files, manifest = {}, {"version": 2, "repo": settings.lakefs_benchmarks_repo}
+    for role, (qid, data, sha, frame, component, description) in parts.items():
+        files[fdo.component_path(qid, component)] = data
+        files[fdo.fdo_path(qid)] = fdo.build_fdo(
+            qid=qid, benchmark_id=benchmark_id, benchmark_name=name, role=role, component=component, sha256=sha,
+            rows=len(frame), columns=list(frame.columns), benchmark=benchmark, source_qids=sources,
+            description=f"{name}. {description}")
+        manifest[role] = {"qid": qid, "component": component, "sha256": sha, "rows": len(frame),
+                          "columns": list(frame.columns)}
+    manifest["input"].update(first_date=str(built.input[benchmark.date_column].min()),
+                             last_date=str(built.input[benchmark.date_column].max()))
+    branch, commit = lakefs_client.write_benchmark_objects(
+        files, f"benchmark {benchmark_id}: generated input and reference objects")
     manifest.update(branch=branch, commit=commit)
     return manifest
 
@@ -280,7 +294,7 @@ def finalize(benchmark_id: int, expected_commit: str | None = None, *, by: User)
     again = _row(benchmark_id)
     if (again["name"], store.benchmark_from_row(again)) != (row["name"], benchmark):
         raise Conflict("The draft changed while it was being finalized; check it again.")
-    manifest = _manifest(benchmark_id, benchmark, report.built)
+    manifest = _manifest(benchmark_id, row["name"], replace(benchmark, data_commit=commit), report.built)
     done = store.finalize(
         benchmark_id, data_commit=commit, component_name=report.component_name, truth_points=report.truth_points,
         prediction_length=report.prediction_length, history_end=report.history_end, materialized=manifest,
@@ -290,7 +304,7 @@ def finalize(benchmark_id: int, expected_commit: str | None = None, *, by: User)
 
 
 def materialize_final(benchmark_id: int) -> dict:
-    """Generate and store the files of a final benchmark that has none (finalized before they existed).
+    """Generate and store the files of a final benchmark that has none or only the older, non-FDO files.
 
     The data is read at the benchmark's own pinned commit, so the result is what finalizing would have produced.
 
@@ -301,13 +315,13 @@ def materialize_final(benchmark_id: int) -> dict:
     row = _row(benchmark_id)
     if store.state(row) != "final":
         raise NotFound(f"Benchmark {benchmark_id} is not final")
-    if materialized_from_row(row):
-        raise Conflict(f"Benchmark {benchmark_id} already has generated files.")
+    if (materialized_from_row(row) or {}).get("version", 1) >= 2:
+        raise Conflict(f"Benchmark {benchmark_id} already has generated objects.")
     benchmark = store.benchmark_from_row(row)
     report = _evaluate(benchmark, _dataset(benchmark.dataset_qid), benchmark.data_commit, row["component_name"])
     if not report.ok:
         raise LoadError("; ".join(report.problems))
-    manifest = _manifest(benchmark_id, benchmark, report.built)
+    manifest = _manifest(benchmark_id, row["name"], benchmark, report.built)
     store.set_materialized(benchmark_id, manifest)
     return manifest
 
@@ -382,30 +396,6 @@ def run_spec(benchmark_id: int) -> dict:
         "target_column": benchmark.target_column,
         "covariate_columns": [c for covariate in benchmark.covariates for c in covariate.output_columns()],
     }
-
-
-def generated_file(benchmark_id: int, kind: str) -> tuple[bytes, str]:
-    """The generated ``input`` or ``reference`` file of a final benchmark with covariates, checked against its hash.
-
-    Returns:
-        ``(Parquet bytes, download file name)``.
-
-    Raises:
-        NotFound: Unknown benchmark, not final, no generated files, or a kind other than input / reference.
-        LoadError: The stored file does not match its recorded hash.
-    """
-    row = _row(benchmark_id)
-    manifest = materialized_from_row(row)
-    if store.state(row) != "final" or not manifest or kind not in ("input", "reference"):
-        raise NotFound(f"Benchmark {benchmark_id} has no generated {kind} file")
-    entry = manifest[kind]
-    try:
-        data = lakefs_client.read_benchmark_file(manifest["commit"], entry["path"], MAX_DOWNLOAD_BYTES)
-    except NotFoundException as exc:
-        raise NotFound(f"The {kind} file of benchmark {benchmark_id} is missing") from exc
-    if hashlib.sha256(data).hexdigest() != entry["sha256"]:
-        raise LoadError(f"The {kind} file of benchmark {benchmark_id} does not match its recorded hash.")
-    return data, f"benchmark-{benchmark_id}-{kind}.parquet"
 
 
 def copy_as_draft(benchmark_id: int, created_by: int | None = None) -> int:

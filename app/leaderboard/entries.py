@@ -6,6 +6,7 @@ version recorded in the benchmark's manifest, and nothing else.
 
 from dataclasses import dataclass
 from datetime import date
+from urllib.parse import parse_qs, urlsplit
 
 from app.benchmarks.definition import Benchmark, input_uri  # noqa: F401  (Benchmark is re-exported)
 
@@ -35,15 +36,21 @@ def _short(commit: str | None) -> str:
     return commit[:12] if commit else "unknown"
 
 
+def _location(url: str) -> tuple[str, str]:
+    """``(path, version)`` of a source URL; the host does not matter (the DOIP server has several addresses)."""
+    parsed = urlsplit(url)
+    return parsed.path, parse_qs(parsed.query).get("version", [""])[0]
+
+
 def qualify_run(run: dict, manifest: dict) -> Qualification:
     """Decide whether a catalog run can be an entry of the benchmark with this manifest.
 
     The run must have read exactly the benchmark's generated input file in the stored version and nothing else; the
     catalog record lists what a run read (``input_sources``).
     """
-    sources = run.get("input_sources") or []
-    base = input_uri(manifest, versioned=False)
-    ours = [source for source in sources if source.split("?")[0] == base]
+    sources = [_location(source) for source in run.get("input_sources") or []]
+    wanted, version = _location(input_uri(manifest))
+    ours = [source for source in sources if source[0] == wanted]
     if not ours:
         return Qualification(relevant=False)
     if run.get("status") != "success":
@@ -51,11 +58,9 @@ def qualify_run(run: dict, manifest: dict) -> Qualification:
     if len(sources) != 1:
         return Qualification(True, "the run read other inputs besides the benchmark's input file; "
                                    "a benchmark run must use exactly that file")
-    if ours[0] != input_uri(manifest):
-        read = ours[0].partition("?version=")[2]
-        return Qualification(True, f"the input file was read at version {_short(read or None)}, the benchmark's "
-                                   f"is {_short(manifest['commit'])}")
+    if ours[0][1] != version:
+        return Qualification(True, f"the input file was read at version {_short(ours[0][1] or None)}, the "
+                                   f"benchmark's is {_short(version)}")
     first, last = manifest["input"].get("first_date"), manifest["input"].get("last_date")
     return Qualification(True, None, HistoryWindow(date.fromisoformat(first) if first else None,
                                                    date.fromisoformat(last)))
-

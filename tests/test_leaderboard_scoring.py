@@ -10,10 +10,10 @@ from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable, candidate_runs, score_run
 
 BENCH = Benchmark("Q1", "v", "datum", date(2022, 1, 1), date(2022, 1, 31))
-URI = "lakefs://benchmarks/main/3/input.parquet"
+URI = "https://doip.example/doip/retrieve/Q1791000000001/input.parquet"
 COMMIT = "0123abcd" * 8
 MANIFEST = {"repo": "benchmarks", "branch": "main", "commit": COMMIT,
-            "input": {"path": "3/input.parquet", "first_date": "2020-01-01", "last_date": "2021-12-31"}}
+            "input": {"qid": "Q1791000000001", "component": "input.parquet", "first_date": "2020-01-01", "last_date": "2021-12-31"}}
 DATES = pd.to_datetime(["2022-01-05", "2022-01-12"])
 TRUTH = pd.DataFrame({"date": DATES, "truth": [10.0, 20.0]})
 
@@ -55,7 +55,7 @@ def test_non_finite_metrics_are_stored_as_none():
 
 @pytest.mark.parametrize("run,fragment", [
     (_run(status="failed"), "failed"),
-    (_run(input_sources=["lakefs://benchmarks/main/9/input.parquet"]), "did not read"),
+    (_run(input_sources=["https://doip.example/doip/retrieve/Q1791000000009/input.parquet"]), "did not read"),
     (_run(input_sources=[f"{URI}?version={'dd' * 32}"]), "version"),
 ])
 def test_unqualified_runs_are_cannot_be_scored_with_a_reason(run, fragment):
@@ -72,7 +72,7 @@ def test_candidate_runs_explain_why_a_run_cannot_be_added():
     runs = [
         _run("Q10", run_timestamp="2026-01-02T00:00:00Z"),
         _run("Q11", status="failed", run_timestamp="2026-01-03T00:00:00Z"),
-        _run("Q12", input_sources=["lakefs://benchmarks/main/9/input.parquet"]),
+        _run("Q12", input_sources=["https://doip.example/doip/retrieve/Q1791000000009/input.parquet"]),
         _run("Q13", run_timestamp="2026-01-01T00:00:00Z"),
     ]
     result = candidate_runs(runs, {"Q13"}, MANIFEST)

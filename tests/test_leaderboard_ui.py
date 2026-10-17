@@ -15,9 +15,9 @@ from tests.ui_harness import click, render
 BENCH = Benchmark("Q1", "v", "datum", date(2022, 1, 1), date(2022, 1, 31))
 COMMIT = "0123abcd" * 8
 MANIFEST = {"repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
-            "input": {"path": "3/input.parquet", "sha256": "a" * 64, "rows": 120, "first_date": "2021-01-06",
+            "input": {"qid": "Q1791000000001", "component": "input.parquet", "sha256": "a" * 64, "rows": 120, "first_date": "2021-01-06",
                       "last_date": "2021-12-29", "columns": ["datum", "v"]},
-            "reference": {"path": "3/reference.parquet", "sha256": "b" * 64, "rows": 4}}
+            "reference": {"qid": "Q1791000000002", "component": "reference.parquet", "sha256": "b" * 64, "rows": 4}}
 ROW = {"id": 3, "name": "Flu", "dataset_qid": "Q1", "target_column": "v", "date_column": "datum",
        "filters": '[["region", "DE"]]', "test_start": date(2022, 1, 1),
        "test_end": date(2022, 1, 31), "prediction_length": 5, "data_commit": COMMIT,
@@ -345,9 +345,9 @@ def test_data_tab_has_only_the_generated_data_and_the_evaluation_criteria(monkey
 def test_data_tab_of_a_benchmark_with_covariates_links_the_two_generated_files_and_shows_no_sql(monkeypatch):
     import json
     manifest = {"repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
-                "input": {"path": "3/input.parquet", "sha256": "a" * 64, "rows": 120, "first_date": "2021-01-06",
+                "input": {"qid": "Q1791000000001", "component": "input.parquet", "sha256": "a" * 64, "rows": 120, "first_date": "2021-01-06",
                           "last_date": "2021-12-29", "columns": ["datum", "v", "wetter__temp"]},
-                "reference": {"path": "3/reference.parquet", "sha256": "b" * 64, "rows": 4}}
+                "reference": {"qid": "Q1791000000002", "component": "reference.parquet", "sha256": "b" * 64, "rows": 4}}
     cov = [{"name": "wetter", "dataset_qid": "Q2", "date_column": "day", "columns": ["temp"],
             "filters": [["city", "Berlin"]], "aggregation": "mean"}]
     row = {**ROW, "covariates": json.dumps(cov), "materialized": json.dumps(manifest)}
@@ -359,8 +359,9 @@ def test_data_tab_of_a_benchmark_with_covariates_links_the_two_generated_files_a
 
     out = _render(monkeypatch, row=row, board=_board([_entry()]), after=grab)
     assert out["code"] == []                                                       # no SQL: the files are generated
-    assert ("Download the input file (Parquet)", "/benchmarks/3/data/input") in out["links"]
-    assert ("Download the reference file (Parquet)", "/benchmarks/3/data/reference") in out["links"]
+    urls = dict(out["links"])
+    assert urls["Download the input file (Parquet)"].endswith(f"/doip/retrieve/Q1791000000001/input.parquet?version={'ee' * 32}")
+    assert urls["Download the reference file (Parquet)"].endswith("/doip/retrieve/Q1791000000002/reference.parquet?version=" + "ee" * 32)
     assert out["tables"]["column"] == [
         {"column": "datum", "role": "date"}, {"column": "v", "role": "target"},
         {"column": "wetter__temp", "role": "covariate (wetter)"}]

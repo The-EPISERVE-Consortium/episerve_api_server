@@ -10,7 +10,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from app.benchmarks import actions
-from app.benchmarks.definition import DefinitionError
+from app.benchmarks.definition import DefinitionError, input_uri
 from app.leaderboard.loaders import LoadError
 from tests.fakes import make_user
 
@@ -70,11 +70,11 @@ def world(monkeypatch):
     monkeypatch.setattr(actions.lakefs_client, "read_processed_component", read)
     log["written"] = []
 
-    def write(benchmark_id, files):
-        log["written"].append((benchmark_id, files))
+    def write(files, message):
+        log["written"].append((files, message))
         return "main", "ee" * 32
 
-    monkeypatch.setattr(actions.lakefs_client, "write_benchmark_files", write)
+    monkeypatch.setattr(actions.lakefs_client, "write_benchmark_objects", write)
     monkeypatch.setattr(actions.store, "get", lambda bid: dict(state["row"]) if bid == 3 else None)
     monkeypatch.setattr(actions.store, "create_draft",
                         lambda name, desc, b, created_by=None: log["created"].append((name, desc, b, created_by)) or 8)
@@ -195,17 +195,18 @@ def _final(**kw):
                 history_end=date(2026, 3, 25), prediction_length=27, truth_points=27, **kw)
 
 
-MANIFEST = {"version": 1, "repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
-            "input": {"path": "3/input.parquet", "columns": ["datum", "v"], "first_date": "2025-10-01",
-                      "last_date": "2026-03-25"},
-            "reference": {"path": "3/reference.parquet", "sha256": "ab" * 32, "rows": 27}}
+MANIFEST = {"version": 2, "repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
+            "input": {"qid": "Q1791000000001", "component": "input.parquet", "columns": ["datum", "v"],
+                      "first_date": "2025-10-01", "last_date": "2026-03-25"},
+            "reference": {"qid": "Q1791000000002", "component": "reference.parquet", "sha256": "ab" * 32, "rows": 27}}
 
 
 def test_run_spec_for_a_final_benchmark_names_the_generated_input_file(world, monkeypatch):
     world["state"]["row"] = _final(materialized=json.dumps(MANIFEST))
     monkeypatch.setattr(actions.ckan_client, "list_processed_datasets", lambda: (_ for _ in ()).throw(AssertionError("no CKAN call")))
     spec = actions.run_spec(3)
-    assert spec["input_data_files"] == [[f"lakefs://benchmarks/main/3/input.parquet?version={'ee' * 32}", "input.parquet"]]
+    assert spec["input_data_files"] == [[input_uri(MANIFEST), "input.parquet"]]
+    assert "/doip/retrieve/Q1791000000001/input.parquet?version=" + "ee" * 32 in spec["input_data_files"][0][0]
     assert spec["data_transformation_sql"] == [""] and spec["input_columns"] == ["datum", "v"]
     assert spec["config"] == {"prediction_length": 27, "prediction_offset": 0}
     assert (spec["data_commit"], spec["test_start"], spec["test_end"]) == (COMMIT, "2026-04-01", "2026-09-30")
@@ -224,6 +225,8 @@ def test_a_final_benchmark_without_files_gets_them_at_its_pinned_commit(world, m
     manifest = actions.materialize_final(3)
     assert saved == {"id": 3, "manifest": manifest} and manifest["reference"]["rows"] == 27
     assert world["log"]["reads"] == [(COMMIT, "Q1", "d.parquet")] and world["log"]["finalized"] == []
+    world["state"]["row"] = _final(materialized=json.dumps({**MANIFEST, "version": 1}))
+    assert actions.materialize_final(3)["version"] == 2                         # the older, non-FDO files are replaced
     world["state"]["row"] = _final(materialized=json.dumps(MANIFEST))
     with pytest.raises(actions.Conflict):
         actions.materialize_final(3)
@@ -330,27 +333,38 @@ def test_check_reports_a_covariate_that_cannot_be_used(world):
     assert any("Q404" in p for p in actions.check(3).problems)
 
 
-def test_finalize_stores_the_generated_files_and_records_the_manifest(world, monkeypatch):
-    stored = {}
-
-    def write(benchmark_id, files):
-        stored.update(id=benchmark_id, files=files)
-        return "main", "ee" * 32
-
-    monkeypatch.setattr(actions.lakefs_client, "write_benchmark_files", write)
+def test_finalize_stores_two_fdo_objects_and_records_the_manifest(world):
     world["state"]["row"] = _row(covariates=json.dumps(COVARIATES))
     actions.finalize(3, by=CREATOR)
-    assert stored["id"] == 3 and sorted(stored["files"]) == ["input.parquet", "manifest.json", "reference.parquet"]
+    files, _ = world["log"]["written"][0]
     _, kw = world["log"]["finalized"][0]
     manifest = kw["materialized"]
-    assert manifest["repo"] == "benchmarks" and manifest["commit"] == "ee" * 32 and manifest["branch"] == "main"
-    assert manifest["input"]["path"] == "3/input.parquet" and manifest["input"]["columns"] == ["datum", "v", "wetter__temp"]
+    assert manifest["version"] == 2 and manifest["repo"] == "benchmarks" and manifest["commit"] == "ee" * 32
+    in_qid, ref_qid = manifest["input"]["qid"], manifest["reference"]["qid"]
+    assert in_qid != ref_qid and manifest["input"]["columns"] == ["datum", "v", "wetter__temp"]
+    assert sorted(f.rsplit("/", 1)[-1] for f in files) == sorted(
+        [f"{in_qid}.fdo.json", f"{ref_qid}.fdo.json", "input.parquet", "reference.parquet"])
     assert len(manifest["input"]["sha256"]) == 64 and manifest["reference"]["rows"] == 27
-    assert json.loads(stored["files"]["manifest.json"])["input"]["sha256"] == manifest["input"]["sha256"]
+    description = json.loads(files[f"{actions.fdo.shard(in_qid)}/{in_qid}.fdo.json"])
+    assert description["@id"] == in_qid and description["profile"]["accessRights"] == "open"
+    assert description["profile"]["episerveBenchmark"]["source_qids"] == ["Q1", "Q2"]
+    assert description["profile"]["episerveBenchmark"]["data_commit"] == COMMIT
+
+
+def test_a_restricted_source_dataset_blocks_the_benchmark(world, monkeypatch):
+    monkeypatch.setattr(actions.ckan_client, "list_processed_datasets",
+                        lambda: [{**DATASET, "access": "restricted"}, WEATHER_DATASET])
+    report = actions.check(3)
+    assert not report.ok and "restricted" in report.problems[0]
+    world["state"]["row"] = _row(covariates=json.dumps(COVARIATES))
+    monkeypatch.setattr(actions.ckan_client, "list_processed_datasets",
+                        lambda: [DATASET, {**WEATHER_DATASET, "access": "restricted"}])
+    report = actions.check(3)
+    assert not report.ok and any("restricted" in p for p in report.problems)
 
 
 def test_nothing_is_stored_when_the_covariates_cannot_be_built(world, monkeypatch):
-    monkeypatch.setattr(actions.lakefs_client, "write_benchmark_files",
+    monkeypatch.setattr(actions.lakefs_client, "write_benchmark_objects",
                         lambda *a: (_ for _ in ()).throw(AssertionError("must not write")))
     world["state"]["row"] = _row(covariates=json.dumps([{**COVARIATES[0], "columns": ["nope"]}]))
     with pytest.raises(LoadError, match="no column 'nope'"):
@@ -359,11 +373,10 @@ def test_nothing_is_stored_when_the_covariates_cannot_be_built(world, monkeypatc
 
 
 def test_run_spec_of_a_benchmark_with_covariates_points_at_the_generated_file_and_needs_no_sql(world):
-    manifest = {"repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
-                "input": {"path": "3/input.parquet", "columns": ["datum", "v", "wetter__temp"]}}
+    manifest = {**MANIFEST, "input": {**MANIFEST["input"], "columns": ["datum", "v", "wetter__temp"]}}
     world["state"]["row"] = {**_final(covariates=json.dumps(COVARIATES)), "materialized": json.dumps(manifest)}
     spec = actions.run_spec(3)
-    assert spec["input_data_files"] == [[f"lakefs://benchmarks/main/3/input.parquet?version={'ee' * 32}", "input.parquet"]]
+    assert spec["input_data_files"] == [[input_uri(manifest), "input.parquet"]]
     assert spec["data_transformation_sql"] == [""]
     assert spec["input_columns"] == ["datum", "v", "wetter__temp"] and spec["covariate_columns"] == ["wetter__temp"]
     assert spec["target_column"] == "v" and spec["config"]["prediction_length"] == 27
@@ -381,25 +394,3 @@ def test_create_and_update_a_draft_with_covariates(world):
         _create(covariates=[{**COVARIATES[0], "dataset_qid": "Q404"}])
     with pytest.raises(DefinitionError, match="aggregation"):
         _create(covariates=[{**COVARIATES[0], "aggregation": "median"}])
-
-
-def test_the_generated_files_of_a_final_benchmark_are_served_after_a_hash_check(world, monkeypatch):
-    import hashlib
-    data = b"parquet bytes"
-    manifest = {"repo": "benchmarks", "branch": "main", "commit": "ee" * 32,
-                "input": {"path": "3/input.parquet", "sha256": hashlib.sha256(data).hexdigest()},
-                "reference": {"path": "3/reference.parquet", "sha256": "0" * 64}}
-    world["state"]["row"] = {**_final(), "materialized": json.dumps(manifest)}
-    monkeypatch.setattr(actions.lakefs_client, "read_benchmark_file", lambda commit, path, limit: data)
-    assert actions.generated_file(3, "input") == (data, "benchmark-3-input.parquet")
-    with pytest.raises(LoadError, match="hash"):
-        actions.generated_file(3, "reference")                            # the stored file differs from its record
-    with pytest.raises(actions.NotFound):
-        actions.generated_file(3, "other")
-    world["state"]["row"] = _final()                                      # a final benchmark without generated files
-    with pytest.raises(actions.NotFound):
-        actions.generated_file(3, "input")
-    world["state"]["row"] = {**_row(), "materialized": json.dumps(manifest)}  # not final
-    with pytest.raises(actions.NotFound):
-        actions.generated_file(3, "input")
-

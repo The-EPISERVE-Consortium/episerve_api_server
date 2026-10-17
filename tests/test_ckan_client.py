@@ -44,7 +44,7 @@ def test_get_datastore_records_paginates_and_strips_ids(monkeypatch):
 
 
 def test_list_model_runs_exposes_everything_the_run_read(monkeypatch):
-    sources = ["lakefs://benchmarks/main/3/input.parquet?version=" + "ee" * 32]
+    sources = ["https://doip.example/doip/retrieve/Q1791000000001/input.parquet?version=" + "ee" * 32]
     package = {"extras": [{"key": "qid", "value": "Q1"}, {"key": "input_sources", "value": json.dumps(sources)}],
                "resources": []}
     monkeypatch.setattr(ckan, "_get", lambda action, params: {"results": [package]})

@@ -3,7 +3,7 @@
 from app.benchmarks.workflow import apply_benchmark, overlay_config, workflow_problems
 
 COMMIT = "ab" * 32
-URL = "lakefs://benchmarks/main/3/input.parquet?version=" + "ee" * 32
+URL = "https://doip.example/doip/retrieve/Q1791000000001/input.parquet?version=" + "ee" * 32
 SPEC = {"benchmark_id": 3, "dataset_qid": "Q1", "data_commit": COMMIT, "input_data_files": [[URL, "input.parquet"]],
         "data_transformation_sql": [""], "input_columns": ["datum", "v"], "config": {"prediction_length": 27, "prediction_offset": 0},
         "test_start": "2026-04-01", "test_end": "2026-09-30"}
@@ -34,7 +34,7 @@ def test_overlay_config_only_touches_declared_parameters():
 
 
 def test_the_generated_file_must_be_used_as_it_is():
-    uri = "lakefs://benchmarks/main/3/input.parquet?version=" + "ee" * 32
+    uri = "https://doip.example/doip/retrieve/Q1791000000001/input.parquet?version=" + "ee" * 32
     spec = {**SPEC, "input_data_files": [[uri, "input.parquet"]]}
     state = apply_benchmark(_state(), spec, DATASET, ROW)
     assert state["datasets"][0]["data_path"] == uri and state["sql"] == {"Q1": ""}

@@ -72,6 +72,7 @@ def list_processed_datasets() -> list[dict]:
             "doip_url": _doip_url(qid) if qid else "",
             "components": components,
             "additional_type": extras.get("additional_type", ""),
+            "access": extras.get("access", ""),
         })
     return datasets
 

@@ -243,8 +243,9 @@ def test_patch_accepts_the_older_filter_pair_and_the_new_list(monkeypatch):
 COV = {"name": "wetter", "dataset_qid": "Q2", "date_column": "day", "columns": ["temp"],
        "filters": [{"column": "city", "value": "Berlin"}], "aggregation": "mean"}
 MANIFEST = {"repo": "benchmarks", "branch": "main", "commit": COMMIT,
-            "input": {"path": "3/input.parquet", "sha256": "a" * 64, "rows": 10, "columns": ["datum", "v", "wetter__temp"]},
-            "reference": {"path": "3/reference.parquet", "sha256": "b" * 64, "rows": 2}}
+            "input": {"qid": "Q1791000000001", "component": "input.parquet", "sha256": "a" * 64, "rows": 10,
+                      "columns": ["datum", "v", "wetter__temp"]},
+            "reference": {"qid": "Q1791000000002", "component": "reference.parquet", "sha256": "b" * 64, "rows": 2}}
 
 
 def test_a_draft_can_be_created_with_covariates_and_the_answer_lists_them(monkeypatch):
@@ -269,25 +270,13 @@ def test_the_check_report_names_the_columns_of_the_generated_input(monkeypatch):
     assert out["input_rows"] == 10
 
 
-def test_run_spec_and_downloads_of_a_final_benchmark_with_covariates(monkeypatch):
+def test_a_final_benchmark_lists_its_generated_objects_with_their_doip_urls(monkeypatch):
     import json as _json
-    row = {**FINAL, "covariates": _json.dumps([{**COV, "filters": []}]), "materialized": _json.dumps(MANIFEST)}
+    manifest = {**MANIFEST, "version": 2}
+    row = {**FINAL, "covariates": _json.dumps([{**COV, "filters": []}]), "materialized": _json.dumps(manifest)}
     monkeypatch.setattr(router.bactions, "get", lambda bid, include_draft=False: row)
-    assert client.get("/benchmarks/3").json()["generated_files"] == MANIFEST
-    served = []
-
-    def generated(bid, kind):
-        served.append((bid, kind))
-        if kind == "reference" and bid == 99:
-            raise router.bactions.NotFound("none")
-        return b"PARQUET", f"benchmark-{bid}-{kind}.parquet"
-
-    monkeypatch.setattr(router.bactions, "generated_file", generated)
-    resp = client.get("/benchmarks/3/data/input")                       # public, like the leaderboard
-    assert resp.status_code == 200 and resp.content == b"PARQUET"
-    assert resp.headers["content-disposition"] == 'attachment; filename="benchmark-3-input.parquet"'
-    assert client.get("/benchmarks/3/data/reference").status_code == 200
-    assert client.get("/benchmarks/99/data/reference").status_code == 404
-    assert client.get("/benchmarks/3/data/other").status_code == 422     # only input and reference exist
-    assert served == [(3, "input"), (3, "reference"), (99, "reference")]
+    files = client.get("/benchmarks/3").json()["generated_files"]
+    assert files["input"]["url"].endswith(f"/doip/retrieve/Q1791000000001/input.parquet?version={COMMIT}")
+    assert files["reference"]["url"].endswith(f"/doip/retrieve/Q1791000000002/reference.parquet?version={COMMIT}")
+    assert client.get("/benchmarks/3/data/input").status_code in (404, 405)       # the download goes through DOIP
 
