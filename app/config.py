@@ -54,8 +54,6 @@ class Settings:
 
     # Auth
     auth_master_secret: str = os.environ.get("AUTH_MASTER_SECRET", "episerve-dev-secret-change-me")
-    auth_username: str = os.environ.get("AUTH_USERNAME", "admin")
-    auth_password: str = os.environ.get("AUTH_PASSWORD", "")
 
 
 settings = Settings()

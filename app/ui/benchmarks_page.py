@@ -3,10 +3,10 @@
 import logging
 from datetime import date as _date
 
-from nicegui import run, ui, app as _napp
+from nicegui import run, ui
 from starlette.requests import Request
 
-from app.auth import _daily_token
+from app.ui import session
 from app.benchmarks import actions as bactions
 from app.benchmarks.definition import DefinitionError
 from app.clients import ckan as ckan_client
@@ -23,7 +23,7 @@ _DOMAIN_ERRORS = (DefinitionError, LoadError, bactions.NotFound, bactions.NotDra
 
 
 def _is_logged_in() -> bool:
-    return _napp.storage.user.get("token") == _daily_token()
+    return session.can("benchmarks")
 
 
 def _fmt(value) -> str:

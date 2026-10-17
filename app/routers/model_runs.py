@@ -1,6 +1,6 @@
 import json
 from fastapi import APIRouter, Depends, HTTPException
-from app.auth import require_auth
+from app.auth import require_right
 from app.clients import ckan as ckan_client
 from app.clients import prefect as prefect_client
 from app.model_config import config_problems, model_params
@@ -9,7 +9,7 @@ from app.schemas import ModelRunRequest, ModelRunResponse, ModelRunStatus
 router = APIRouter(prefix="/model-runs", tags=["model-runs"])
 
 
-@router.post("", response_model=ModelRunResponse, status_code=202, dependencies=[Depends(require_auth)])
+@router.post("", response_model=ModelRunResponse, status_code=202, dependencies=[Depends(require_right("runs"))])
 def start_model_run(request: ModelRunRequest):
     params = model_params(request.model_image)
     problems = config_problems(request.config, params) if params is not None else []

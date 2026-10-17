@@ -3,7 +3,7 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
-from app.auth import optional_auth, require_auth
+from app.auth import optional_user, require_right
 from app.benchmarks import actions as bactions, store as bstore
 from app.benchmarks.definition import DefinitionError
 from app.leaderboard import actions as lactions
@@ -58,7 +58,7 @@ def list_benchmarks():
         raise _http(e)
 
 
-@router.get("/drafts", response_model=list[BenchmarkOut], dependencies=[Depends(require_auth)])
+@router.get("/drafts", response_model=list[BenchmarkOut], dependencies=[Depends(require_right("benchmarks"))])
 def list_drafts():
     """Draft benchmarks (logged-in users only)."""
     try:
@@ -68,10 +68,10 @@ def list_drafts():
 
 
 @router.get("/{benchmark_id}", response_model=BenchmarkOut)
-def get_benchmark(benchmark_id: int, authed: bool = Depends(optional_auth)):
-    """One benchmark; a draft is visible only with a valid token."""
+def get_benchmark(benchmark_id: int, user=Depends(optional_user)):
+    """One benchmark; a draft is visible only to users with the benchmarks right."""
     try:
-        return _benchmark_out(bactions.get(benchmark_id, include_draft=authed))
+        return _benchmark_out(bactions.get(benchmark_id, include_draft=bool(user and user.can("benchmarks"))))
     except Exception as e:
         raise _http(e)
 
@@ -113,7 +113,7 @@ def get_leaderboard(
     )
 
 
-@router.post("", response_model=BenchmarkOut, status_code=201, dependencies=[Depends(require_auth)])
+@router.post("", response_model=BenchmarkOut, status_code=201, dependencies=[Depends(require_right("benchmarks"))])
 def create_benchmark(request: BenchmarkCreate):
     """Create a draft benchmark."""
     try:
@@ -129,7 +129,7 @@ def create_benchmark(request: BenchmarkCreate):
         raise _http(e)
 
 
-@router.patch("/{benchmark_id}", response_model=BenchmarkOut, dependencies=[Depends(require_auth)])
+@router.patch("/{benchmark_id}", response_model=BenchmarkOut, dependencies=[Depends(require_right("benchmarks"))])
 def update_benchmark(benchmark_id: int, request: BenchmarkPatch):
     """Change fields of a draft (only the fields sent; null clears an optional field)."""
     try:
@@ -139,7 +139,7 @@ def update_benchmark(benchmark_id: int, request: BenchmarkPatch):
         raise _http(e)
 
 
-@router.post("/{benchmark_id}/check", response_model=CheckReportOut, dependencies=[Depends(require_auth)])
+@router.post("/{benchmark_id}/check", response_model=CheckReportOut, dependencies=[Depends(require_right("benchmarks"))])
 def check_benchmark(benchmark_id: int):
     """Check a draft against the current data without changing it."""
     try:
@@ -155,7 +155,7 @@ def check_benchmark(benchmark_id: int):
     )
 
 
-@router.post("/{benchmark_id}/finalize", response_model=BenchmarkOut, dependencies=[Depends(require_auth)])
+@router.post("/{benchmark_id}/finalize", response_model=BenchmarkOut, dependencies=[Depends(require_right("benchmarks"))])
 def finalize_benchmark(benchmark_id: int):
     """Pin a draft to the current data and make it final."""
     try:
@@ -166,7 +166,7 @@ def finalize_benchmark(benchmark_id: int):
 
 
 @router.post("/{benchmark_id}/copy", response_model=BenchmarkOut, status_code=201,
-             dependencies=[Depends(require_auth)])
+             dependencies=[Depends(require_right("benchmarks"))])
 def copy_benchmark(benchmark_id: int):
     """Copy a benchmark as a new draft."""
     try:
@@ -176,7 +176,7 @@ def copy_benchmark(benchmark_id: int):
 
 
 @router.post("/{benchmark_id}/entries", response_model=EntryCreated, status_code=201,
-             dependencies=[Depends(require_auth)])
+             dependencies=[Depends(require_right("benchmarks"))])
 def add_entry(benchmark_id: int, request: EntryCreate):
     """Score a model run against the benchmark and store the result."""
     try:
@@ -185,7 +185,7 @@ def add_entry(benchmark_id: int, request: EntryCreate):
         raise _http(e)
 
 
-@router.delete("/{benchmark_id}/entries/{entry_id}", status_code=204, dependencies=[Depends(require_auth)])
+@router.delete("/{benchmark_id}/entries/{entry_id}", status_code=204, dependencies=[Depends(require_right("benchmarks"))])
 def remove_entry(benchmark_id: int, entry_id: int):
     """Remove an entry (soft); add the run again to recompute it."""
     try:
@@ -195,7 +195,7 @@ def remove_entry(benchmark_id: int, entry_id: int):
     return Response(status_code=204)
 
 
-@router.post("/{benchmark_id}/retire", status_code=204, dependencies=[Depends(require_auth)])
+@router.post("/{benchmark_id}/retire", status_code=204, dependencies=[Depends(require_right("benchmarks"))])
 def retire_benchmark(benchmark_id: int):
     """Hide a benchmark from the list."""
     try:

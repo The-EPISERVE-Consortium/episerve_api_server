@@ -1,31 +1,30 @@
-import hmac
-import hashlib
-from datetime import date
-
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from app.config import settings
+from app import users
+from app.users import User
 
 _security = HTTPBearer()
-
-
-def _daily_token() -> str:
-    return hmac.new(
-        settings.auth_master_secret.encode(),
-        date.today().isoformat().encode(),
-        hashlib.sha256,
-    ).hexdigest()
-
-
-def require_auth(credentials: HTTPAuthorizationCredentials = Depends(_security)) -> None:
-    if not hmac.compare_digest(credentials.credentials, _daily_token()):
-        raise HTTPException(status_code=401, detail="Invalid or expired token")
-
-
 _optional_security = HTTPBearer(auto_error=False)
 
 
-def optional_auth(credentials: HTTPAuthorizationCredentials | None = Depends(_optional_security)) -> bool:
-    """True only when a valid daily Bearer token is presented; never raises."""
-    return credentials is not None and hmac.compare_digest(credentials.credentials, _daily_token())
+def require_auth(credentials: HTTPAuthorizationCredentials = Depends(_security)) -> User:
+    """Any logged-in user (a valid personal token)."""
+    user = users.verify_token(credentials.credentials)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+    return user
+
+
+def require_right(right: str):
+    """A dependency that lets only users with this right pass (401 without a token, 403 without the right)."""
+    def check(user: User = Depends(require_auth)) -> User:
+        if not user.can(right):
+            raise HTTPException(status_code=403, detail=f"This needs the '{right}' right")
+        return user
+    return check
+
+
+def optional_user(credentials: HTTPAuthorizationCredentials | None = Depends(_optional_security)) -> User | None:
+    """The user of a valid token, else None; never raises."""
+    return users.verify_token(credentials.credentials) if credentials else None

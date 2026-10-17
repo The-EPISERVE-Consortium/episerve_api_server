@@ -3,13 +3,14 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.auth import _daily_token
+from tests.conftest import ADMIN
+from tests.fakes import bearer
 from app.main import app
 from app.model_config import config_problems
 from app.routers import model_runs as router
 
 client = TestClient(app)
-AUTH = {"Authorization": f"Bearer {_daily_token()}"}
+AUTH = bearer(ADMIN)
 
 PARAMS = [
     {"name": "history_length", "valueRequired": True, "minValue": 3},

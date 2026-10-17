@@ -34,7 +34,7 @@ def _fresh_state():
 
 def _setup(monkeypatch, state, finals=None, spec=SPEC, get=None):
     def setup():
-        monkeypatch.setattr(pages, "_require_login", lambda: True)
+        monkeypatch.setattr(pages, "_require_login", lambda right=None: True)
         monkeypatch.setattr(pages, "_tv2_state", lambda: state)
         # the handlers persist the state in the per-user storage, which needs a browser session
         monkeypatch.setattr(pages, "_napp", SimpleNamespace(storage=SimpleNamespace(user={})))

@@ -5,7 +5,8 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 
-from app.auth import _daily_token
+from tests.conftest import ADMIN
+from tests.fakes import bearer
 from app.clients import lakefs as lakefs_client
 from app.leaderboard import actions
 from app.leaderboard.entries import Benchmark
@@ -16,7 +17,7 @@ from app.main import app
 from app.routers import benchmarks as router
 
 client = TestClient(app)
-AUTH = {"Authorization": f"Bearer {_daily_token()}"}
+AUTH = bearer(ADMIN)
 COMMIT = "0123abcd" * 8
 ROW = {"id": 3, "name": "Flu", "description": None, "dataset_qid": "Q1", "target_column": "v",
        "date_column": "datum", "filter_column": None, "filter_value": None, "test_start": date(2022, 1, 1),

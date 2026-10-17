@@ -1,4 +1,3 @@
-import hmac
 import json
 import logging
 import duckdb
@@ -8,7 +7,7 @@ from fastapi.responses import HTMLResponse
 from nicegui import context, ui, run, app as _napp
 from starlette.requests import Request
 
-from app.auth import _daily_token
+from app import users
 from app.benchmarks import actions as bactions
 from app.benchmarks.errors import NotFound as BenchmarkNotFound
 from app.benchmarks.workflow import apply_benchmark, clear_benchmark, overlay_config, workflow_problems
@@ -25,6 +24,7 @@ from app.model_run_preview import (
     find_run_components, resolve_model_run,
 )
 from app.sql_validation import validate_transformation_sql
+from app.ui import session
 from app.ui.footer import footer as _footer
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,10 @@ def _header(current: str = "", api: str | None = None, method: str = "GET"):
             with ui.element("div").classes("relative"):
                 with ui.button(icon="account_circle").props("flat round").classes("text-gray-600 hover:text-blue-700"):
                     with ui.menu().classes("mt-1"):
+                        user = session.current_user()
+                        if user:
+                            ui.menu_item(f"{user.name} ({user.email})").props("disable")
+                            ui.separator()
                         ui.menu_item("Show current token", on_click=_open_token_dialog)
                         ui.separator()
                         ui.menu_item("Logout", on_click=lambda: (
@@ -120,9 +124,15 @@ def _base_url() -> str:
     return str(request.base_url) if request is not None else "/"
 
 
-def _require_login() -> bool:
-    if _napp.storage.user.get("token") != _daily_token():
+def _require_login(right: str | None = None) -> bool:
+    """True for a logged-in user with ``right``; otherwise redirects (to the login, or home when the right is missing)."""
+    user = session.current_user()
+    if user is None:
         ui.navigate.to("/login")
+        return False
+    if not user.can(right):
+        ui.notify(f"You do not have access to this page (needs the '{right}' right).", type="negative")
+        ui.navigate.to("/ui")
         return False
     return True
 
@@ -251,7 +261,7 @@ def register_pages():
 
     @ui.page("/login")
     def login_page():
-        if _napp.storage.user.get("token") == _daily_token():
+        if session.current_user() is not None:
             ui.navigate.to("/ui")
             return
 
@@ -279,20 +289,17 @@ def register_pages():
         </style>''')
 
         def do_login():
-            valid = (
-                hmac.compare_digest(username_inp.value, settings.auth_username)
-                and hmac.compare_digest(password_inp.value, settings.auth_password)
-            )
-            if valid:
-                _napp.storage.user["token"] = _daily_token()
+            user = users.authenticate(email_inp.value or "", password_inp.value or "")
+            if user:
+                _napp.storage.user["token"] = users.issue_token(user)
                 ui.navigate.to("/ui")
             else:
-                error.set_text("Invalid username or password")
+                error.set_text("Invalid email or password")
 
         with ui.element("div").classes("login-bg"):
             with ui.element("div").classes("login-card"):
                 ui.label("EPISERVE").classes("text-2xl font-bold text-white text-center w-full mb-8").style("display:block")
-                username_inp = ui.input("Username").props('outlined dense prefix-icon="person"').classes("w-full mb-4")
+                email_inp = ui.input("Email").props('outlined dense prefix-icon="mail"').classes("w-full mb-4")
                 password_inp = ui.input("Password").props('outlined dense type=password prefix-icon="lock"').classes("w-full mb-2")
                 error = ui.label("").classes("text-red-400 text-sm mb-1").style("min-height:1.25rem")
                 ui.button("LOGIN", on_click=do_login).classes("w-full login-btn mt-3")
@@ -1385,7 +1392,7 @@ def register_pages():
     def blackboard(request: Request):
         from datetime import datetime
 
-        if not _require_login():
+        if not _require_login("blackboard"):
             return
         _header("/ui/blackboard")
 
@@ -1988,7 +1995,7 @@ def register_pages():
         # applies: NiceGUI's storage middleware is installed on this same
         # app regardless of route type, so app.storage.user is available
         # here exactly as it is inside a @ui.page.
-        if _napp.storage.user.get("token") != _daily_token():
+        if not session.can("blackboard"):
             raise HTTPException(status_code=401, detail="Not authenticated")
         trace_html = blackboard_client.get_trace_html(row_id)
         if trace_html is None:
@@ -1997,7 +2004,7 @@ def register_pages():
 
     @ui.page("/ui/trigger")
     def trigger():
-        if not _require_login():
+        if not _require_login("runs"):
             return
         _header("/ui/trigger", api="model-runs", method="POST")
 
@@ -2319,7 +2326,7 @@ def register_pages():
 
     @ui.page("/ui/run_workflow")
     def _tv2_redirect():
-        if not _require_login():
+        if not _require_login("runs"):
             return
         ui.navigate.to("/ui/run_workflow/1")
 
@@ -2327,7 +2334,7 @@ def register_pages():
 
     @ui.page("/ui/run_workflow/1")
     def trigger_v2_step1(benchmark: int | None = None):
-        if not _require_login():
+        if not _require_login("runs"):
             return
         state = _tv2_state()
         try:
@@ -2506,7 +2513,7 @@ def register_pages():
 
     @ui.page("/ui/run_workflow/2")
     def trigger_v2_step2():
-        if not _require_login():
+        if not _require_login("runs"):
             return
         state = _tv2_state()
         if not state.get("datasets"):
@@ -2593,7 +2600,7 @@ def register_pages():
 
     @ui.page("/ui/run_workflow/3")
     def trigger_v2_step3():
-        if not _require_login():
+        if not _require_login("runs"):
             return
         state = _tv2_state()
         if not state.get("datasets"):
@@ -2696,7 +2703,7 @@ def register_pages():
 
     @ui.page("/ui/run_workflow/4")
     def trigger_v2_step4():
-        if not _require_login():
+        if not _require_login("runs"):
             return
         state = _tv2_state()
         if not state.get("datasets"):
@@ -2757,7 +2764,7 @@ def register_pages():
 
     @ui.page("/ui/run_workflow/5")
     def trigger_v2_step5():
-        if not _require_login():
+        if not _require_login("runs"):
             return
         state = _tv2_state()
         if not state.get("datasets"):
