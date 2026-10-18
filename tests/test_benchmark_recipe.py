@@ -1,4 +1,4 @@
-"""The words that describe how a benchmark's files were generated."""
+"""The description of how a benchmark's files were generated."""
 
 import json
 from datetime import date
@@ -31,29 +31,43 @@ def test_one_column_table_serves_both_files():
         {"column": "v", "role": "target", "input": "yes", "reference": "yes"}]
 
 
-def test_the_steps_carry_short_sql_and_python_for_the_core_of_each_step():
-    steps = recipe.steps(ROW, MANIFEST)
-    assert [s["language"] for s in steps] == ["python", "sql", "sql", "python", ""]
-    assert "pd.read_parquet('https://doip" in steps[0]["code"] and "version=" + "c" * 64 in steps[0]["code"]
-    view = steps[1]["code"]
-    assert 'CAST("typ" AS VARCHAR) = \'a\' AND CAST("age" AS VARCHAR) = \'35-59\'' in view
+def test_the_description_lists_sources_filters_windows_and_sql():
+    info = recipe.describe(ROW, MANIFEST)
+    assert info["commit"] == "c" * 64 and info["merge"] == []
+    (target,) = info["sources"]
+    assert target["filters"] == ["typ = 'a'", "age = '35-59'"] and target["columns"] == ["v"]
+    assert target["url"].endswith("/doip/retrieve/Q1/d.parquet?version=" + "c" * 64)
+    assert [(w["file"], w["from"], w["to"], w["rows"], w["content"]) for w in info["windows"]] == [
+        ("input.parquet", "2022-03-02", "2026-08-12", 233, "target"),
+        ("reference.parquet", "2026-08-19", "2026-10-07", 8, "target only")]
+    view, input_sql, reference_sql = info["sql"]
+    assert 'CAST("typ" AS VARCHAR) = \'a\'' in view and 'CAST("age" AS VARCHAR) = \'35-59\'' in view
     assert 'isfinite(TRY_CAST("v" AS DOUBLE))' in view
-    windows = steps[2]["code"]
-    assert '"datum" <= DATE \'2026-08-12\'' in windows and "BETWEEN DATE '2026-08-19' AND DATE '2026-10-07'" in windows
-    assert all(len(s["code"].splitlines()) <= 3 for s in steps)
-    assert "ee" * 6 in steps[-1]["text"] and "Q1791000000001" in steps[-1]["text"]
+    assert '"datum" <= DATE \'2026-08-12\'' in input_sql
+    assert "BETWEEN DATE '2026-08-19' AND DATE '2026-10-07'" in reference_sql
 
 
-def test_a_covariate_step_aligns_with_the_grid_in_three_lines():
+def test_a_history_start_becomes_a_lower_bound_of_the_input_window():
+    info = recipe.describe({**ROW, "history_start": date(2025, 2, 5)}, MANIFEST)
+    assert "BETWEEN DATE '2025-02-05' AND DATE '2026-08-12'" in info["sql"][1]
+    assert info["windows"][0]["from"] == "2025-02-05"
+
+
+def test_a_covariate_gets_a_source_row_and_a_merge_row():
     cov = [{"name": "wetter", "dataset_qid": "Q2", "date_column": "day", "columns": ["temp"],
             "filters": [["city", "Berlin"]], "aggregation": "mean"}]
     row = {**ROW, "covariates": json.dumps(cov)}
     manifest = {**MANIFEST, "sources": [{"role": "target", "qid": "Q1", "component": "d.parquet"},
                                         {"role": "wetter", "qid": "Q2", "component": "w.parquet"}]}
-    step = recipe.steps(row, manifest)[3]
-    assert len(step["code"].splitlines()) == 3 and 'cov["city"].astype(str) == \'Berlin\'' in step["code"]
-    assert step["code"].startswith("cov = pd.read_parquet('https://doip") and "/Q2/w.parquet?version=" in step["code"]
-    assert "np.searchsorted(grid" in step["code"] and ".mean()" in step["code"] and "wetter__temp" in step["text"]
+    info = recipe.describe(row, manifest)
+    wetter = info["sources"][1]
+    assert (wetter["role"], wetter["file"], wetter["filters"], wetter["date_column"], wetter["columns"]) == (
+        "wetter", "w.parquet", ["city = 'Berlin'"], "day", ["temp"])
+    assert wetter["url"].endswith("/Q2/w.parquet?version=" + "c" * 64)
+    (merge,) = info["merge"]
+    assert merge["columns"] == ["wetter__temp"] and merge["joined_to"] == "the target's 233 dates"
+    assert "combined by mean" in merge["rule"] and "after 2026-08-12 are never used" in merge["rule"]
+    assert info["windows"][0]["content"] == "target and covariates"
 
 
 # --- the description must do what the code does ---------------------------------------------------------------
@@ -84,9 +98,8 @@ def _parquet(frame):
     return buffer.getvalue()
 
 
-def test_the_sql_and_python_of_the_steps_give_what_the_builder_gives():
+def test_the_sql_of_the_description_gives_what_the_builder_gives():
     import duckdb
-    import numpy as np
     import pandas as pd
     from app.benchmarks import materialize
     from app.benchmarks.store import benchmark_from_row
@@ -102,27 +115,21 @@ def test_the_sql_and_python_of_the_steps_give_what_the_builder_gives():
         manifest = {**MANIFEST, "sources": [{"role": "target", "qid": "Q1", "component": "d.parquet"},
                                             {"role": "wetter", "qid": "Q2", "component": "w.parquet"}]}
         built = materialize.build(benchmark_from_row(row), date(2026, 4, 1), _parquet(target), {"wetter": _parquet(cov)})
-        steps = recipe.steps(row, manifest)
+        sql = recipe.describe(row, manifest)["sql"]
 
         connection = duckdb.connect()
         connection.register("df", target)
-        connection.execute(steps[1]["code"])
-        input_sql, reference_sql = (q for q in steps[2]["code"].split(";\n") if q.strip())
-        input_table = connection.execute(input_sql.rstrip(";")).df()
-        reference_table = connection.execute(reference_sql.rstrip(";")).df()
+        connection.execute(sql[0])
+        input_table = connection.execute(sql[1].rstrip(";")).df()
+        reference_table = connection.execute(sql[2].rstrip(";")).df()
         assert input_table["Inz-7"].tolist() == built.input["Inz-7"].tolist()
         assert pd.to_datetime(input_table["datum"]).dt.date.tolist() == built.input["datum"].tolist()
         assert reference_table["Inz-7"].tolist() == built.reference["Inz-7"].tolist()
 
-        reader = type("pd_", (), {"read_parquet": staticmethod(lambda url: cov.copy()),     # the file read, faked
-                                  "to_datetime": staticmethod(pd.to_datetime)})
-        scope = {"pd": reader, "np": np, "grid": pd.DatetimeIndex(pd.to_datetime(input_table["datum"]))}
-        exec(steps[3]["code"], scope)                                                  # noqa: S102 (our own text)
-        expected = built.input["wetter__temp"].to_numpy()
-        np.testing.assert_allclose(scope["aligned"].to_numpy().ravel(), expected, equal_nan=True)
 
-
-def test_the_steps_are_stored_with_the_manifest_and_shown_as_stored(monkeypatch):
-    stored = [{"text": "frozen", "code": "", "language": ""}]
-    assert recipe.display_steps(ROW, {**MANIFEST, "recipe": stored}) == stored
-    assert recipe.display_steps(ROW, MANIFEST)[0]["language"] == "python"         # generated for older benchmarks
+def test_the_description_is_stored_with_the_manifest_and_shown_as_stored():
+    stored = {"commit": "frozen", "sources": [], "windows": [], "sql": [], "merge": []}
+    assert recipe.display(ROW, {**MANIFEST, "recipe": stored}) == stored
+    assert recipe.display(ROW, MANIFEST)["sources"][0]["role"] == "target"            # generated when none is stored
+    old = [{"text": "old", "code": "", "language": ""}]                                # the earlier format: regenerated
+    assert recipe.display(ROW, {**MANIFEST, "recipe": old})["sql"]

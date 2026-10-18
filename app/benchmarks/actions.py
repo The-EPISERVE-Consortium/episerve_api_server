@@ -257,7 +257,7 @@ def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materi
     branch, commit = lakefs_client.write_benchmark_objects(
         files, f"benchmark {benchmark_id}: generated input and reference files")
     manifest.update(branch=branch, commit=commit)
-    manifest["recipe"] = recipe.steps(view, manifest)
+    manifest["recipe"] = recipe.describe(view, manifest)
     return manifest
 
 
@@ -343,8 +343,8 @@ def materialize_final(benchmark_id: int) -> dict:
 
 
 def store_recipe(benchmark_id: int) -> dict:
-    """Keep the description of how a final benchmark's files were generated with its manifest (for a benchmark that
-    was finalized before the manifest carried it); the sources default to the benchmark's target dataset.
+    """Keep (or replace) the description of how a final benchmark's files were generated with its manifest, in the
+    current format; the sources default to the benchmark's target dataset.
 
     Raises:
         NotFound: Unknown, not final or without generated files.
@@ -355,7 +355,7 @@ def store_recipe(benchmark_id: int) -> dict:
         raise NotFound(f"Benchmark {benchmark_id} has no generated files")
     if not manifest.get("sources"):
         manifest["sources"] = [{"role": "target", "qid": row["dataset_qid"], "component": row["component_name"]}]
-    manifest["recipe"] = recipe.steps(row, manifest)
+    manifest["recipe"] = recipe.describe(row, manifest)
     store.set_materialized(benchmark_id, manifest)
     return manifest
 

@@ -1,4 +1,4 @@
-"""How a final benchmark's generated files came about, in words: layouts, sources and the steps to re-create them.
+"""How a final benchmark's generated files came about: layouts, sources with their filters, windows, SQL and merge rules.
 
 Pure functions over the stored benchmark row and manifest (no I/O), so the Data tab can show them without a
 call to any data store.
@@ -75,81 +75,65 @@ def _sql_text(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def steps(row: dict, manifest: dict) -> list[dict]:
-    """The steps that turn the sources into the two files, in order.
+def describe(row: dict, manifest: dict) -> dict:
+    """What went into the two files, as data for the Data tab (equivalent to what ``app/benchmarks/materialize.py`` does).
 
-    Each step is ``{"text", "code", "language"}``; ``code`` (a few lines, may be empty) is the technical core of the
-    step, equivalent to what ``app/benchmarks/materialize.py`` does.
+    Returns ``{"commit", "sources", "windows", "sql", "merge"}``: ``sources`` has one entry per dataset (role, QID,
+    file, filters, date column, columns taken, links), ``windows`` one per file, ``sql`` the DuckDB statements for
+    the target series (run them on the target file as ``df``) and ``merge`` one entry per covariate (empty without).
     """
     filters = filters_from_row(row)
-    sources = source_rows(row, manifest)
-    target = next((s for s in sources if s["role"] == "target"), None)
+    covariates = covariates_from_row(row)
     date_column, target_column = row["date_column"], row["target_column"]
-    history_end = row.get("history_end") or "?"
+    history_end = str(row.get("history_end") or "?")
     start = row.get("history_start")
-    commit = row.get("data_commit") or "?"
-    out = [{
-        "text": f"Read the target dataset {row['dataset_qid']} at the pinned data commit {commit[:12]}… "
-                "(recorded when the benchmark was finalized; every source is read at this commit).",
-        "language": "python",
-        "code": f"df = pd.read_parquet({(target or {}).get('url') or '<file URL>'!r})",
-    }]
-    where = "".join(f" AND CAST({_ident(column)} AS VARCHAR) = {_sql_text(value)}" for column, value in filters)
-    date_id, target_id = _ident(date_column), _ident(target_column)
-    out.append({
-        "text": "Select the series: apply the filters, keep valid dates and finite values (at most one row per date "
-                "is allowed).",
-        "language": "sql",
-        "code": f"CREATE VIEW series AS SELECT TRY_CAST({date_id} AS DATE) AS {date_id}, "
-                f"TRY_CAST({target_id} AS DOUBLE) AS {target_id} FROM df\n"
-                f"WHERE isfinite(TRY_CAST({target_id} AS DOUBLE)){where};",
-    })
-    lower = f" AND {date_id} >= DATE {_sql_text(str(start))}" if start else ""
-    out.append({
-        "text": f"Cut the windows. The first query is the input (it ends at the last observation before the test "
-                f"start {row['test_start']}), the second the reference (the test window).",
-        "language": "sql",
-        "code": f"SELECT * FROM series WHERE {date_id} <= DATE {_sql_text(str(history_end))}{lower} "
-                f"ORDER BY {date_id};\n"
-                f"SELECT * FROM series WHERE {date_id} BETWEEN DATE {_sql_text(str(row['test_start']))} "
-                f"AND DATE {_sql_text(str(row['test_end']))} ORDER BY {date_id};",
-    })
-    for covariate in covariates_from_row(row):
-        source = next((s for s in sources if s["role"] == covariate.name), None)
-        cond = "".join(f' & (cov["{c}"].astype(str) == {v!r})' for c, v in covariate.filters)
-        cols = list(covariate.columns)
-        how = "sum(min_count=1)" if covariate.aggregation == "sum" else f"{covariate.aggregation}()"
-        url = (source or {}).get("url") or "<file URL>"
-        out.append({
-            "text": f"Covariate {covariate.name} (dataset {covariate.dataset_qid}, read like the target): the rows "
-                    f"between two input dates are combined by {covariate.aggregation} into the later date; dates "
-                    f"without rows stay empty, nothing is filled in, and rows after {history_end} are never used. "
-                    f"Output columns: {', '.join(covariate.output_columns())}.",
-            "language": "python",
-            "code": f"cov = pd.read_parquet({url!r}).assign(_date=lambda x: pd.to_datetime(x[\"{covariate.date_column}\"]))\n"
-                    f"rows = cov[(cov[\"_date\"] > grid[0] - grid.to_series().diff().median()) "
-                    f"& (cov[\"_date\"] <= \"{history_end}\"){cond}]\n"
-                    f"aligned = rows.groupby(np.searchsorted(grid, rows[\"_date\"], side=\"left\"))"
-                    f"[{cols!r}].{how}.reindex(range(len(grid)))",
+    input_info = manifest["input"]
+    rows_in = input_info.get("rows", "?")
+
+    by_role = {s["role"]: s for s in source_rows(row, manifest)}
+    sources = []
+    for role, qid, date_col, columns, flt in (
+        [("target", row["dataset_qid"], date_column, [target_column], filters)]
+        + [(c.name, c.dataset_qid, c.date_column, list(c.columns), c.filters) for c in covariates]
+    ):
+        source = by_role.get(role, {})
+        sources.append({
+            "role": role, "qid": qid, "catalog": source.get("catalog"), "file": source.get("file"),
+            "url": source.get("url"), "filters": [f"{c} = {_sql_text(v)}" for c, v in flt] or ["none"],
+            "date_column": date_col, "columns": columns,
         })
-    columns = manifest["input"].get("columns") or [date_column, target_column]
-    out.append({
-        "text": f"Write both Parquet files (input columns: {', '.join(columns)}) and record the SHA-256 of each; "
-                "re-creating them gives the same content (the hash can differ with another pyarrow version).",
-        "language": "python",
-        "code": "input.to_parquet('input.parquet', index=False)\nreference.to_parquet('reference.parquet', index=False)\n"
-                "hashlib.sha256(open('input.parquet', 'rb').read()).hexdigest()",
-    })
-    out.append({
-        "text": f"Store both files as one FDO object ({manifest.get('qid') or manifest['input'].get('qid')}) in the "
-                f"lakeFS repository {manifest['repo']}; the commit {manifest['commit'][:12]}… is the version a model "
-                "run reads. Implementation: app/benchmarks/materialize.py in episerve_api_server.",
-        "language": "", "code": "",
-    })
-    return out
+
+    windows = [
+        {"file": "input.parquet", "from": str(start) if start else str(input_info.get("first_date") or "?"),
+         "to": history_end, "rows": rows_in, "content": "target" + (" and covariates" if covariates else "")},
+        {"file": "reference.parquet", "from": str(row["test_start"]), "to": str(row["test_end"]),
+         "rows": manifest["reference"].get("rows", "?"), "content": "target only"},
+    ]
+
+    date_id, target_id = _ident(date_column), _ident(target_column)
+    where = "".join(f"\n  AND CAST({_ident(c)} AS VARCHAR) = {_sql_text(v)}" for c, v in filters)
+    input_where = (f"{date_id} BETWEEN DATE {_sql_text(str(start))} AND DATE {_sql_text(history_end)}" if start
+                   else f"{date_id} <= DATE {_sql_text(history_end)}")
+    sql = [
+        f"CREATE VIEW series AS\nSELECT TRY_CAST({date_id} AS DATE) AS {date_id},\n"
+        f"       TRY_CAST({target_id} AS DOUBLE) AS {target_id}\nFROM df\n"
+        f"WHERE isfinite(TRY_CAST({target_id} AS DOUBLE)){where};   -- at most one row per date",
+        f"-- input.parquet\nSELECT * FROM series WHERE {input_where} ORDER BY {date_id};",
+        f"-- reference.parquet\nSELECT * FROM series WHERE {date_id} BETWEEN DATE {_sql_text(str(row['test_start']))} "
+        f"AND DATE {_sql_text(str(row['test_end']))} ORDER BY {date_id};",
+    ]
+
+    merge = [{
+        "covariate": c.name, "joined_to": f"the target's {rows_in} dates",
+        "rule": f"rows with {c.date_column} after the previous target date and up to the date itself, combined by "
+                f"{c.aggregation} into that date; nothing is filled in, rows after {history_end} are never used",
+        "columns": c.output_columns(),
+    } for c in covariates]
+    return {"commit": row.get("data_commit") or "?", "sources": sources, "windows": windows, "sql": sql, "merge": merge}
 
 
-def display_steps(row: dict, manifest: dict) -> list[dict]:
-    """The steps to show: the ones stored with the benchmark when it was finalized; for a benchmark finalized before
-    that, steps generated from its definition."""
-    return manifest.get("recipe") or steps(row, manifest)
+def display(row: dict, manifest: dict) -> dict:
+    """What to show: the description stored with the benchmark when it was finalized; for a benchmark whose stored
+    description is in an older format (a list of steps) or missing, one generated from its definition."""
+    stored = manifest.get("recipe")
+    return stored if isinstance(stored, dict) else describe(row, manifest)

@@ -172,27 +172,48 @@ def _generated_data_sections(row: dict, manifest: dict) -> None:
                  {"name": "reference", "label": "reference.parquet", "field": "reference", "align": "left"}],
         rows=recipe.column_rows(layouts), row_key="column",
     ).props("dense flat bordered").classes("w-full max-w-3xl mt-2")
-    ui.label("Source datasets").classes("text-xl font-semibold text-gray-900 mt-4")
-    ui.label("Every source is read at the same pinned version of the data (the lakeFS commit "
-             f"{(row.get('data_commit') or '?')[:12]}…), so later updates of a source never change the files."
-             ).classes("text-sm text-gray-600")
-    sources = recipe.source_rows(row, manifest)
+    info = recipe.display(row, manifest)
+    ui.label("How the files are generated").classes("text-xl font-semibold text-gray-900 mt-4")
+    ui.label(f"Every source is read at lakeFS commit {info['commit'][:12]}… (pinned when the benchmark was "
+             "finalized), so later updates of a source never change the files.").classes("text-sm text-gray-600")
+    ui.label("Sources and filters").classes("text-base font-semibold text-gray-900 mt-3")
+    lines = """<q-td :props="props"><div v-for="x in props.value" :key="x">{{ x }}</div></q-td>"""
     table = ui.table(
         columns=[{"name": "role", "label": "Used as", "field": "role", "align": "left"},
                  {"name": "qid", "label": "Dataset", "field": "qid", "align": "left"},
-                 {"name": "file", "label": "File at the pinned version", "field": "file", "align": "left"}],
-        rows=sources, row_key="role",
-    ).props("dense flat bordered").classes("w-full max-w-4xl")
+                 {"name": "file", "label": "File", "field": "file", "align": "left"},
+                 {"name": "filters", "label": "Filters", "field": "filters", "align": "left"},
+                 {"name": "date_column", "label": "Date column", "field": "date_column", "align": "left"},
+                 {"name": "columns", "label": "Columns taken", "field": "columns", "align": "left"}],
+        rows=info["sources"], row_key="role",
+    ).props("dense flat bordered").classes("w-full max-w-5xl")
     table.add_slot(
         "body-cell-qid", """<q-td :props="props"><a :href="props.row.catalog" target="_blank">{{ props.value }}</a></q-td>""")
     table.add_slot(
         "body-cell-file", """<q-td :props="props"><a v-if="props.row.url" :href="props.row.url" target="_blank">"""
                           """{{ props.value }}</a><span v-else>-</span></q-td>""")
-    ui.label("How the files are generated").classes("text-xl font-semibold text-gray-900 mt-4")
-    for number, step in enumerate(recipe.display_steps(row, manifest), start=1):
-        ui.label(f"{number}. {step['text']}").classes("text-sm text-gray-700 max-w-4xl mt-2")
-        if step["code"]:
-            ui.code(step["code"], language=step["language"]).classes("w-full max-w-4xl")
+    table.add_slot("body-cell-filters", lines)
+    table.add_slot("body-cell-columns", lines)
+    ui.label("Time windows").classes("text-base font-semibold text-gray-900 mt-3")
+    ui.table(
+        columns=[{"name": n, "label": label, "field": n, "align": "left"}
+                 for n, label in (("file", "File"), ("from", "From"), ("to", "To"), ("rows", "Rows"),
+                                  ("content", "Content"))],
+        rows=info["windows"], row_key="file",
+    ).props("dense flat bordered").classes("w-full max-w-3xl")
+    ui.label("Target series (DuckDB SQL on the target file, df)").classes("text-base font-semibold text-gray-900 mt-3")
+    ui.code("\n\n".join(info["sql"]), language="sql").classes("w-full max-w-4xl")
+    if info["merge"]:
+        ui.label("Merge (applies to input.parquet only)").classes("text-base font-semibold text-gray-900 mt-3")
+        merge = ui.table(
+            columns=[{"name": "covariate", "label": "Covariate", "field": "covariate", "align": "left"},
+                     {"name": "joined_to", "label": "Joined to", "field": "joined_to", "align": "left"},
+                     {"name": "rule", "label": "Rule", "field": "rule", "align": "left",
+                      "style": "white-space: normal"},
+                     {"name": "columns", "label": "Output columns", "field": "columns", "align": "left"}],
+            rows=info["merge"], row_key="covariate",
+        ).props("dense flat bordered").classes("w-full max-w-5xl")
+        merge.add_slot("body-cell-columns", lines)
 
 
 def _data_tab(row: dict, benchmark_id: int) -> None:
