@@ -75,12 +75,91 @@ def _sql_text(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+RULES = [
+    "Dates and the target are cast with TRY_CAST (to date and to double); rows that do not convert, and target "
+    "values that are not finite (NaN, +/-inf), are dropped.",
+    "Filters compare the column as text (CAST(column AS VARCHAR) = 'value'); all filters of a source are combined "
+    "with AND.",
+    "Both ends of each window are inclusive.",
+    "At most one row per date is allowed in the target series; otherwise finalizing fails and a filter has to be "
+    "added.",
+]
+
+
+def _code(row: dict, manifest: dict, sources: list[dict]) -> str:
+    """A Python script that re-creates both files from the sources (equivalent to ``materialize.build``)."""
+    filters = filters_from_row(row)
+    covariates = covariates_from_row(row)
+    date_column, target_column = row["date_column"], row["target_column"]
+    history_end = str(row.get("history_end") or "?")
+    start = str(row.get("history_start") or "1900-01-01")
+    date_id, target_id = _ident(date_column), _ident(target_column)
+    commit = row.get("data_commit") or "?"
+    lines = [
+        "import duckdb, numpy as np, pandas as pd", "",
+        f"COMMIT = {commit!r}      # every source is read at this lakeFS commit",
+        f"HISTORY_END = {history_end!r}", "",
+        "# sources",
+    ]
+    names = {"target": "target"}
+    names.update({c.name: f"cov{i}" for i, c in enumerate(covariates)})
+    for source in sources:
+        url = source.get("url") or "<file URL>"
+        lines.append(f"{names[source['role']]} = pd.read_parquet({url.split('?version=')[0]!r} + f'?version={{COMMIT}}')")
+    where = "".join(f"\n          AND CAST({_ident(c)} AS VARCHAR) = {_sql_text(v)}" for c, v in filters)
+    lines += [
+        "", "# target series between two dates (see the rules above)",
+        "def series(start, end):",
+        '    df = duckdb.sql(f"""',
+        f"        SELECT TRY_CAST({date_id} AS DATE) AS date, TRY_CAST({target_id} AS DOUBLE) AS truth",
+        "        FROM target",
+        f"        WHERE TRY_CAST({date_id} AS DATE) BETWEEN DATE '{{start}}' AND DATE '{{end}}'{where}",
+        f"          AND isfinite(TRY_CAST({target_id} AS DOUBLE))",
+        '        ORDER BY 1""").df()',
+        '    assert not df["date"].duplicated().any(), "several observations per date; add a filter"',
+        '    return df.assign(date=pd.to_datetime(df["date"]))', "",
+        f"history = series({start!r}, HISTORY_END)",
+        f"reference = series({str(row['test_start'])!r}, {str(row['test_end'])!r})",
+        "grid = pd.DatetimeIndex(history['date'])",
+        f"input_df = pd.DataFrame({{{date_column!r}: history['date'].dt.date, {target_column!r}: history['truth']}})",
+    ]
+    for covariate in covariates:
+        var = names[covariate.name]
+        how = {"sum": "sum(min_count=1)", "last": "last()"}.get(covariate.aggregation, "mean()")
+        cols, outs = list(covariate.columns), covariate.output_columns()
+        mask = "".join(f" & ({var}[{c!r}].astype(str) == {v!r})" for c, v in covariate.filters)
+        lines += [
+            "", f"# covariate {covariate.name!r}: rows after the previous grid date and up to each date, combined by "
+                f"{covariate.aggregation}",
+            f"rows = pd.DataFrame({{'date': pd.to_datetime({var}[{covariate.date_column!r}], errors='coerce').dt.normalize()}})",
+            f"for c in {cols!r}:",
+            f"    rows[c] = pd.to_numeric({var}[c], errors='coerce')",
+            f"rows = rows[rows['date'].notna() & (rows['date'] <= HISTORY_END){mask}]",
+            "step = grid.to_series().diff().dropna().median() if len(grid) > 1 else pd.Timedelta(days=1)",
+            "slot = np.searchsorted(grid.values, rows['date'].values, side='left')",
+            "keep = (slot < len(grid)) & (rows['date'].values > (grid[0] - step).to_datetime64())",
+            f"agg = rows[keep].assign(slot=slot[keep]).groupby('slot')[{cols!r}].{how}.reindex(range(len(grid)))",
+            f"for c, out in zip({cols!r}, {outs!r}):",
+            "    input_df[out] = agg[c].to_numpy()",
+        ]
+    lines += [
+        "",
+        f"reference_df = pd.DataFrame({{{date_column!r}: reference['date'].dt.date, "
+        f"{target_column!r}: reference['truth']}})",
+        "input_df.to_parquet('input.parquet', index=False)",
+        "reference_df.to_parquet('reference.parquet', index=False)   # same content; the file hash can differ "
+        "with another pyarrow version",
+    ]
+    return "\n".join(lines)
+
+
 def describe(row: dict, manifest: dict) -> dict:
     """What went into the two files, as data for the Data tab (equivalent to what ``app/benchmarks/materialize.py`` does).
 
-    Returns ``{"commit", "sources", "windows", "sql", "merge"}``: ``sources`` has one entry per dataset (role, QID,
-    file, filters, date column, columns taken, links), ``windows`` one per file, ``sql`` the DuckDB statements for
-    the target series (run them on the target file as ``df``) and ``merge`` one entry per covariate (empty without).
+    Returns ``{"commit", "sources", "windows", "rules", "merge", "code"}``: ``sources`` has one entry per dataset
+    (role, QID, file, filters, date column, columns taken, links), ``windows`` one per file, ``rules`` the fixed
+    rules for casting, filtering and windows, ``merge`` one entry per covariate (empty without) and ``code`` a
+    Python script that re-creates both files.
     """
     filters = filters_from_row(row)
     covariates = covariates_from_row(row)
@@ -109,31 +188,18 @@ def describe(row: dict, manifest: dict) -> dict:
         {"file": "reference.parquet", "from": str(row["test_start"]), "to": str(row["test_end"]),
          "rows": manifest["reference"].get("rows", "?"), "content": "target only"},
     ]
-
-    date_id, target_id = _ident(date_column), _ident(target_column)
-    where = "".join(f"\n  AND CAST({_ident(c)} AS VARCHAR) = {_sql_text(v)}" for c, v in filters)
-    input_where = (f"{date_id} BETWEEN DATE {_sql_text(str(start))} AND DATE {_sql_text(history_end)}" if start
-                   else f"{date_id} <= DATE {_sql_text(history_end)}")
-    sql = [
-        f"CREATE VIEW series AS\nSELECT TRY_CAST({date_id} AS DATE) AS {date_id},\n"
-        f"       TRY_CAST({target_id} AS DOUBLE) AS {target_id}\nFROM df\n"
-        f"WHERE isfinite(TRY_CAST({target_id} AS DOUBLE)){where};   -- at most one row per date",
-        f"-- input.parquet\nSELECT * FROM series WHERE {input_where} ORDER BY {date_id};",
-        f"-- reference.parquet\nSELECT * FROM series WHERE {date_id} BETWEEN DATE {_sql_text(str(row['test_start']))} "
-        f"AND DATE {_sql_text(str(row['test_end']))} ORDER BY {date_id};",
-    ]
-
     merge = [{
         "covariate": c.name, "joined_to": f"the target's {rows_in} dates",
         "rule": f"rows with {c.date_column} after the previous target date and up to the date itself, combined by "
                 f"{c.aggregation} into that date; nothing is filled in, rows after {history_end} are never used",
         "columns": c.output_columns(),
     } for c in covariates]
-    return {"commit": row.get("data_commit") or "?", "sources": sources, "windows": windows, "sql": sql, "merge": merge}
+    return {"commit": row.get("data_commit") or "?", "sources": sources, "windows": windows, "rules": RULES,
+            "merge": merge, "code": _code(row, manifest, sources)}
 
 
 def display(row: dict, manifest: dict) -> dict:
     """What to show: the description stored with the benchmark when it was finalized; for a benchmark whose stored
-    description is in an older format (a list of steps) or missing, one generated from its definition."""
+    description is in an older format (a list of steps, or without the rules and the code) or missing, one generated from its definition."""
     stored = manifest.get("recipe")
-    return stored if isinstance(stored, dict) else describe(row, manifest)
+    return stored if isinstance(stored, dict) and "code" in stored else describe(row, manifest)

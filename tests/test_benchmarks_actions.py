@@ -352,7 +352,7 @@ def test_finalize_stores_one_fdo_object_with_two_components_and_records_the_mani
     assert description["profile"]["episerveBenchmark"]["data_commit"] == COMMIT
     info = manifest["recipe"]                                             # kept with the benchmark, as it ran
     assert info["commit"] == COMMIT and [s["role"] for s in info["sources"]] == ["target", "wetter"]
-    assert len(info["sql"]) == 3 and [m["covariate"] for m in info["merge"]] == ["wetter"]
+    assert len(info["rules"]) == 4 and "series(" in info["code"] and [m["covariate"] for m in info["merge"]] == ["wetter"]
 
 
 def test_a_restricted_source_dataset_blocks_the_benchmark(world, monkeypatch):
@@ -406,7 +406,7 @@ def test_the_recipe_can_be_stored_for_a_benchmark_finalized_earlier(world, monke
     monkeypatch.setattr(actions.store, "set_materialized", lambda bid, m: saved.update(id=bid, manifest=m))
     manifest = actions.store_recipe(3)
     assert saved["id"] == 3 and manifest["sources"] == [{"role": "target", "qid": "Q1", "component": "d.parquet"}]
-    assert len(manifest["recipe"]["sql"]) == 3 and manifest["recipe"]["merge"] == []
+    assert len(manifest["recipe"]["rules"]) == 4 and manifest["recipe"]["merge"] == []
     world["state"]["row"] = _final()
     with pytest.raises(actions.NotFound):
         actions.store_recipe(3)

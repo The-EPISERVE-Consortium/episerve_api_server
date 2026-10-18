@@ -201,10 +201,11 @@ def _generated_data_sections(row: dict, manifest: dict) -> None:
                                   ("content", "Content"))],
         rows=info["windows"], row_key="file",
     ).props("dense flat bordered").classes("w-full max-w-3xl")
-    ui.label("Target series (DuckDB SQL on the target file, df)").classes("text-base font-semibold text-gray-900 mt-3")
-    ui.code("\n\n".join(info["sql"]), language="sql").classes("w-full max-w-4xl")
+    ui.label("Rules").classes("text-base font-semibold text-gray-900 mt-3")
+    for rule in info["rules"]:
+        ui.label(f"• {rule}").classes("text-sm text-gray-700 max-w-4xl")
     if info["merge"]:
-        ui.label("Merge (applies to input.parquet only)").classes("text-base font-semibold text-gray-900 mt-3")
+        ui.label("Merge").classes("text-base font-semibold text-gray-900 mt-3")
         merge = ui.table(
             columns=[{"name": "covariate", "label": "Covariate", "field": "covariate", "align": "left"},
                      {"name": "joined_to", "label": "Joined to", "field": "joined_to", "align": "left"},
@@ -214,6 +215,8 @@ def _generated_data_sections(row: dict, manifest: dict) -> None:
             rows=info["merge"], row_key="covariate",
         ).props("dense flat bordered").classes("w-full max-w-5xl")
         merge.add_slot("body-cell-columns", lines)
+    with ui.expansion("Show code to reproduce both files", icon="code").classes("w-full max-w-4xl mt-3"):
+        ui.code(info["code"], language="python").classes("w-full")
 
 
 def _data_tab(row: dict, benchmark_id: int) -> None:

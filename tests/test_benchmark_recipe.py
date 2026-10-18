@@ -40,16 +40,16 @@ def test_the_description_lists_sources_filters_windows_and_sql():
     assert [(w["file"], w["from"], w["to"], w["rows"], w["content"]) for w in info["windows"]] == [
         ("input.parquet", "2022-03-02", "2026-08-12", 233, "target"),
         ("reference.parquet", "2026-08-19", "2026-10-07", 8, "target only")]
-    view, input_sql, reference_sql = info["sql"]
-    assert 'CAST("typ" AS VARCHAR) = \'a\'' in view and 'CAST("age" AS VARCHAR) = \'35-59\'' in view
-    assert 'isfinite(TRY_CAST("v" AS DOUBLE))' in view
-    assert '"datum" <= DATE \'2026-08-12\'' in input_sql
-    assert "BETWEEN DATE '2026-08-19' AND DATE '2026-10-07'" in reference_sql
+    assert len(info["rules"]) == 4 and "TRY_CAST" in info["rules"][0] and "inclusive" in info["rules"][2]
+    code = info["code"]
+    assert 'CAST("typ" AS VARCHAR) = \'a\'' in code and 'CAST("age" AS VARCHAR) = \'35-59\'' in code
+    assert 'isfinite(TRY_CAST("v" AS DOUBLE))' in code and "COMMIT = " + repr("c" * 64) in code
+    assert "series('1900-01-01', HISTORY_END)" in code and "series('2026-08-19', '2026-10-07')" in code
 
 
 def test_a_history_start_becomes_a_lower_bound_of_the_input_window():
     info = recipe.describe({**ROW, "history_start": date(2025, 2, 5)}, MANIFEST)
-    assert "BETWEEN DATE '2025-02-05' AND DATE '2026-08-12'" in info["sql"][1]
+    assert "series('2025-02-05', HISTORY_END)" in info["code"]
     assert info["windows"][0]["from"] == "2025-02-05"
 
 
@@ -98,13 +98,14 @@ def _parquet(frame):
     return buffer.getvalue()
 
 
-def test_the_sql_of_the_description_gives_what_the_builder_gives():
-    import duckdb
+def test_the_code_of_the_description_gives_what_the_builder_gives(monkeypatch, tmp_path):
     import pandas as pd
     from app.benchmarks import materialize
     from app.benchmarks.store import benchmark_from_row
 
     target, cov = _frames()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(pd, "read_parquet", lambda url: (target if "/Q1/" in url else cov).copy())
     for aggregation in ("mean", "sum", "last"):
         row = {**ROW, "target_column": "Inz-7", "filters": json.dumps([["typ", "a"], ["age", "35-59"], ["bl", "11"]]),
                "history_end": date(2026, 4, 1),
@@ -115,21 +116,20 @@ def test_the_sql_of_the_description_gives_what_the_builder_gives():
         manifest = {**MANIFEST, "sources": [{"role": "target", "qid": "Q1", "component": "d.parquet"},
                                             {"role": "wetter", "qid": "Q2", "component": "w.parquet"}]}
         built = materialize.build(benchmark_from_row(row), date(2026, 4, 1), _parquet(target), {"wetter": _parquet(cov)})
-        sql = recipe.describe(row, manifest)["sql"]
+        exec(recipe.describe(row, manifest)["code"], {})                                # noqa: S102 (our own text)
+        pd.testing.assert_frame_equal(_read_file("input.parquet"), built.input, check_dtype=False)
+        pd.testing.assert_frame_equal(_read_file("reference.parquet"), built.reference, check_dtype=False)
 
-        connection = duckdb.connect()
-        connection.register("df", target)
-        connection.execute(sql[0])
-        input_table = connection.execute(sql[1].rstrip(";")).df()
-        reference_table = connection.execute(sql[2].rstrip(";")).df()
-        assert input_table["Inz-7"].tolist() == built.input["Inz-7"].tolist()
-        assert pd.to_datetime(input_table["datum"]).dt.date.tolist() == built.input["datum"].tolist()
-        assert reference_table["Inz-7"].tolist() == built.reference["Inz-7"].tolist()
+
+def _read_file(path):
+    import pyarrow.parquet as pq
+    return pq.read_table(path).to_pandas()
 
 
 def test_the_description_is_stored_with_the_manifest_and_shown_as_stored():
-    stored = {"commit": "frozen", "sources": [], "windows": [], "sql": [], "merge": []}
+    stored = {"commit": "frozen", "sources": [], "windows": [], "rules": [], "code": "x", "merge": []}
     assert recipe.display(ROW, {**MANIFEST, "recipe": stored}) == stored
     assert recipe.display(ROW, MANIFEST)["sources"][0]["role"] == "target"            # generated when none is stored
     old = [{"text": "old", "code": "", "language": ""}]                                # the earlier format: regenerated
-    assert recipe.display(ROW, {**MANIFEST, "recipe": old})["sql"]
+    assert recipe.display(ROW, {**MANIFEST, "recipe": old})["code"]
+    assert recipe.display(ROW, {**MANIFEST, "recipe": {"commit": "x", "sql": []}})["rules"]    # frozen before the code existed

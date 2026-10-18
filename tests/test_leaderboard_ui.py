@@ -337,7 +337,7 @@ def test_data_tab_has_the_files_the_sources_and_the_steps_and_the_criteria_close
         out["tables"] = {t.props.get("row-key"): _panel_of(t) for t in find(ui.table)}
 
     out = _render(monkeypatch, board=_board([_entry()]), after=grab)
-    for heading in ("The two data files", "How the files are generated", "Sources and filters", "Time windows", "Evaluation criteria"):
+    for heading in ("The two data files", "How the files are generated", "Sources and filters", "Time windows", "Rules", "Evaluation criteria"):
         assert heading in out["labels"]
     assert out["tables"]["metric"] == "leaderboard" and "property" not in out["tables"]      # not on the Data tab        # no fact tables
     assert not any(t in out["labels"] for t in ("Ranking", "Which runs are accepted", "Metrics"))
@@ -373,7 +373,7 @@ def test_data_tab_describes_layout_sources_and_steps_of_a_benchmark_with_covaria
     assert [(r["role"], r["qid"], r["file"]) for r in sources] == [("target", "Q1", "d.parquet"), ("wetter", "Q2", "w.parquet")]
     assert sources[1]["url"].endswith(f"/doip/retrieve/Q2/w.parquet?version={COMMIT}")
     assert sources[1]["catalog"].endswith("/dataset/q2")
-    assert "Merge (applies to input.parquet only)" in out["labels"]
+    assert "Merge" in out["labels"]
     merge = next(rows for key, rows in out["tables"] if key == "covariate")
     assert merge[0]["columns"] == ["wetter__temp"] and "combined by mean" in merge[0]["rule"]
     windows = next(rows for key, rows in out["tables"] if key == "file")
@@ -470,7 +470,7 @@ def test_the_leaderboard_tab_has_no_start_button_and_no_command_line_block(monke
     def grab(out, client, find, drain):
         out["buttons"] = [b.props.get("label") for b in find(ui.button) if _panel_of(b) == "leaderboard"]
         out["code"] = [e.content for e in find(ui.code) if _panel_of(e) == "leaderboard"]
-        out["expansions"] = [e.props.get("label") for e in find(ui.expansion)]
+        out["expansions"] = [e.props.get("label") for e in find(ui.expansion) if _panel_of(e) == "leaderboard"]
 
     out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=grab)
     assert "Start a run from this benchmark" not in out["buttons"]
