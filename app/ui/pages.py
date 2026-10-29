@@ -2815,13 +2815,11 @@ def register_pages():
                             ui.button(icon="close", on_click=lambda: config_inp.set_value("")).props("flat round dense").classes("text-gray-400")
                             ui.button("Format", icon="auto_fix_high", on_click=format_json).props("flat dense no-caps").classes("text-xs text-gray-500")
                     if state.get("config") is None:
-                        params = (state["model"] or {}).get("additional_properties", [])
+                        from app.model_config import config_template
+                        template = config_template((state["model"] or {}).get("parameters"))
                         state["config"] = json.dumps(
-                            overlay_config(
-                                {p["name"]: p.get("value") for p in params},
-                                state.get("benchmark"), {p["name"] for p in params},
-                            ), indent=2
-                        ) if params else "{}"
+                            overlay_config(template, state.get("benchmark"), set(template)), indent=2
+                        ) if template else "{}"
                     config_inp = ui.codemirror(
                         value=state["config"],
                         language="json",
@@ -2885,7 +2883,7 @@ def register_pages():
                 ui.notify(f"Invalid config JSON: {e}", type="negative", position="top")
                 return
             from app.model_config import config_problems
-            problems = config_problems(config, model.get("additional_properties") or [])
+            problems = config_problems(config, model["parameters"]) if model.get("parameters") else []
             if problems:
                 ui.notify("Invalid model config: " + "; ".join(problems), type="negative", position="top")
                 return

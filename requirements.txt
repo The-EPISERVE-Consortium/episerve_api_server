@@ -10,3 +10,4 @@ pyarrow
 duckdb
 pymysql
 pytest
+episerve-specs @ https://github.com/The-EPISERVE-Consortium/episerve_specs/archive/refs/tags/v0.2.0.tar.gz

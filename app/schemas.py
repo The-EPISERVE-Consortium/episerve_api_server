@@ -23,7 +23,15 @@ class Model(BaseModel):
     doip_url: str = ""
     git_repo: str = ""
     docker_image_created: str = ""
-    additional_properties: list[dict[str, Any]] = []
+    # Sections of the model card (spec model-card v1 of episerve_specs); None when the card has none.
+    task: dict[str, Any] | None = None
+    parameters: dict[str, Any] | None = None   # JSON Schema of config.json
+    inputs: list[dict[str, Any]] | None = None
+    outputs: list[dict[str, Any]] | None = None
+    resources: dict[str, Any] | None = None
+    documentation: dict[str, Any] | None = None
+    card_valid: bool | None = None             # None: not checked
+    card_issues: list[dict[str, Any]] = []
 
 
 class ModelRunRequest(BaseModel):

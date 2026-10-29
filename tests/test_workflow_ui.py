@@ -23,8 +23,9 @@ SPEC = {"benchmark_id": 3, "dataset_qid": "Q1", "data_commit": COMMIT, "input_da
         "test_start": "2026-04-01", "test_end": "2026-09-30"}
 ROW = {"id": 3, "name": "Flu", "date_column": "datum", "filters": '[["typ", "a"]]'}
 DATASET = {"qid": "Q1", "name": "Wastewater", "data_path": "https://doip.example/doip/retrieve/Q1/d.parquet"}
-MODEL = {"name": "m", "docker_image": "img", "docker_tag": "1", "additional_properties": [
-    {"name": "prediction_length", "value": 4}, {"name": "history_length", "value": 91}]}
+MODEL = {"name": "m", "docker_image": "img", "docker_tag": "1", "parameters": {"type": "object", "properties": {
+    "prediction_length": {"type": "integer", "default": 4, "description": "steps"},
+    "history_length": {"type": "integer", "default": 91, "description": "rows"}}}}
 
 
 def _fresh_state():
@@ -144,9 +145,10 @@ def test_step5_blocks_a_config_without_a_required_parameter(monkeypatch):
     monkeypatch.setattr(pages.settings, "prefect_api_url", "http://prefect")
     notes = _notes(monkeypatch)
     state = _benchmark_state()
-    state["model"] = {**MODEL, "additional_properties": [
-        {"name": "history_length", "valueRequired": True, "minValue": 3},
-        {"name": "prediction_length", "valueRequired": True, "minValue": 1}]}
+    state["model"] = {**MODEL, "parameters": {
+        "type": "object", "required": ["history_length", "prediction_length"],
+        "properties": {"history_length": {"type": "integer", "minimum": 3, "description": "rows"},
+                       "prediction_length": {"type": "integer", "minimum": 1, "description": "steps"}}}}
     state["config"] = json.dumps({"prediction_length": 27})
 
     async def after(out, client, find, drain):
@@ -154,7 +156,7 @@ def test_step5_blocks_a_config_without_a_required_parameter(monkeypatch):
 
     _step5(monkeypatch, state, after)
     assert triggered == []
-    assert any("missing required parameter 'history_length'" in n for n in notes)
+    assert any("'history_length' is a required property" in n for n in notes)
 
 
 def test_the_workflow_pages_show_the_api_box_for_starting_a_run(monkeypatch):

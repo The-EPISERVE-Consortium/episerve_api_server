@@ -10,10 +10,17 @@ Interactive API docs: `https://api.episerve.zib.de/docs`
 
 All GET endpoints read from CKAN. `POST /model-runs` triggers a Prefect flow run.
 
-`POST /model-runs` first checks `config` against the parameters the model declares in the catalog
-(`additionalProperty` of the model's FDO: `valueRequired`, `minValue`, `maxValue`; a `null` value counts as
-missing) and answers `422` with every violation, before any Prefect flow run is created. A model the catalog
-does not know, or an unavailable catalog, is not blocked: the model container validates the same rules itself.
+`GET /models` returns, besides image, tag and links, the sections of each model's model card (spec
+`model-card` v1 of [`episerve_specs`](https://github.com/The-EPISERVE-Consortium/episerve_specs), stored in
+CKAN by the sync flow): `task`, `parameters` (the JSON Schema of `config.json`), `inputs`, `outputs`,
+`resources`, `documentation` (each `null` when the card has none), and the card's validation: `card_valid`
+(`null` = not checked) and `card_issues`.
+
+`POST /model-runs` first checks `config` against the model's `parameters` with
+`episerve_specs.check_model_config` (types, bounds, `enum`, required parameters, unknown keys when the card
+forbids them; a `null` value fails its type) and answers `422` with every violation, before any Prefect flow
+run is created. A model the catalog does not know, a model without parameters in its card, or an unavailable
+catalog, is not blocked: the model container checks its config itself.
 The UI run workflow (step 5) applies the same check. A run is registered in the catalog when it ends, so a
 run that failed inside the model container (for example on its own config check) is listed with status `failed`;
 only `success` runs can be added to a benchmark.

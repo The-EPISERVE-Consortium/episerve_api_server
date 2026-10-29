@@ -32,8 +32,7 @@ def list_models() -> list[dict]:
             f"https://github.com/{docker_image[len('ghcr.io/'):]}"
             if docker_image.startswith("ghcr.io/") else ""
         )
-        raw_params = extras.get("model_parameters", "")
-        additional_properties = json.loads(raw_params) if raw_params else []
+        card = _model_card(extras)
         models.append({
             "qid":                  qid,
             "name":                 pkg.get("title", ""),
@@ -43,9 +42,33 @@ def list_models() -> list[dict]:
             "docker_image_created": extras.get("docker_image_created", ""),
             "doip_url":             _doip_url(qid) if qid else "",
             "git_repo":             git_repo,
-            "additional_properties": additional_properties,
+            **card,
         })
     return models
+
+
+_CARD_SECTIONS = ("task", "parameters", "inputs", "outputs", "resources", "documentation")
+
+
+def _json_extra(extras: dict, key: str):
+    try:
+        return json.loads(extras[key]) if extras.get(key) else None
+    except json.JSONDecodeError:
+        return None
+
+
+def _model_card(extras: dict) -> dict:
+    """The model card sections and their validation, from the extras the sync flow writes.
+
+    A section the card does not have is None; ``card_valid`` is None when the model was
+    never checked.
+    """
+    card = {section: _json_extra(extras, f"model_{section}") for section in _CARD_SECTIONS}
+    validation = _json_extra(extras, "model_card_validation") or {}
+    valid = extras.get("model_card_valid")
+    card["card_valid"] = {"true": True, "false": False}.get(valid)
+    card["card_issues"] = validation.get("issues", [])
+    return card
 
 
 def list_processed_datasets() -> list[dict]:
