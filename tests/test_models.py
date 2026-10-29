@@ -75,3 +75,55 @@ def test_ckan_client_without_card_extras(monkeypatch):
     monkeypatch.setattr(ckan, "_get", lambda action, params: {"results": [pkg]})
     m = ckan.list_models()[0]
     assert m["parameters"] is None and m["card_valid"] is None and m["card_issues"] == []
+
+
+def _fake_catalog(monkeypatch, models):
+    monkeypatch.setattr(models_router.ckan_client, "list_models", lambda: models)
+
+
+def test_check_config_fills_defaults(monkeypatch):
+    _fake_catalog(monkeypatch, [_FAKE_MODEL])
+    resp = client.post(f"/models/{_FAKE_MODEL['name']}/check-config",
+                       json={"config": {"history_length": 10, "prediction_length": 4}})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["valid"] is True and body["problems"] == []
+    assert body["config"] == {"history_length": 10, "prediction_length": 4, "prediction_offset": 0}
+    assert body["qid"] == "Q3303530955313"
+
+
+def test_check_config_reports_problems_and_finds_the_model_by_qid(monkeypatch):
+    _fake_catalog(monkeypatch, [_FAKE_MODEL])
+    resp = client.post("/models/q3303530955313/check-config",
+                       json={"config": {"history_length": 2, "prediction_length": 2000}})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["valid"] is False
+    assert any(p.startswith("history_length:") for p in body["problems"])
+    assert any(p.startswith("prediction_length:") for p in body["problems"])
+
+
+def test_check_config_unknown_model_is_404(monkeypatch):
+    _fake_catalog(monkeypatch, [_FAKE_MODEL])
+    resp = client.post("/models/nope/check-config", json={"config": {}})
+    assert resp.status_code == 404
+
+
+def test_check_config_without_declared_parameters_checks_nothing(monkeypatch):
+    _fake_catalog(monkeypatch, [{**_FAKE_MODEL, "parameters": None}])
+    resp = client.post(f"/models/{_FAKE_MODEL['name']}/check-config", json={"config": {"x": 1}})
+    assert resp.status_code == 200
+    assert resp.json()["valid"] is None and resp.json()["config"] == {"x": 1}
+
+
+def test_check_config_catalog_down_is_502(monkeypatch):
+    def boom():
+        raise RuntimeError("down")
+    monkeypatch.setattr(models_router.ckan_client, "list_models", boom)
+    assert client.post("/models/x/check-config", json={"config": {}}).status_code == 502
+
+
+def test_check_config_needs_a_config_object(monkeypatch):
+    _fake_catalog(monkeypatch, [_FAKE_MODEL])
+    assert client.post(f"/models/{_FAKE_MODEL['name']}/check-config", json={"history_length": 3}).status_code == 422
+    assert client.post(f"/models/{_FAKE_MODEL['name']}/check-config", content=b"{").status_code == 400

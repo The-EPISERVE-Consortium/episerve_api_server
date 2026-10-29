@@ -34,6 +34,38 @@ class Model(BaseModel):
     card_issues: list[dict[str, Any]] = []
 
 
+class ConfigCheckRequest(BaseModel):
+    config: dict[str, Any]
+
+
+class ConfigCheckResult(BaseModel):
+    model: str
+    qid: str = ""
+    valid: bool | None              # None: the model card declares no parameters, so nothing was checked
+    problems: list[str] = []        # same messages as POST /model-runs
+    config: dict[str, Any]          # the config with the declared defaults filled in
+
+
+class SpecInfo(BaseModel):
+    versions: list[str]
+    schemas: dict[str, str]         # version -> schema URL (the value of a document's conformsTo)
+
+
+class ValidationIssue(BaseModel):
+    severity: str                   # error | warning
+    path: str                       # where in the document, "/"-separated; "" = the whole document
+    message: str
+
+
+class ValidationResult(BaseModel):
+    spec: str
+    version: str
+    schema_: str = Field(alias="schema", serialization_alias="schema")
+    valid: bool                     # no errors (warnings are allowed)
+    validator: str
+    issues: list[ValidationIssue]
+
+
 class ModelRunRequest(BaseModel):
     model_image: str
     model_tag: str = "latest"

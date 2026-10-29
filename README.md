@@ -8,7 +8,7 @@ Interactive API docs: `https://api.episerve.zib.de/docs`
 
 ## Endpoints
 
-All GET endpoints read from CKAN. `POST /model-runs` triggers a Prefect flow run.
+The dataset, model and model-run GET endpoints read from CKAN. `POST /model-runs` triggers a Prefect flow run.
 
 `GET /models` returns, besides image, tag and links, the sections of each model's model card (spec
 `model-card` v1 of [`episerve_specs`](https://github.com/The-EPISERVE-Consortium/episerve_specs), stored in
@@ -25,11 +25,32 @@ The UI run workflow (step 5) applies the same check. A run is registered in the 
 run that failed inside the model container (for example on its own config check) is listed with status `failed`;
 only `success` runs can be added to a benchmark.
 
+`POST /models/{model}/check-config` (body `{"config": {...}}`, `model` = name or QID) runs the same check
+without starting anything: `valid`, `problems` (the messages `POST /model-runs` would refuse with) and
+`config` with the declared defaults filled in. `valid` is `null` when the card declares no parameters.
+
+Specs of platform formats (from `episerve_specs`):
+
+- `GET /schemas` lists every spec, its versions and their schema URLs.
+- `GET /schemas/{spec}/v{N}.json` serves the JSON Schema at exactly the URL a document names in
+  `conformsTo`, e.g. `https://api.episerve.zib.de/schemas/model-card/v1.json`.
+- `POST /validate/{spec}` validates the JSON body, e.g. a model's `fdo.json` against `model-card`; the
+  version is `?version=N`, else the one the document's `conformsTo` names, else the newest. The answer is
+  the same as the `episerve-validate` CLI's: `spec`, `version`, `schema`, `valid` (no errors; warnings are
+  allowed) and `issues` (`severity`, `path`, `message`). An invalid document is a normal `200` answer; an
+  unknown spec or version is `404`, a body that is not JSON `400`.
+
+These endpoints need no login and change nothing. Their body is limited to 1 MiB (`413` above).
+
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Health check → `{"status": "ok"}` |
 | `GET` | `/datasets` | List processed FDO datasets from CKAN (`type-raw-data` group) |
 | `GET` | `/models` | List forecast models from CKAN (`type-model` group) |
+| `POST` | `/models/{model}/check-config` | Check a run config against the model's card, without starting a run |
+| `GET` | `/schemas` | List the specs and their versions |
+| `GET` | `/schemas/{spec}/v{N}.json` | JSON Schema of one spec version |
+| `POST` | `/validate/{spec}` | Validate a JSON document against a spec |
 | `POST` | `/model-runs` | Trigger a model run via Prefect (returns `202`) |
 | `GET` | `/model-runs` | List all model runs from CKAN (`type-model-run` group), including runs that ended `failed` |
 | `GET` | `/model-runs/{run_id}` | Get a single run by QID (fetched from CKAN) |
