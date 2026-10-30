@@ -228,7 +228,8 @@ def event_for(qid: str, fdo: dict, version: str | None = None) -> tuple[dict | N
     return _event(qid, kind, job, "DOWNLOAD", when, inputs, outputs, extra=extra), []
 
 
-def upstream(qid: str, fetch: Fetch, max_objects: int = MAX_OBJECTS, latest: Latest | None = None) -> dict:
+def upstream(qid: str, fetch: Fetch, max_objects: int = MAX_OBJECTS, latest: Latest | None = None,
+             version: str | None = None) -> dict:
     """The events of ``qid`` and of everything it was made from, nearest first.
 
     Every file an event wrote gets a version: the commit it was read at downstream, else the object's newest
@@ -239,18 +240,22 @@ def upstream(qid: str, fetch: Fetch, max_objects: int = MAX_OBJECTS, latest: Lat
         fetch: Returns the FDO of a QID, or None when there is none.
         max_objects: Most FDOs read; the rest is listed in ``truncated``.
         latest: Returns the newest commit of a QID; None leaves such files without a version.
+        version: The commit of ``qid`` to start from (None: its current FDO). An object not found at that
+            commit gives ``kind`` None.
 
     Returns:
         ``{"object", "kind", "events", "unresolved", "truncated"}``; ``kind`` is None when ``qid`` has no FDO.
     """
     qid = qid.upper()
-    events, unresolved, truncated, seen = [], [], [], {(qid, None)}
+    events, unresolved, truncated, seen = [], [], [], {(qid, version)}
     files: dict[str, list[str]] = {}
-    queue = deque([(qid, None)])
+    queue = deque([(qid, version)])
+    start = (qid, version)
     root_kind = None
     reads = 0
     while queue:
-        current, version = queue.popleft()
+        item = queue.popleft()
+        current, version = item
         if reads >= max_objects:
             truncated.append(current)
             continue
@@ -258,14 +263,16 @@ def upstream(qid: str, fetch: Fetch, max_objects: int = MAX_OBJECTS, latest: Lat
         fdo, read_at = None, None
         if version:
             fdo, read_at = fetch(current, version), version
-        if fdo is None:            # no version, or the FDO is not in data-processed at that commit
+        if fdo is None and item == start and version:
+            continue               # the object asked for is not there at that version: no fallback
+        if fdo is None:            # no version, or the FDO is not there at that commit
             fdo, read_at = fetch(current, None), None
         if fdo is None:
             if current != qid:
                 unresolved.append(current)
             continue
         files[current] = _components(fdo)
-        if current == qid and version is None:
+        if item == start:
             root_kind = kind_of(fdo)
         event, parents = event_for(current, fdo, read_at)
         if event:

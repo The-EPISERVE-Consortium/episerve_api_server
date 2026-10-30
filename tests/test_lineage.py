@@ -253,3 +253,27 @@ def test_download_event_carries_the_source_change_date():
     fdo["provenance"]["source_changed_at"] = "2026-10-16T08:00:00Z"
     event, _ = lineage.event_for("Q1", fdo)
     assert event["run"]["facets"]["episerve"]["source_changed_at"] == "2026-10-16T08:00:00Z"
+
+
+def test_start_from_a_version_of_the_object():
+    old = _dataset_fdo("Q3274128860531", "grippeweb", "GrippeWeb.parquet", "https://example.org/g.tsv")
+    old["provenance"]["prov:generatedAtTime"] = "2026-10-19T00:00:10Z"
+
+    def versioned(qid, version=None):
+        return old if version == COMMIT else (FDOS.get(qid) if version is None else None)
+
+    result = lineage.upstream("Q3274128860531", versioned, version=COMMIT)
+    (download,) = result["events"]
+    assert result["kind"] == "dataset" and download["eventTime"] == "2026-10-19T00:00:10Z"
+    assert _version(download["outputs"][0]) == COMMIT
+    # not there at that version: no lineage (no fallback to the current one)
+    missing = lineage.upstream("Q3274128860531", versioned, version="f" * 64)
+    assert missing["kind"] is None and missing["events"] == []
+
+
+def test_endpoint_version(monkeypatch):
+    monkeypatch.setattr(lineage_router, "fetch", lambda q, v=None: FDOS.get(q) if v is None else None)
+    monkeypatch.setattr(lineage_router, "latest", lambda q: None)
+    assert client.get("/lineage/events", params={"object": "Q3274128860531", "version": "abc"}).status_code == 422
+    r = client.get("/lineage/events", params={"object": "Q3274128860531", "version": "f" * 64})
+    assert r.status_code == 404 and "at version" in r.json()["detail"]

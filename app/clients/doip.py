@@ -33,15 +33,18 @@ def fetch_text_head(url: str, max_bytes: int = DEFAULT_PREVIEW_BYTES, timeout: i
     return data.decode("utf-8", errors="replace")
 
 
-def fetch_fdo(qid: str, timeout: int = 20) -> dict | None:
+def fetch_fdo(qid: str, timeout: int = 20, version: str | None = None) -> dict | None:
     """The FDO record of an object from the DOIP server (``/doip/retrieve/<QID>``), or None when it does not exist.
+
+    ``version`` reads the record at that lakeFS commit (None when it is not there at that commit).
 
     Raises:
         requests.RequestException: The DOIP server is unreachable or answers with another error.
     """
     from app.config import settings
 
-    resp = requests.get(f"{settings.doip_url.rstrip('/')}/doip/retrieve/{qid}", timeout=timeout)
+    resp = requests.get(f"{settings.doip_url.rstrip('/')}/doip/retrieve/{qid}",
+                        params={"version": version} if version else None, timeout=timeout)
     if resp.status_code in (400, 404):
         return None
     resp.raise_for_status()
