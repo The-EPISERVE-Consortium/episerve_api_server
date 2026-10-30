@@ -42,6 +42,8 @@ _RUN_BOOKKEEPING = {"config.json", "config_prefect.json", "run.log", "ro-crate-m
 
 # fetch(qid, version): the FDO of an object, at a lakeFS commit when ``version`` is given (None: the current one).
 Fetch = Callable[[str, str | None], dict | None]
+# latest(qid): the newest lakeFS commit of an object (None: unknown).
+Latest = Callable[[str], str | None]
 
 
 def _doip_namespace() -> str:
@@ -219,18 +221,24 @@ def event_for(qid: str, fdo: dict, version: str | None = None) -> tuple[dict | N
     extra = {"raw": derived.get("@id")} if isinstance(derived, dict) and derived.get("@id") else {}
     if version:
         extra["version"] = version
+    if provenance.get("source_changed_at"):
+        extra["source_changed_at"] = provenance["source_changed_at"]
     outputs = [_dataset(qid, name, version) for name in _components(fdo)]
     job = f"dataset-downloader/{profile.get('name') or qid}"
     return _event(qid, kind, job, "DOWNLOAD", when, inputs, outputs, extra=extra), []
 
 
-def upstream(qid: str, fetch: Fetch, max_objects: int = MAX_OBJECTS) -> dict:
+def upstream(qid: str, fetch: Fetch, max_objects: int = MAX_OBJECTS, latest: Latest | None = None) -> dict:
     """The events of ``qid`` and of everything it was made from, nearest first.
+
+    Every file an event wrote gets a version: the commit it was read at downstream, else the object's newest
+    commit (``latest``).
 
     Args:
         qid: The object to start from.
         fetch: Returns the FDO of a QID, or None when there is none.
         max_objects: Most FDOs read; the rest is listed in ``truncated``.
+        latest: Returns the newest commit of a QID; None leaves such files without a version.
 
     Returns:
         ``{"object", "kind", "events", "unresolved", "truncated"}``; ``kind`` is None when ``qid`` has no FDO.
@@ -260,6 +268,11 @@ def upstream(qid: str, fetch: Fetch, max_objects: int = MAX_OBJECTS) -> dict:
         if current == qid and version is None:
             root_kind = kind_of(fdo)
         event, parents = event_for(current, fdo, read_at)
+        if event:
+            # A dataset FDO not found at the version read is the current download: its files are at the newest
+            # commit. Benchmarks and runs are not in data-processed, so their FDO is always the current one.
+            known = read_at or (version if kind_of(fdo) != "dataset" else None)
+            _version_outputs(event, known or (latest(current) if latest else None))
         if event and not any(e["run"]["runId"] == event["run"]["runId"] for e in events):
             events.append(event)
         for parent, parent_version in parents:
@@ -269,6 +282,15 @@ def upstream(qid: str, fetch: Fetch, max_objects: int = MAX_OBJECTS) -> dict:
                 queue.append(key)
     _name_whole_objects(events, files)
     return {"object": qid, "kind": root_kind, "events": events, "unresolved": unresolved, "truncated": truncated}
+
+
+def _version_outputs(event: dict, version: str | None) -> None:
+    """Give the written files without a version the commit they were read at (or the object's newest)."""
+    if not version:
+        return
+    for entry in event["outputs"]:
+        facets = entry.setdefault("facets", {})
+        facets.setdefault("version", _facet(VERSION_FACET, datasetVersion=version))
 
 
 def _name_whole_objects(events: list[dict], files: dict[str, list[str]]) -> None:

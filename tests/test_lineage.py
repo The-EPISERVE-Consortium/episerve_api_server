@@ -161,6 +161,7 @@ client = TestClient(app)
 
 def test_endpoint(monkeypatch):
     monkeypatch.setattr(lineage_router, "fetch", fetch)
+    monkeypatch.setattr(lineage_router, "latest", lambda q: None)
     r = client.get("/lineage/events", params={"object": "q1792420591934"})
     assert r.status_code == 200 and r.json()["object"] == "Q1792420591934" and len(r.json()["events"]) == 2
     r = client.get("/lineage/events", params={"object": "Q1792420591934", "format": "ndjson"})
@@ -173,6 +174,7 @@ def test_endpoint_doip_down(monkeypatch):
     def boom(qid):
         raise RuntimeError("down")
     monkeypatch.setattr(lineage_router, "fetch", lambda q, v: boom(q))
+    monkeypatch.setattr(lineage_router, "latest", lambda q: None)
     assert client.get("/lineage/events", params={"object": "Q1792420591934"}).status_code == 502
 
 
@@ -209,6 +211,10 @@ def test_datasets_are_read_at_the_version_used():
 def test_version_not_found_falls_back_to_the_current_fdo():
     run, download = lineage.upstream("Q1792420591934", lambda q, v=None: None if v else FDOS.get(q))["events"]
     assert download["eventTime"] == "2026-10-30T00:00:16Z" and "version" not in download["outputs"][0].get("facets", {})
+    newest = {"Q3274128860531": "e" * 64}
+    run, download = lineage.upstream("Q1792420591934", lambda q, v=None: None if v else FDOS.get(q),
+                                     latest=newest.get)["events"]
+    assert _version(download["outputs"][0]) == "e" * 64      # the current download, at its newest commit
 
 
 def test_one_dataset_read_at_two_versions_gives_two_downloads():
@@ -228,3 +234,22 @@ def test_one_dataset_read_at_two_versions_gives_two_downloads():
 
     events = lineage.upstream("Q1792599999999", versioned)["events"]
     assert [e["eventTime"] for e in events[1:]] == ["2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"]
+
+
+def _version(entry):
+    return ((entry.get("facets") or {}).get("version") or {}).get("datasetVersion")
+
+
+def test_written_files_get_the_version_read_downstream_else_the_newest():
+    newest = {"Q1792500000001": "c" * 64, "Q1792274309877": "d" * 64}
+    run, bench, *downloads = lineage.upstream("Q1792500000001", fetch, latest=newest.get)["events"]
+    assert [_version(o) for o in run["outputs"]] == ["c" * 64]                 # the run itself: its newest commit
+    assert {_version(o) for o in bench["outputs"]} == {"b" + "0" * 39}         # what the run read
+    assert all(_version(o) == PINNED for d in downloads for o in d["outputs"])
+
+
+def test_download_event_carries_the_source_change_date():
+    fdo = _dataset_fdo("Q1", "x", "x.parquet", "https://example.org/x.csv")
+    fdo["provenance"]["source_changed_at"] = "2026-10-16T08:00:00Z"
+    event, _ = lineage.event_for("Q1", fdo)
+    assert event["run"]["facets"]["episerve"]["source_changed_at"] == "2026-10-16T08:00:00Z"

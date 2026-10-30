@@ -50,3 +50,18 @@ def fetch_fdo(qid: str, timeout: int = 20) -> dict | None:
     if not isinstance(body, dict) or "error" in body or "kernel" not in body:
         return None
     return body
+
+
+def latest_version(qid: str, timeout: int = 20) -> str | None:
+    """The newest lakeFS commit of an object (``/doip/versions/<QID>?limit=1``), or None when it is not known."""
+    from app.config import settings
+
+    try:
+        resp = requests.get(f"{settings.doip_url.rstrip('/')}/doip/versions/{qid}", params={"limit": 1},
+                            timeout=timeout)
+        if resp.status_code != 200:
+            return None
+        versions = resp.json().get("versions") or []
+        return versions[0].get("commit_id") if versions else None
+    except (requests.RequestException, ValueError, AttributeError):
+        return None
