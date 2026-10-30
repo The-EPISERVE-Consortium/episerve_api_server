@@ -223,6 +223,8 @@ def event_for(qid: str, fdo: dict, version: str | None = None) -> tuple[dict | N
         extra["version"] = version
     if provenance.get("source_changed_at"):
         extra["source_changed_at"] = provenance["source_changed_at"]
+    if profile.get("display_name"):
+        extra["display_name"] = profile["display_name"]
     outputs = [_dataset(qid, name, version) for name in _components(fdo)]
     job = f"dataset-downloader/{profile.get('name') or qid}"
     return _event(qid, kind, job, "DOWNLOAD", when, inputs, outputs, extra=extra), []

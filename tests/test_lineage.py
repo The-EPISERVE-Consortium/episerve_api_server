@@ -277,3 +277,11 @@ def test_endpoint_version(monkeypatch):
     assert client.get("/lineage/events", params={"object": "Q3274128860531", "version": "abc"}).status_code == 422
     r = client.get("/lineage/events", params={"object": "Q3274128860531", "version": "f" * 64})
     assert r.status_code == 404 and "at version" in r.json()["detail"]
+
+
+def test_download_event_carries_the_display_name():
+    fdo = _dataset_fdo("Q1", "corona_incidence_states", "x.parquet", "https://example.org/x.csv")
+    fdo["profile"]["display_name"] = "Federal State COVID-19 7-Day Incidence"
+    event, _ = lineage.event_for("Q1", fdo)
+    assert event["job"]["name"] == "dataset-downloader/corona_incidence_states"
+    assert event["run"]["facets"]["episerve"]["display_name"] == "Federal State COVID-19 7-Day Incidence"
