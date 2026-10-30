@@ -35,8 +35,9 @@ FDOS = {
     # a model run that read a dataset at a version
     "Q1792420591934": {
         "kernel": {"modified": "2026-10-19T14:37:00Z", "fdo:hasComponent": [
-            {"componentId": c} for c in ("config.json", "config_prefect.json", "predictions.tsv", "run.log",
-                                          "ro-crate-metadata.json")]},
+            {"@id": f"components/{path}", "componentId": path.rsplit("/", 1)[-1]} for path in (
+                "input/config.json", "input/config_prefect.json", "output/predictions.tsv", "output/run.log",
+                "ro-crate-metadata.json")]},
         "profile": {"name": "run"},
         "provenance": {
             "@type": "prov:Activity",
@@ -90,7 +91,8 @@ def test_model_run_leads_to_the_dataset_version_it_read_and_its_source():
     assert run["eventType"] == "COMPLETE" and run["eventTime"] == "2026-10-19T14:36:56Z"
     assert run["inputs"] == [{"namespace": DOIP, "name": "Q3274128860531/GrippeWeb.parquet", "facets": {
         "version": {"_producer": lineage.PRODUCER, "_schemaURL": lineage.VERSION_FACET, "datasetVersion": COMMIT}}}]
-    assert _names(run["outputs"]) == ["Q1792420591934/predictions.tsv"]     # config, log, RO-Crate are not output
+    # the DOIP path of the file (output/…); config, log and RO-Crate are not output
+    assert _names(run["outputs"]) == ["Q1792420591934/output/predictions.tsv"]
     assert run["run"]["facets"]["nominalTime"]["nominalStartTime"] == "2026-10-19T14:36:31Z"
     assert run["run"]["facets"]["episerve"]["executed_by"] == "episerve_user_8"
     assert download["job"]["name"] == "dataset-downloader/grippeweb"

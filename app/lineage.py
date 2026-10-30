@@ -108,9 +108,12 @@ def parse_input(ref) -> tuple[dict, str | None]:
 
 
 def _components(fdo: dict) -> list[str]:
+    """The files of an object as the DOIP server serves them: the ``@id`` without ``components/`` (a model run's
+    ``output/predictions.tsv``), else the ``componentId`` (``@id`` like ``#input.parquet``)."""
     names = []
     for comp in (fdo.get("kernel") or {}).get("fdo:hasComponent") or []:
-        name = comp.get("componentId") or str(comp.get("@id", "")).rsplit("/", 1)[-1].lstrip("#")
+        ref = str(comp.get("@id", ""))
+        name = ref[len("components/"):] if ref.startswith("components/") else comp.get("componentId") or ref.lstrip("#")
         if name:
             names.append(name)
     return names
@@ -179,7 +182,7 @@ def event_for(qid: str, fdo: dict, version: str | None = None) -> tuple[dict | N
         model = agent.get("schema:name") or profile.get("name") or "unknown-model"
         used = provenance.get("prov:used") or []
         parsed = [parse_input(u) for u in (used if isinstance(used, list) else [used])]
-        outputs = [_dataset(qid, name) for name in _components(fdo) if name not in _RUN_BOOKKEEPING]
+        outputs = [_dataset(qid, name) for name in _components(fdo) if name.rsplit("/", 1)[-1] not in _RUN_BOOKKEEPING]
         run_facets = {}
         if provenance.get("prov:startedAtTime") or provenance.get("prov:endedAtTime"):
             times = {"nominalStartTime": provenance.get("prov:startedAtTime") or when}
