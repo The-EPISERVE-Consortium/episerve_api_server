@@ -68,6 +68,10 @@ FDOS = {
 }
 
 
+def fetch(qid, version=None):
+    return FDOS.get(qid)
+
+
 @pytest.fixture(autouse=True)
 def _doip(monkeypatch):
     monkeypatch.setattr(lineage.settings, "doip_url", DOIP + "/")
@@ -78,7 +82,7 @@ def _names(datasets):
 
 
 def test_model_run_leads_to_the_dataset_version_it_read_and_its_source():
-    result = lineage.upstream("Q1792420591934", FDOS.get)
+    result = lineage.upstream("Q1792420591934", fetch)
     assert result["kind"] == "run" and result["unresolved"] == [] and result["truncated"] == []
     run, download = result["events"]
     assert run["job"] == {"namespace": "episerve", "name": "model-runner/model__baseline", "facets": run["job"]["facets"]}
@@ -95,7 +99,7 @@ def test_model_run_leads_to_the_dataset_version_it_read_and_its_source():
 
 
 def test_run_on_a_benchmark_follows_to_the_pinned_sources():
-    events = lineage.upstream("Q1792500000001", FDOS.get)["events"]
+    events = lineage.upstream("Q1792500000001", fetch)["events"]
     assert [e["job"]["name"] for e in events] == [
         "model-runner/timesfm", "benchmark/3",
         "dataset-downloader/corona_incidence_states", "dataset-downloader/weather_berlin_daily"]
@@ -113,27 +117,27 @@ def test_benchmark_with_versioned_source_files():
         {"@id": "Q1679286399912", "schema:name": "covid.parquet", "schema:version": "c" * 40,
          "schema:url": f"{DOIP}/doip/retrieve/Q1679286399912/covid.parquet?version={'c' * 40}"}]}
     event, parents = lineage.event_for("Q1792274309877", fdo)
-    assert parents == ["Q1679286399912"]
+    assert parents == [("Q1679286399912", "c" * 40)]
     assert event["inputs"][0]["name"] == "Q1679286399912/covid.parquet"
     assert event["inputs"][0]["facets"]["version"]["datasetVersion"] == "c" * 40
 
 
 def test_model_has_no_upstream_event():
-    assert lineage.upstream("Q7611536028271", FDOS.get) == {
+    assert lineage.upstream("Q7611536028271", fetch) == {
         "object": "Q7611536028271", "kind": "model", "events": [], "unresolved": [], "truncated": []}
 
 
 def test_missing_parent_is_listed_and_reads_are_bounded():
     fdos = {k: v for k, v in FDOS.items() if k != "Q3274128860531"}
-    result = lineage.upstream("Q1792420591934", fdos.get)
+    result = lineage.upstream("Q1792420591934", lambda q, v=None: fdos.get(q))
     assert result["unresolved"] == ["Q3274128860531"] and len(result["events"]) == 1
-    assert lineage.upstream("Q1792500000001", FDOS.get, max_objects=2)["truncated"] == [
+    assert lineage.upstream("Q1792500000001", fetch, max_objects=2)["truncated"] == [
         "Q1679286399912", "Q6940002821235"]
 
 
 def test_run_ids_are_stable():
-    first = lineage.upstream("Q1792420591934", FDOS.get)["events"][0]["run"]["runId"]
-    assert first == lineage.upstream("Q1792420591934", FDOS.get)["events"][0]["run"]["runId"]
+    first = lineage.upstream("Q1792420591934", fetch)["events"][0]["run"]["runId"]
+    assert first == lineage.upstream("Q1792420591934", fetch)["events"][0]["run"]["runId"]
 
 
 @pytest.mark.parametrize("ref,name,namespace,qid", [
@@ -154,7 +158,7 @@ client = TestClient(app)
 
 
 def test_endpoint(monkeypatch):
-    monkeypatch.setattr(lineage_router.doip_client, "fetch_fdo", FDOS.get)
+    monkeypatch.setattr(lineage_router, "fetch", fetch)
     r = client.get("/lineage/events", params={"object": "q1792420591934"})
     assert r.status_code == 200 and r.json()["object"] == "Q1792420591934" and len(r.json()["events"]) == 2
     r = client.get("/lineage/events", params={"object": "Q1792420591934", "format": "ndjson"})
@@ -166,7 +170,7 @@ def test_endpoint(monkeypatch):
 def test_endpoint_doip_down(monkeypatch):
     def boom(qid):
         raise RuntimeError("down")
-    monkeypatch.setattr(lineage_router.doip_client, "fetch_fdo", boom)
+    monkeypatch.setattr(lineage_router, "fetch", lambda q, v: boom(q))
     assert client.get("/lineage/events", params={"object": "Q1792420591934"}).status_code == 502
 
 
@@ -178,3 +182,47 @@ def test_lakefs_uri_keeps_its_version_query():
     assert entry["facets"]["version"]["datasetVersion"] == "e" * 64
     entry, _ = lineage.parse_input(f"lakefs://data-raw/main/incidence/x.tsv?version={'f' * 64}")
     assert entry["facets"]["version"]["datasetVersion"] == "f" * 64
+
+
+def test_datasets_are_read_at_the_version_used():
+    old = _dataset_fdo("Q3274128860531", "grippeweb", "GrippeWeb.parquet",
+                       "https://raw.githubusercontent.com/robert-koch-institut/GrippeWeb_Daten_des_Wochenberichts/")
+    old["provenance"]["prov:generatedAtTime"] = "2026-10-19T00:00:10Z"
+    calls = []
+
+    def versioned(qid, version=None):
+        calls.append((qid, version))
+        if qid == "Q3274128860531" and version == COMMIT:
+            return old
+        return FDOS.get(qid) if version is None else None
+
+    run, download = lineage.upstream("Q1792420591934", versioned)["events"]
+    assert ("Q3274128860531", COMMIT) in calls
+    # the download that produced the version the run read, not today's
+    assert download["eventTime"] == "2026-10-19T00:00:10Z"
+    assert download["outputs"][0]["facets"]["version"]["datasetVersion"] == COMMIT
+    assert download["run"]["facets"]["episerve"]["version"] == COMMIT
+
+
+def test_version_not_found_falls_back_to_the_current_fdo():
+    run, download = lineage.upstream("Q1792420591934", lambda q, v=None: None if v else FDOS.get(q))["events"]
+    assert download["eventTime"] == "2026-10-30T00:00:16Z" and "version" not in download["outputs"][0].get("facets", {})
+
+
+def test_one_dataset_read_at_two_versions_gives_two_downloads():
+    a, b = "a" * 64, "b" * 64
+    run = {"provenance": {"@type": "prov:Activity", "prov:endedAtTime": "2026-10-20T00:00:00Z",
+                          "prov:wasAssociatedWith": {"schema:name": "m"},
+                          "prov:used": [{"@id": f"{DOIP}/doip/retrieve/Q3274128860531/GrippeWeb.parquet?version={a}"},
+                                        {"@id": f"{DOIP}/doip/retrieve/Q3274128860531/GrippeWeb.parquet?version={b}"}]},
+           "kernel": {}}
+
+    def versioned(qid, version=None):
+        if qid == "Q1792599999999":
+            return run
+        fdo = _dataset_fdo(qid, "grippeweb", "GrippeWeb.parquet", "https://raw.githubusercontent.com/x")
+        fdo["provenance"]["prov:generatedAtTime"] = {a: "2026-10-01T00:00:00Z", b: "2026-10-02T00:00:00Z"}.get(version, "now")
+        return fdo
+
+    events = lineage.upstream("Q1792599999999", versioned)["events"]
+    assert [e["eventTime"] for e in events[1:]] == ["2026-10-01T00:00:00Z", "2026-10-02T00:00:00Z"]

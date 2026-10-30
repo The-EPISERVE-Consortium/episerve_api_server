@@ -10,8 +10,9 @@ Every FDO describes something that has finished, so each becomes one ``COMPLETE`
 Starting from one QID, the links are followed upstream (run -> benchmark -> source datasets -> external
 source). Nothing is stored: the events are built when asked. Datasets read through the DOIP server are
 named ``<QID>/<file>`` in the namespace of the DOIP base URL, so the output of one event and the input of
-the next have the same name; the lakeFS commit is the dataset version. A dataset event describes the
-dataset as it is now; the version a run or benchmark read is the one in that run's or benchmark's event.
+the next have the same name; the lakeFS commit is the dataset version. When a run or benchmark read a
+dataset at a commit, the dataset's FDO is read at that commit, so its download event is the download that
+produced exactly that version (a dataset read at two versions gives two download events).
 """
 
 import re
@@ -39,7 +40,8 @@ _COMMIT = re.compile(r"[0-9a-f]{40,64}")
 # Component files of a model run that are not its output.
 _RUN_BOOKKEEPING = {"config.json", "config_prefect.json", "run.log", "ro-crate-metadata.json"}
 
-Fetch = Callable[[str], dict | None]
+# fetch(qid, version): the FDO of an object, at a lakeFS commit when ``version`` is given (None: the current one).
+Fetch = Callable[[str, str | None], dict | None]
 
 
 def _doip_namespace() -> str:
@@ -153,10 +155,16 @@ def _event(qid: str, kind: str, job: str, job_type: str, event_time: str, inputs
     }
 
 
-def event_for(qid: str, fdo: dict) -> tuple[dict | None, list[str]]:
-    """The event that produced this object, and the QIDs it was made from (to follow upstream).
+def _parents(parsed: list[tuple[dict, str | None]]) -> list[tuple[str, str | None]]:
+    """(QID, version read) of every input that is a platform object."""
+    return [(qid, ((entry.get("facets") or {}).get("version") or {}).get("datasetVersion")) for entry, qid in parsed if qid]
 
-    A model's FDO describes software, not something produced from data: it has no event.
+
+def event_for(qid: str, fdo: dict, version: str | None = None) -> tuple[dict | None, list[tuple[str, str | None]]]:
+    """The event that produced this object, and what it was made from as ``(QID, version read)`` (to follow upstream).
+
+    ``version`` is the lakeFS commit the FDO was read at (None: the current FDO); a dataset's files get it as
+    their version. A model's FDO describes software, not something produced from data: it has no event.
     """
     kind = kind_of(fdo)
     profile = fdo.get("profile") or {}
@@ -184,7 +192,7 @@ def event_for(qid: str, fdo: dict) -> tuple[dict | None, list[str]]:
             extra["executed_by"] = user
         return (_event(qid, kind, f"model-runner/{model}", "MODEL_RUN", when, [p[0] for p in parsed], outputs,
                        run_facets, extra),
-                [p[1] for p in parsed if p[1]])
+                _parents(parsed))
 
     if kind == "benchmark":
         info = profile.get("episerveBenchmark") or {}
@@ -198,7 +206,7 @@ def event_for(qid: str, fdo: dict) -> tuple[dict | None, list[str]]:
         outputs = [_dataset(qid, name) for name in _components(fdo)]
         return (_event(qid, kind, f"benchmark/{info.get('id', qid)}", "BENCHMARK", when,
                        [p[0] for p in parsed], outputs),
-                [p[1] for p in parsed if p[1]])
+                _parents(parsed))
 
     derived = provenance.get("prov:wasDerivedFrom") or {}
     derived = derived[0] if isinstance(derived, list) and derived else derived
@@ -206,7 +214,9 @@ def event_for(qid: str, fdo: dict) -> tuple[dict | None, list[str]]:
     source = source or profile.get("url")
     inputs = [_external(source)] if source else []
     extra = {"raw": derived.get("@id")} if isinstance(derived, dict) and derived.get("@id") else {}
-    outputs = [_dataset(qid, name) for name in _components(fdo)]
+    if version:
+        extra["version"] = version
+    outputs = [_dataset(qid, name, version) for name in _components(fdo)]
     job = f"dataset-downloader/{profile.get('name') or qid}"
     return _event(qid, kind, job, "DOWNLOAD", when, inputs, outputs, extra=extra), []
 
@@ -223,33 +233,37 @@ def upstream(qid: str, fetch: Fetch, max_objects: int = MAX_OBJECTS) -> dict:
         ``{"object", "kind", "events", "unresolved", "truncated"}``; ``kind`` is None when ``qid`` has no FDO.
     """
     qid = qid.upper()
-    events, unresolved, truncated, seen = [], [], [], {qid}
+    events, unresolved, truncated, seen = [], [], [], {(qid, None)}
     files: dict[str, list[str]] = {}
-    queue = deque([qid])
+    queue = deque([(qid, None)])
     root_kind = None
     reads = 0
     while queue:
-        current = queue.popleft()
+        current, version = queue.popleft()
         if reads >= max_objects:
             truncated.append(current)
             continue
         reads += 1
-        fdo = fetch(current)
+        fdo, read_at = None, None
+        if version:
+            fdo, read_at = fetch(current, version), version
+        if fdo is None:            # no version, or the FDO is not in data-processed at that commit
+            fdo, read_at = fetch(current, None), None
         if fdo is None:
             if current != qid:
                 unresolved.append(current)
             continue
         files[current] = _components(fdo)
-        if current == qid:
+        if current == qid and version is None:
             root_kind = kind_of(fdo)
-        event, parents = event_for(current, fdo)
-        if event:
+        event, parents = event_for(current, fdo, read_at)
+        if event and not any(e["run"]["runId"] == event["run"]["runId"] for e in events):
             events.append(event)
-        for parent in parents:
-            parent = parent.upper()
-            if parent not in seen:
-                seen.add(parent)
-                queue.append(parent)
+        for parent, parent_version in parents:
+            key = (parent.upper(), parent_version)
+            if key not in seen:
+                seen.add(key)
+                queue.append(key)
     _name_whole_objects(events, files)
     return {"object": qid, "kind": root_kind, "events": events, "unresolved": unresolved, "truncated": truncated}
 

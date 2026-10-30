@@ -52,8 +52,10 @@ QID, the model image and `executed_by`). From the requested object the links are
 first, so a run on a benchmark leads to the benchmark, its source datasets and their external sources; at most
 50 FDOs are read (the rest is listed in `truncated`). Datasets on the platform are named `<QID>/<file>` in the
 namespace of the DOIP base URL, so one event's output and the next event's input have the same name; the lakeFS
-commit is the `version` facet. A dataset's own event describes it as it is now; the version a run or benchmark
-read is in that run's or benchmark's event. Benchmarks whose FDO names only source QIDs get the pinned
+commit is the `version` facet. When a run or benchmark read a dataset at a commit, the dataset's FDO is read
+from `data-processed` at that commit, so its download event (time, version) is the download that produced exactly
+the version used; a dataset read at two versions gives two download events. If the FDO is not there at that
+commit, the current one is used. Benchmarks whose FDO names only source QIDs get the pinned
 `data_commit` and, when the source has one file, that file. A model (software) has no event. Answer:
 `{"object", "kind", "events", "unresolved", "truncated"}`, or with `format=ndjson` one event per line
 (`application/x-ndjson`), e.g. to post to Marquez. Unknown QID `404`, DOIP unreachable `502`. No login: it

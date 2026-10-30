@@ -1,6 +1,7 @@
 import json
 import re
 import lakefs
+from lakefs.exceptions import NotFoundException
 from lakefs import Client
 from app.config import settings
 
@@ -241,3 +242,19 @@ def read_benchmark_component(commit: str, qid: str, filename: str, max_bytes: in
     if len(data) > max_bytes:
         raise ValueError("The file exceeds the size limit.")
     return data
+
+
+def read_processed_fdo(commit: str, qid: str) -> dict | None:
+    """The FDO of a dataset in the processed-data repository as it was at a commit, or None when it did not exist.
+
+    Raises:
+        ValueError: If the commit or QID is malformed.
+    """
+    if not _COMMIT.fullmatch(commit or "") or not _QID.fullmatch(qid or ""):
+        raise ValueError("Invalid commit or dataset.")
+    repo = lakefs.Repository(settings.lakefs_processed_repo, client=_client())
+    try:
+        content = repo.ref(commit).object(f"{_shard_qid(qid)}/{qid.upper()}.fdo.json").reader().read()
+    except NotFoundException:
+        return None
+    return json.loads(content)

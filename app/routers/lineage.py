@@ -8,10 +8,21 @@ from fastapi.responses import Response
 
 from app import lineage
 from app.clients import doip as doip_client
+from app.clients import lakefs as lakefs_client
 
 router = APIRouter(prefix="/lineage", tags=["lineage"])
 
 _QID = re.compile(r"[Qq]\d{6,}")
+
+
+def fetch(qid: str, version: str | None) -> dict | None:
+    """An FDO: at a commit of data-processed when a version is given (None if it is not there), else the current one."""
+    if version:
+        try:
+            return lakefs_client.read_processed_fdo(version, qid)
+        except Exception:
+            return None
+    return doip_client.fetch_fdo(qid)
 
 
 @router.get("/events")
@@ -30,7 +41,7 @@ def get_events(
     if not _QID.fullmatch(object):
         raise HTTPException(status_code=422, detail="object must be a QID, e.g. Q1792420591934")
     try:
-        result = lineage.upstream(object, doip_client.fetch_fdo)
+        result = lineage.upstream(object, fetch)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"DOIP error: {e}")
     if result["kind"] is None:
