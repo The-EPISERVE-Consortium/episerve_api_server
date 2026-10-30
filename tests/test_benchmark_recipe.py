@@ -133,3 +133,18 @@ def test_the_description_is_stored_with_the_manifest_and_shown_as_stored():
     old = [{"text": "old", "code": "", "language": ""}]                                # the earlier format: regenerated
     assert recipe.display(ROW, {**MANIFEST, "recipe": old})["code"]
     assert recipe.display(ROW, {**MANIFEST, "recipe": {"commit": "x", "sql": []}})["rules"]    # frozen before the code existed
+
+
+OLD_MANIFEST = {"version": 1, "repo": "benchmarks", "branch": "main", "commit": "ca" * 32,
+                "input": {"path": "2/input.parquet", "sha256": "a" * 64, "rows": 1339, "columns": ["datum", "v"]},
+                "reference": {"path": "2/reference.parquet", "sha256": "b" * 64, "rows": 45}}
+
+
+def test_files_in_the_older_layout_have_no_links_but_keep_their_lakefs_uri():
+    from app.benchmarks.definition import input_uri
+
+    layouts = recipe.file_layouts(ROW, OLD_MANIFEST)
+    assert [(l["url"], l["catalog"]) for l in layouts] == [(None, None), (None, None)]
+    assert layouts[0]["rows"] == 1339
+    # the URI a model run recorded when it read the file, so qualifying runs still works
+    assert input_uri(OLD_MANIFEST) == f"lakefs://benchmarks/main/2/input.parquet?version={'ca' * 32}"

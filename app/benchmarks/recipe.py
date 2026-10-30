@@ -31,8 +31,10 @@ def file_layouts(row: dict, manifest: dict) -> list[dict]:
         layouts.append({
             "kind": kind, "title": title, "meaning": meaning, "columns": columns, "rows": entry["rows"],
             "first_date": entry.get("first_date"), "last_date": entry.get("last_date"),
-            "sha256": entry["sha256"], "url": object_url(manifest, kind),
-            "catalog": f"{CATALOG_URL}/dataset/{entry['qid'].lower()}",
+            "sha256": entry["sha256"],
+            # files in the older layout are only in lakeFS (inside the cluster): no download or catalog link
+            "url": object_url(manifest, kind) if "qid" in entry else None,
+            "catalog": f"{CATALOG_URL}/dataset/{entry['qid'].lower()}" if "qid" in entry else None,
         })
     return layouts
 

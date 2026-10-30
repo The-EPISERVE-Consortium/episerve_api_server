@@ -125,9 +125,15 @@ def materialized_from_row(row: dict) -> dict | None:
 
 def object_url(manifest: dict, kind: str = "input", *, versioned: bool = True) -> str:
     """The DOIP URL of a generated file (``input`` or ``reference``); with ``versioned`` it carries the commit of the
-    benchmarks repository it was stored in."""
+    benchmarks repository it was stored in.
+
+    Files in the older layout (filed under the benchmark id, ``path`` instead of ``qid``) are not served by DOIP: their
+    URL is the lakeFS URI a model run recorded when it read them (``lakefs://<repo>/<branch>/<path>``)."""
     entry = manifest[kind]
-    url = f"{settings.doip_url.rstrip('/')}/doip/retrieve/{entry['qid']}/{entry['component']}"
+    if "qid" not in entry:
+        url = f"lakefs://{manifest.get('repo', 'benchmarks')}/{manifest.get('branch', 'main')}/{entry['path']}"
+    else:
+        url = f"{settings.doip_url.rstrip('/')}/doip/retrieve/{entry['qid']}/{entry['component']}"
     return f"{url}?version={manifest['commit']}" if versioned else url
 
 

@@ -152,15 +152,22 @@ def _generated_data_sections(row: dict, manifest: dict) -> None:
     """The Data tab of a final benchmark: the layout of the two generated files, the sources they were built from
     and the steps that turn the sources into the files."""
     ui.label("The two data files").classes("text-xl font-semibold text-gray-900")
-    ui.label("Both files are Parquet, generated once when the benchmark was finalized and stored as one open object "
-             f"({manifest.get('qid') or manifest['input'].get('qid')}) that the DOIP server serves. A model run reads "
-             "exactly the input file, as it is; forecasts are scored against the reference file, which is never "
+    qid = manifest.get("qid") or manifest["input"].get("qid")
+    stored = (f"stored as one open object ({qid}) that the DOIP server serves" if qid else
+              f"stored in the older layout in the internal lakeFS repository `{manifest.get('repo', 'benchmarks')}` "
+              "(not served by the DOIP server, so not downloadable here)")
+    ui.label("Both files are Parquet, generated once when the benchmark was finalized and " + stored + ". A model run "
+             "reads exactly the input file, as it is; forecasts are scored against the reference file, which is never "
              "given to a model.").classes("text-sm text-gray-600")
     layouts = recipe.file_layouts(row, manifest)
     for layout in layouts:
         with ui.row().classes("items-baseline gap-3 mt-3"):
-            ui.link(layout["title"], layout["url"], new_tab=True).classes("text-base font-semibold")
-            ui.link("Data hub", layout["catalog"], new_tab=True).classes("text-sm")
+            if layout["url"]:
+                ui.link(layout["title"], layout["url"], new_tab=True).classes("text-base font-semibold")
+            else:
+                ui.label(layout["title"]).classes("text-base font-semibold")
+            if layout["catalog"]:
+                ui.link("Data hub", layout["catalog"], new_tab=True).classes("text-sm")
         span = (f", {layout['first_date']} → {layout['last_date']}"
                 if layout["first_date"] and layout["last_date"] else "")
         ui.label(f"Each row is {layout['meaning']}. {layout['rows']} rows{span}; SHA-256 {layout['sha256'][:16]}…"
