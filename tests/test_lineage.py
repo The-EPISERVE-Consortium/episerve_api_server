@@ -168,3 +168,13 @@ def test_endpoint_doip_down(monkeypatch):
         raise RuntimeError("down")
     monkeypatch.setattr(lineage_router.doip_client, "fetch_fdo", boom)
     assert client.get("/lineage/events", params={"object": "Q1792420591934"}).status_code == 502
+
+
+def test_lakefs_uri_keeps_its_version_query():
+    entry, qid = lineage.parse_input(
+        f"lakefs://benchmarks/main/17/92/27/Q1792274309877/components/input.parquet?version={'e' * 64}")
+    assert qid == "Q1792274309877"
+    assert entry["name"] == "Q1792274309877/input.parquet" and entry["namespace"] == DOIP
+    assert entry["facets"]["version"]["datasetVersion"] == "e" * 64
+    entry, _ = lineage.parse_input(f"lakefs://data-raw/main/incidence/x.tsv?version={'f' * 64}")
+    assert entry["facets"]["version"]["datasetVersion"] == "f" * 64

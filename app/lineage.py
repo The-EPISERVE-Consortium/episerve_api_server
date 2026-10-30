@@ -92,9 +92,10 @@ def parse_input(ref) -> tuple[dict, str | None]:
             return _dataset(qid, file or None, version), qid
     if parts.scheme == "lakefs":
         repo, path = parts.netloc, parts.path.lstrip("/")
-        commit, _, inner = path.partition("/")
+        ref_, _, inner = path.partition("/")
         qid = next(iter(_QID.findall(inner)), None)
-        version = commit if _COMMIT.fullmatch(commit) else None
+        # The model runner pins a branch URI with ?version=<commit>; a commit as the ref is a version too.
+        version = (parse_qs(parts.query).get("version") or [None])[0] or (ref_ if _COMMIT.fullmatch(ref_) else None)
         if qid and "/components/" in inner:
             return _dataset(qid, inner.split("/components/", 1)[1], version), qid
         entry = {"namespace": f"lakefs://{repo}", "name": inner or path}
