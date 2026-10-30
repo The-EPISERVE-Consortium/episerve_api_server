@@ -11,6 +11,7 @@ import time
 from datetime import datetime, timezone
 
 from app.benchmarks.definition import Benchmark
+from app.config import settings
 
 
 def shard(qid: str) -> str:
@@ -34,9 +35,40 @@ def fdo_path(qid: str) -> str:
     return f"{shard(qid)}/{qid}.fdo.json"
 
 
+def derived_from(source_qids: list[str], sources: list[dict] | None, commit: str | None) -> list[dict]:
+    """The ``prov:wasDerivedFrom`` entries: each source file at the pinned commit of ``data-processed``.
+
+    One entry per file read (``sources``: ``{"role", "qid", "component"}``), with the commit as its version and the
+    DOIP URL of exactly that file version. Without ``sources`` (older manifests) one entry per dataset QID.
+    """
+    base = f"{settings.doip_url.rstrip('/')}/doip/retrieve"
+    query = f"?version={commit}" if commit else ""
+    entries, seen = [], set()
+    for source in sources or []:
+        key = (source.get("qid"), source.get("component"))
+        if not source.get("qid") or key in seen:
+            continue
+        seen.add(key)
+        entry = {"@id": source["qid"]}
+        if source.get("component"):
+            entry["schema:name"] = source["component"]
+        if source.get("role"):
+            entry["schema:roleName"] = source["role"]
+        if commit:
+            entry["schema:version"] = commit
+        path = f"{source['qid']}/{source['component']}" if source.get("component") else source["qid"]
+        entry["schema:url"] = f"{base}/{path}{query}"
+        entries.append(entry)
+    for qid in source_qids:
+        if qid not in {e["@id"] for e in entries}:
+            entries.append({"@id": qid, **({"schema:version": commit} if commit else {}),
+                            "schema:url": f"{base}/{qid}{query}"})
+    return entries
+
+
 def build_fdo(
     *, qid: str, benchmark_id: int, benchmark_name: str, files: dict[str, dict], benchmark: Benchmark,
-    source_qids: list[str], description: str,
+    source_qids: list[str], description: str, sources: list[dict] | None = None,
 ) -> bytes:
     """The FDO description (JSON) of a benchmark's generated files: one object, one component per file.
 
@@ -46,6 +78,8 @@ def build_fdo(
             ``{"component", "sha256", "rows", "columns"}``.
         benchmark: The frozen definition; its pinned commit goes into the provenance.
         source_qids: The datasets the files were generated from.
+        sources: The files read (``{"role", "qid", "component"}``); with the pinned commit they become the
+            versioned ``prov:wasDerivedFrom`` entries.
     """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     document = {
@@ -87,7 +121,7 @@ def build_fdo(
         "provenance": {
             "prov:generatedAtTime": now,
             "prov:wasAttributedTo": "EPISERVE benchmark designer",
-            "prov:wasDerivedFrom": source_qids,
+            "prov:wasDerivedFrom": derived_from(source_qids, sources, benchmark.data_commit),
         },
     }
     return json.dumps(document, indent=2).encode()

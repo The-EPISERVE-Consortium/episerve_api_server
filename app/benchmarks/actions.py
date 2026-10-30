@@ -251,7 +251,7 @@ def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materi
     files[fdo.fdo_path(qid)] = fdo.build_fdo(
         qid=qid, benchmark_id=benchmark_id, benchmark_name=name,
         files={role: {k: v for k, v in manifest[role].items() if k != "qid"} for role in parts},
-        benchmark=benchmark, source_qids=source_qids,
+        benchmark=benchmark, source_qids=source_qids, sources=sources,
         description=f"{name}. Generated model input (history window, target series and covariates) and "
                     "reference data (the test window the forecasts are scored against).")
     branch, commit = lakefs_client.write_benchmark_objects(
