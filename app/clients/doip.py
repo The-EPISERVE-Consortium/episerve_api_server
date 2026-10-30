@@ -31,3 +31,22 @@ def fetch_text_head(url: str, max_bytes: int = DEFAULT_PREVIEW_BYTES, timeout: i
         if cut != -1:
             data = data[: cut + 1]
     return data.decode("utf-8", errors="replace")
+
+
+def fetch_fdo(qid: str, timeout: int = 20) -> dict | None:
+    """The FDO record of an object from the DOIP server (``/doip/retrieve/<QID>``), or None when it does not exist.
+
+    Raises:
+        requests.RequestException: The DOIP server is unreachable or answers with another error.
+    """
+    from app.config import settings
+
+    resp = requests.get(f"{settings.doip_url.rstrip('/')}/doip/retrieve/{qid}", timeout=timeout)
+    if resp.status_code in (400, 404):
+        return None
+    resp.raise_for_status()
+    body = resp.json()
+    # The gateway answers an unknown QID with HTTP 200 and {"error": ..., "message": "No FDO metadata file found ..."}.
+    if not isinstance(body, dict) or "error" in body or "kernel" not in body:
+        return None
+    return body

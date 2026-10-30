@@ -42,6 +42,23 @@ Specs of platform formats (from `episerve_specs`):
 
 These endpoints need no login and change nothing. Their body is limited to 1 MiB (`413` above).
 
+`GET /lineage/events?object=<QID>` returns the upstream lineage of an object as
+[OpenLineage](https://openlineage.io/) `RunEvent`s (spec 2-0-2), built from the FDO records when asked
+(`app/lineage.py`; nothing is stored). Each FDO is one `COMPLETE` event: a **dataset** = the download from its
+primary source (job `dataset-downloader/<name>`), a **benchmark** data object = its source files at the pinned
+commit to `input.parquet` / `reference.parquet` (job `benchmark/<id>`), a **model run** = the files it read
+(`prov:used`) to its output files (job `model-runner/<model>`; run facets `nominalTime` and `episerve` with the
+QID, the model image and `executed_by`). From the requested object the links are followed upstream, nearest
+first, so a run on a benchmark leads to the benchmark, its source datasets and their external sources; at most
+50 FDOs are read (the rest is listed in `truncated`). Datasets on the platform are named `<QID>/<file>` in the
+namespace of the DOIP base URL, so one event's output and the next event's input have the same name; the lakeFS
+commit is the `version` facet. A dataset's own event describes it as it is now; the version a run or benchmark
+read is in that run's or benchmark's event. Benchmarks whose FDO names only source QIDs get the pinned
+`data_commit` and, when the source has one file, that file. A model (software) has no event. Answer:
+`{"object", "kind", "events", "unresolved", "truncated"}`, or with `format=ndjson` one event per line
+(`application/x-ndjson`), e.g. to post to Marquez. Unknown QID `404`, DOIP unreachable `502`. No login: it
+shows only FDO metadata, which the DOIP server serves openly.
+
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/health` | Health check → `{"status": "ok"}` |
@@ -51,6 +68,7 @@ These endpoints need no login and change nothing. Their body is limited to 1 MiB
 | `GET` | `/schemas` | List the specs and their versions |
 | `GET` | `/schemas/{spec}/v{N}.json` | JSON Schema of one spec version |
 | `POST` | `/validate/{spec}` | Validate a JSON document against a spec |
+| `GET` | `/lineage/events?object=<QID>` | Upstream lineage of a dataset, benchmark data object or model run as OpenLineage events |
 | `POST` | `/model-runs` | Trigger a model run via Prefect (returns `202`) |
 | `GET` | `/model-runs` | List all model runs from CKAN (`type-model-run` group), including runs that ended `failed` |
 | `GET` | `/model-runs/{run_id}` | Get a single run by QID (fetched from CKAN) |
