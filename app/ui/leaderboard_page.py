@@ -4,21 +4,21 @@ import html
 import logging
 
 from nicegui import run, ui
-from starlette.requests import Request
 
-from app.ui import session
+from app.ui import benchmark_details, session
 from app.benchmarks import actions as bactions
 from app.leaderboard import actions
-from app.benchmarks import recipe
 from app.benchmarks.definition import materialized_from_row
-from app.leaderboard.about import COLUMN_HELP, METRIC_DOCS, description_text, overview_facts
+from app.leaderboard.about import COLUMN_HELP, METRIC_DOCS
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
 from app.leaderboard.present import (
     LABELS, chart_option, columns_text, filter_entries, history_text, history_window, params_text, point_rows, summary, table_rows,
 )
+from app.ui.components.api_box import api_box
 from app.ui.components.messages import error_label
-from app.ui.layout import header
+from app.ui.layout import base_url, header
+from app.ui.theme import BENCHMARK_DETAIL_CSS
 
 logger = logging.getLogger(__name__)
 
@@ -134,105 +134,6 @@ def _edit_description_dialog(row: dict) -> None:
     dialog.open()
 
 
-def _overview_tab(row: dict) -> None:
-    with ui.row().classes("items-start gap-2 w-full no-wrap"):
-        ui.label(description_text(row)).classes("text-sm text-gray-600 flex-1 whitespace-pre-line")
-        if _is_admin():
-            ui.button(icon="edit", on_click=lambda: _edit_description_dialog(row)).props(
-                "flat round dense size=sm aria-label='Edit description'").classes("text-gray-500")
-    rows = [{"caption": caption, "value": value} for caption, value in overview_facts(row)]
-    ui.table(
-        columns=[{"name": "caption", "label": "", "field": "caption", "align": "left"},
-                 {"name": "value", "label": "", "field": "value", "align": "left"}],
-        rows=rows, row_key="caption",
-    ).props("flat bordered dense hide-header hide-bottom").classes("max-w-xl w-full").add_slot(
-        "body-cell-caption", '''<q-td :props="props" class="text-gray-500" style="width: 11rem">{{ props.value }}</q-td>''')
-
-
-def _generated_data_sections(row: dict, manifest: dict) -> None:
-    """The Data tab of a final benchmark: the layout of the two generated files, the sources they were built from
-    and the steps that turn the sources into the files."""
-    ui.label("The two data files").classes("text-xl font-semibold text-gray-900")
-    qid = manifest.get("qid") or manifest["input"].get("qid")
-    stored = (f"stored as one open object ({qid}) that the DOIP server serves" if qid else
-              f"stored in the older layout in the internal lakeFS repository `{manifest.get('repo', 'benchmarks')}` "
-              "(not served by the DOIP server, so not downloadable here)")
-    ui.label("Both files are Parquet, generated once when the benchmark was finalized and " + stored + ". A model run "
-             "reads exactly the input file, as it is; forecasts are scored against the reference file, which is never "
-             "given to a model.").classes("text-sm text-gray-600")
-    layouts = recipe.file_layouts(row, manifest)
-    for layout in layouts:
-        with ui.row().classes("items-baseline gap-3 mt-3"):
-            if layout["url"]:
-                ui.link(layout["title"], layout["url"], new_tab=True).classes("text-base font-semibold")
-            else:
-                ui.label(layout["title"]).classes("text-base font-semibold")
-            if layout["catalog"]:
-                ui.link("Data hub", layout["catalog"], new_tab=True).classes("text-sm")
-        span = (f", {layout['first_date']} → {layout['last_date']}"
-                if layout["first_date"] and layout["last_date"] else "")
-        ui.label(f"Each row is {layout['meaning']}. {layout['rows']} rows{span}; SHA-256 {layout['sha256'][:16]}…"
-                 ).classes("text-sm text-gray-600")
-    ui.table(
-        columns=[{"name": "column", "label": "Column", "field": "column", "align": "left"},
-                 {"name": "role", "label": "Role", "field": "role", "align": "left"},
-                 {"name": "input", "label": "input.parquet", "field": "input", "align": "left"},
-                 {"name": "reference", "label": "reference.parquet", "field": "reference", "align": "left"}],
-        rows=recipe.column_rows(layouts), row_key="column",
-    ).props("dense flat bordered").classes("w-full max-w-3xl mt-2")
-    info = recipe.display(row, manifest)
-    ui.label("How the files are generated").classes("text-xl font-semibold text-gray-900 mt-4")
-    ui.label(f"Every source is read at lakeFS commit {info['commit'][:12]}… (pinned when the benchmark was "
-             "finalized), so later updates of a source never change the files.").classes("text-sm text-gray-600")
-    ui.label("Sources and filters").classes("text-base font-semibold text-gray-900 mt-3")
-    lines = """<q-td :props="props"><div v-for="x in props.value" :key="x">{{ x }}</div></q-td>"""
-    table = ui.table(
-        columns=[{"name": "role", "label": "Used as", "field": "role", "align": "left"},
-                 {"name": "qid", "label": "Dataset", "field": "qid", "align": "left"},
-                 {"name": "file", "label": "File", "field": "file", "align": "left"},
-                 {"name": "filters", "label": "Filters", "field": "filters", "align": "left"},
-                 {"name": "date_column", "label": "Date column", "field": "date_column", "align": "left"},
-                 {"name": "columns", "label": "Columns taken", "field": "columns", "align": "left"}],
-        rows=info["sources"], row_key="role",
-    ).props("dense flat bordered").classes("w-full max-w-5xl")
-    table.add_slot(
-        "body-cell-qid", """<q-td :props="props"><a :href="props.row.catalog" target="_blank">{{ props.value }}</a></q-td>""")
-    table.add_slot(
-        "body-cell-file", """<q-td :props="props"><a v-if="props.row.url" :href="props.row.url" target="_blank">"""
-                          """{{ props.value }}</a><span v-else>-</span></q-td>""")
-    table.add_slot("body-cell-filters", lines)
-    table.add_slot("body-cell-columns", lines)
-    ui.label("Time windows").classes("text-base font-semibold text-gray-900 mt-3")
-    ui.table(
-        columns=[{"name": n, "label": label, "field": n, "align": "left"}
-                 for n, label in (("file", "File"), ("from", "From"), ("to", "To"), ("rows", "Rows"),
-                                  ("content", "Content"))],
-        rows=info["windows"], row_key="file",
-    ).props("dense flat bordered").classes("w-full max-w-3xl")
-    ui.label("Rules").classes("text-base font-semibold text-gray-900 mt-3")
-    for rule in info["rules"]:
-        ui.label(f"• {rule}").classes("text-sm text-gray-700 max-w-4xl")
-    if info["merge"]:
-        ui.label("Merge").classes("text-base font-semibold text-gray-900 mt-3")
-        merge = ui.table(
-            columns=[{"name": "covariate", "label": "Covariate", "field": "covariate", "align": "left"},
-                     {"name": "joined_to", "label": "Joined to", "field": "joined_to", "align": "left"},
-                     {"name": "rule", "label": "Rule", "field": "rule", "align": "left",
-                      "style": "white-space: normal"},
-                     {"name": "columns", "label": "Output columns", "field": "columns", "align": "left"}],
-            rows=info["merge"], row_key="covariate",
-        ).props("dense flat bordered").classes("w-full max-w-5xl")
-        merge.add_slot("body-cell-columns", lines)
-    with ui.expansion("Show code to reproduce both files", icon="code").classes("w-full max-w-4xl mt-3"):
-        ui.code(info["code"], language="python").classes("w-full")
-
-
-def _data_tab(row: dict, benchmark_id: int) -> None:
-    manifest = materialized_from_row(row)
-    if manifest:
-        _generated_data_sections(row, manifest)
-
-
 def _criteria_section() -> None:
     ui.label("Evaluation criteria").classes("text-xl font-semibold text-gray-900 mt-4")
     ui.table(
@@ -278,7 +179,13 @@ def register_leaderboard_page() -> None:
 
     @ui.page("/ui/benchmarks/{benchmark_id}")
     def leaderboard_page(benchmark_id: int, tab: str = _DEFAULT_TAB):
-        header("/ui/benchmarks", api=f"benchmarks/{benchmark_id}/leaderboard?rank_by={_DEFAULT_RANK_BY}&all_runs=true")
+        """Render a benchmark and open its requested detail tab.
+
+        Args:
+            benchmark_id: Identifier of the benchmark to display.
+            tab: Initial tab key, including supported legacy aliases.
+        """
+        header("/ui/benchmarks")
         logged_in = _is_logged_in()
         selected = benchmark_id
         try:
@@ -299,17 +206,27 @@ def register_leaderboard_page() -> None:
         tab = _FORMER_TABS.get(tab, tab)
         open_tab = tab if tab in dict(_TABS) else _DEFAULT_TAB
 
-        with ui.column().classes("epi-page"):
-            ui.link("← All benchmarks", "/ui/benchmarks").classes("text-sm")
-            ui.label(row["name"]).classes("epi-page-title")
-            with ui.tabs(value=open_tab).classes("w-full") as tabs:
+        manifest = materialized_from_row(row)
+        ui.add_css(BENCHMARK_DETAIL_CSS)
+        with ui.column().classes("epi-page epi-benchmark-page"):
+            with ui.row().classes("epi-benchmark-toolbar"):
+                ui.link("← All benchmarks", "/ui/benchmarks")
+                with ui.expansion("API command").props(
+                    "dense switch-toggle-side expand-icon=chevron_right expanded-icon=expand_more"
+                ).classes("epi-benchmark-api"):
+                    api_box(f"{base_url()}benchmarks/{selected}/leaderboard?rank_by={_DEFAULT_RANK_BY}&all_runs=true")
+            ui.label(row["name"]).classes("epi-page-title epi-benchmark-title").props("role=heading aria-level=1")
+            with ui.tabs(value=open_tab).props("align=left no-caps").classes("epi-benchmark-tabs") as tabs:
                 for key, label in _TABS:
                     ui.tab(key, label=label)
-            with ui.tab_panels(tabs, value=open_tab).classes("w-full"):
-                with ui.tab_panel("overview").classes("gap-3"):
-                    _overview_tab(row)
-                with ui.tab_panel("data").classes("gap-3"):
-                    _data_tab(row, selected)
+            with ui.tab_panels(tabs, value=open_tab).classes("epi-benchmark-panels"):
+                with ui.tab_panel("overview").classes("epi-benchmark-panel"):
+                    benchmark_details.overview(row, can_edit=_is_admin(), on_edit=lambda: _edit_description_dialog(row))
+                with ui.tab_panel("data").classes("epi-benchmark-panel"):
+                    if manifest:
+                        benchmark_details.generated_data(row, manifest)
+                    else:
+                        ui.label("No generated files are recorded for this benchmark.").classes("epi-benchmark-body")
                 with ui.tab_panel("leaderboard").classes("gap-3"):
                     with ui.row().classes("items-end gap-3"):
                         def set_rank(e):

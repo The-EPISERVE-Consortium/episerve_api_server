@@ -333,17 +333,40 @@ def test_unexpected_write_errors_are_generic_and_logged(monkeypatch, caplog):
 
 
 def test_data_tab_has_the_files_the_sources_and_the_steps_and_the_criteria_close_the_leaderboard_tab(monkeypatch):
+    """Keep generation details on Data and evaluation criteria on Leaderboard.
+
+    Args:
+        monkeypatch: Fixture that replaces storage and catalog calls.
+    """
     def grab(out, client, find, drain):
+        """Collect table ownership and the collapsed Data disclosures.
+
+        Args:
+            out: Mutable harness result.
+            client: Rendered NiceGUI client.
+            find: Helper returning elements by type.
+            drain: Helper running deferred callbacks.
+        """
         out["tables"] = {t.props.get("row-key"): _panel_of(t) for t in find(ui.table)}
+        out["disclosures"] = {e.props["label"]: e.value for e in find(ui.expansion) if _panel_of(e) == "data"}
 
     out = _render(monkeypatch, board=_board([_entry()]), after=grab)
-    for heading in ("The two data files", "How the files are generated", "Sources and filters", "Time windows", "Rules", "Evaluation criteria"):
+    for heading in ("Model input", "Scoring reference", "Columns in each file", "Sources and filters",
+                    "Time windows", "Rules", "Evaluation criteria"):
         assert heading in out["labels"]
+    assert out["disclosures"] == dict.fromkeys(
+        ["Generation rules and merge details", "File checksums", "Reproduce both files"], False
+    )
     assert out["tables"]["metric"] == "leaderboard" and "property" not in out["tables"]      # not on the Data tab        # no fact tables
     assert not any(t in out["labels"] for t in ("Ranking", "Which runs are accepted", "Metrics"))
 
 
 def test_data_tab_describes_layout_sources_and_steps_of_a_benchmark_with_covariates(monkeypatch):
+    """Preserve pinned file links, schema and generation details for covariates.
+
+    Args:
+        monkeypatch: Fixture that replaces storage and catalog calls.
+    """
     manifest = {"repo": "benchmarks", "branch": "main", "commit": "ee" * 32, "qid": "Q1791000000001",
                 "sources": [{"role": "target", "qid": "Q1", "component": "d.parquet"},
                             {"role": "wetter", "qid": "Q2", "component": "w.parquet"}],
@@ -357,28 +380,36 @@ def test_data_tab_describes_layout_sources_and_steps_of_a_benchmark_with_covaria
     row = {**ROW, "covariates": json.dumps(cov), "materialized": json.dumps(manifest), "history_end": date(2021, 12, 29)}
 
     def grab(out, client, find, drain):
-        out["links"] = [(e.text, e.props.get("href")) for e in find(ui.link)]
+        """Collect Data links and table contents.
+
+        Args:
+            out: Mutable harness result.
+            client: Rendered NiceGUI client.
+            find: Helper returning elements by type.
+            drain: Helper running deferred callbacks.
+        """
+        out["links"] = [(e.props.get("aria-label", e.text), e.props.get("href")) for e in find(ui.link)]
         out["tables"] = [(t.props.get("row-key"), t.rows) for t in find(ui.table) if _panel_of(t) == "data"]
 
     out = _render(monkeypatch, row=row, board=_board([_entry()]), after=grab)
     urls = dict(out["links"])
-    assert urls["Data hub"] == "https://data.episerve.zib.de/dataset/q1791000000001"       # the catalog entry
-    assert urls["input.parquet"].endswith(f"/doip/retrieve/Q1791000000001/input.parquet?version={'ee' * 32}")
-    assert urls["reference.parquet"].endswith(f"/doip/retrieve/Q1791000000001/reference.parquet?version={'ee' * 32}")
+    assert urls["Data hub ↗"] == "https://data.episerve.zib.de/dataset/q1791000000001"
+    assert urls["Download input.parquet"].endswith(f"/doip/retrieve/Q1791000000001/input.parquet?version={'ee' * 32}")
+    assert urls["Download reference.parquet"].endswith(f"/doip/retrieve/Q1791000000001/reference.parquet?version={'ee' * 32}")
     layouts = [rows for key, rows in out["tables"] if key == "column"]
     assert layouts == [[{"column": "datum", "role": "date", "input": "yes", "reference": "yes"},
                         {"column": "v", "role": "target", "input": "yes", "reference": "yes"},
                         {"column": "wetter__temp", "role": "covariate (wetter)", "input": "yes", "reference": "-"}]]
-    sources = next(rows for key, rows in out["tables"] if key == "role")
-    assert [(r["role"], r["qid"], r["file"]) for r in sources] == [("target", "Q1", "d.parquet"), ("wetter", "Q2", "w.parquet")]
-    assert sources[1]["url"].endswith(f"/doip/retrieve/Q2/w.parquet?version={COMMIT}")
-    assert sources[1]["catalog"].endswith("/dataset/q2")
+    assert urls["d.parquet"].endswith(f"/doip/retrieve/Q1/d.parquet?version={COMMIT}")
+    assert urls["w.parquet"].endswith(f"/doip/retrieve/Q2/w.parquet?version={COMMIT}")
+    assert urls["Q2 ↗"].endswith("/dataset/q2")
+    assert "city = 'Berlin'" in out["labels"]
     assert "Merge" in out["labels"]
     merge = next(rows for key, rows in out["tables"] if key == "covariate")
     assert merge[0]["columns"] == ["wetter__temp"] and "combined by mean" in merge[0]["rule"]
     windows = next(rows for key, rows in out["tables"] if key == "file")
     assert [w["file"] for w in windows] == ["input.parquet", "reference.parquet"]
-    assert "120 rows, 2021-01-06 → 2021-12-29" in " ".join(out["labels"])
+    assert "120 rows" in out["labels"] and "06 Jan 2021 – 29 Dec 2021" in out["labels"]
     assert "metric" not in dict(out["tables"])                                     # they are on the Leaderboard tab
 
 
@@ -408,18 +439,33 @@ def test_the_query_picks_the_tab_and_former_names_map_to_the_new_ones(monkeypatc
     assert out["find"](ui.tabs)[0].value == expected
 
 
-def test_overview_has_the_general_facts_in_a_table_but_no_how_to_run(monkeypatch):
+def test_overview_has_the_general_facts_and_forecast_window_but_no_how_to_run(monkeypatch):
+    """Show filters separately and distinguish calendar days from sample counts.
+
+    Args:
+        monkeypatch: Fixture that replaces storage and catalog calls.
+    """
     row = {**ROW, "description": "Weekly wastewater viral load.", "entry_count": 4}
 
     def grab(out, client, find, drain):
+        """Collect the overview content and locate technical controls.
+
+        Args:
+            out: Mutable harness result.
+            client: Rendered NiceGUI client.
+            find: Helper returning elements by type.
+            drain: Helper running deferred callbacks.
+        """
         out["code"] = [_panel_of(e) for e in find(ui.code)]
         out["buttons"] = [(b.props.get("label"), _panel_of(b)) for b in find(ui.button)]
-        out["facts"] = next(t for t in find(ui.table) if t.props.get("row-key") == "caption")
+        out["overview"] = [e.text for e in find(ui.label) if _panel_of(e) == "overview"]
+        out["links"] = [(e.text, e.props.get("href")) for e in find(ui.link) if _panel_of(e) == "overview"]
 
     out = _render(monkeypatch, row=row, board=_board([_entry()]), after=grab)
     assert "Weekly wastewater viral load." in out["labels"]
-    assert [(r["caption"], r["value"]) for r in out["facts"].rows] == [
-        ("Series", "v · region = DE"), ("Forecast horizon", "5 steps"), ("Runs", "4")]
+    assert {"Target series", "v", "region = DE", "Forecast horizon", "5 steps", "Runs", "4",
+            "Model input · 358 days", "Scoring reference · 31 days"}.issubset(out["overview"])
+    assert ("Explore the data →", "/ui/benchmarks/3?tab=data") in out["links"]
     assert "overview" not in out["code"]
     assert [b for b, panel in out["buttons"] if panel == "overview" and b] == []
 
