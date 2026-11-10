@@ -78,6 +78,48 @@ def columns_text(used: list[str] | None, all_columns: list[str]) -> str:
     return ", ".join(used) if used else "none"
 
 
+def model_label(name: str) -> str:
+    """Shorten the catalog's generic forecast model prefix for display.
+
+    Args:
+        name: Full model identifier.
+
+    Returns:
+        Display name, with the original identifier as a fallback.
+    """
+    return name.removeprefix("model__prediction__generic__") or name
+
+
+def comparison_rows(board: Leaderboard, entries: list[Entry]) -> list[dict]:
+    """Build compact comparison rows while retaining exact input names for tooltips.
+
+    Args:
+        board: Benchmark and its input column schema.
+        entries: Ranked runs visible in the comparison table.
+
+    Returns:
+        Display rows with abbreviated model and input column labels.
+    """
+    rows = table_rows(board, entries)
+    date_and_target = {board.benchmark.date_column, board.benchmark.target_column}
+    for row, entry in zip(rows, entries, strict=True):
+        used = entry.used_columns
+        if used is None:
+            label, names = "Not recorded", ""
+        elif not used:
+            label, names = "None", ""
+        else:
+            names = ", ".join(used)
+            if board.input_columns and set(used) == set(board.input_columns):
+                label = f"All {len(used)} columns"
+            elif len(used) == 2 and set(used) == date_and_target:
+                label = "Date + target"
+            else:
+                label = f"{len(used)} column{'s' if len(used) != 1 else ''}"
+        row.update(model_label=model_label(entry.model_name), input_label=label, input_names=names)
+    return rows
+
+
 def table_rows(board: Leaderboard, entries: list[Entry] | None = None) -> list[dict]:
     """One display row per entry (default: all of the board's), with the best value of each column marked.
 
@@ -177,11 +219,17 @@ def _json(values: list) -> str:
 
 
 def summary(board: Leaderboard) -> str:
-    """The best entry and the ranking; what the benchmark scores is on the Data tab."""
-    if not board.entries:
-        return "No scorable runs for this task."
-    text = f"Best entry: {board.entries[0].model_name}, ranked by {LABELS[board.rank_by]}."
+    """Summarize the number of runs, ranking metric, and data version differences.
+
+    Args:
+        board: Ranked runs for the benchmark.
+
+    Returns:
+        Short summary of the complete leaderboard.
+    """
+    count = len(board.entries)
+    text = f"{count} {'run' if count == 1 else 'runs'} · Ranked by {LABELS[board.rank_by]}"
     commits = {e.truth_commit for e in board.entries if e.truth_commit}
     if len(commits) > 1:
-        text += f" Entries were scored against {len(commits)} different data versions."
+        text += f". Entries were scored against {len(commits)} different data versions."
     return text

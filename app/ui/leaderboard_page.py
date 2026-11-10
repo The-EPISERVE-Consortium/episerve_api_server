@@ -2,6 +2,7 @@
 
 import html
 import logging
+from urllib.parse import quote
 
 from nicegui import run, ui
 
@@ -13,7 +14,8 @@ from app.leaderboard.about import COLUMN_HELP, METRIC_DOCS
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
 from app.leaderboard.present import (
-    LABELS, chart_option, columns_text, filter_entries, history_text, history_window, params_text, point_rows, summary, table_rows,
+    LABELS, chart_option, columns_text, comparison_rows, filter_entries, history_text, history_window, model_label,
+    params_text, point_rows, summary, table_rows,
 )
 from app.ui.components.api_box import api_box
 from app.ui.components.messages import error_label
@@ -26,6 +28,7 @@ _LOGIN_EXPIRED = "Your login has expired; please log in again."
 _ALL_MODELS = "All models"
 _DEFAULT_RANK_BY = "mae"
 _TOP_N = 3  # runs shown while "Show all runs" is off
+_BEST_LABELS = {"mae": "Lowest MAE", "rmse": "Lowest RMSE", "coverage": "Closest to 80%", "interval_score": "Lowest interval score"}
 # Metric cells show formatted strings; sort on the raw numbers, missing values last when ascending.
 _RAW_SORT = (
     "(a, b, rowA, rowB) => { const x = rowA.raw.METRIC, y = rowB.raw.METRIC;"
@@ -48,38 +51,67 @@ _MODEL_CELL = (
 )
 
 
-def _run_cell(benchmark_id: int) -> str:
-    """Run QID as a link to the run page; the click is stopped so the row's own handler does not open it twice."""
-    return (
-        "<q-td :props='props'><a :href=\"'/ui/benchmarks/" + str(benchmark_id) + "/runs/' + props.row.run_qid\""
-        " target='_blank' @click.stop class='text-blue-700'>{{ props.row.run_qid }}</a></q-td>"
-    )
+def _run_cells(table: ui.table, benchmark_id: int) -> None:
+    """Show model and run together and provide a direct link to each run.
+
+    Args:
+        table: Ranked runs table receiving the custom cells.
+        benchmark_id: Benchmark that owns the run detail pages.
+    """
+    link = (f" :href=\"'/ui/benchmarks/{benchmark_id}/runs/' + encodeURIComponent(props.row.run_qid)\""
+            " target='_blank' rel='noopener' @click.stop")
+    table.add_slot("body-cell-model", (
+        "<q-td :props='props' class='epi-leaderboard-model'>"
+        "<div :title='props.row.model' class='font-semibold'>{{ props.row.model_label }}"
+        "<q-badge v-if='props.row.baseline' color='grey-7' class='q-ml-sm'>baseline</q-badge></div>"
+        f"<a{link}>{{{{ props.row.run_qid }}}}</a></q-td>"
+    ))
+    table.add_slot("body-cell-details", (
+        f"<q-td :props='props'><a{link} :aria-label=\"'View run ' + props.row.run_qid\">View run ↗</a></q-td>"
+    ))
+    table.add_slot("body-cell-used", (
+        "<q-td :props='props' :title='props.row.input_names'>{{ props.row.input_label }}</q-td>"
+    ))
 
 
 def _help_headers(table, columns: list[dict]) -> None:
-    """A tooltip with the column's explanation when the mouse is over its title (sorting keeps working)."""
+    """Add metric guidance and tooltips to sortable column headers.
+
+    Args:
+        table: Table receiving the header slots.
+        columns: Columns that may have definitions in COLUMN_HELP.
+    """
     for column in columns:
         text = COLUMN_HELP.get(column["name"])
         if text:
+            target = "<div class='epi-leaderboard-metric-note'>Target: 80%</div>" if column["name"] == "coverage" else ""
             table.add_slot(f"header-cell-{column['name']}", (
-                "<q-th :props='props'>{{ props.col.label }}"
+                f"<q-th :props='props'>{{{{ props.col.label }}}}{target}"
                 f"<q-tooltip max-width='22rem' anchor='bottom middle' self='top middle'>{html.escape(text)}</q-tooltip>"
                 "</q-th>"))
 
 
 _OPEN_RUN_JS = (
-    "(evt, row) => window.open('/ui/benchmarks/BENCHMARK/runs/' + encodeURIComponent(row.run_qid), '_blank')"
+    "(evt, row) => window.open('/ui/benchmarks/BENCHMARK/runs/' + encodeURIComponent(row.run_qid), '_blank', 'noopener')"
 )
 
 
 def _entry_detail(entry, benchmark_id: int) -> None:
-    """The detail of one scored run: window, pins, parameters, chart and per-date rows (+ Remove when logged in)."""
+    """Render the run metadata, chart, and per-date forecast results.
+
+    Args:
+        entry: Stored scored run to display.
+        benchmark_id: Benchmark the run was scored against.
+    """
     ui.label(f"{entry.model_name} — run {entry.run_qid}").classes("text-2xl font-semibold")
     ui.link(
         "Show run in ModelHub",
         f"https://data.episerve.zib.de/dataset/{entry.run_qid.lower()}", new_tab=True,
     ).classes("text-sm")
+    ui.label(f"Run date: {entry.run_timestamp or 'Not recorded'}").classes("text-sm text-gray-600")
     ui.label(f"History window: {history_window(entry)}").classes("text-sm text-gray-600")
+    used = "Not recorded" if entry.used_columns is None else ", ".join(entry.used_columns) or "None"
+    ui.label(f"Input columns: {used}").classes("text-sm text-gray-600 break-words")
     ui.label(
         f"Data: lakeFS commit {entry.truth_commit} · CKAN last modified "
         f"{entry.truth_as_of or 'unknown'} · scored {entry.scored_at}"
@@ -135,14 +167,17 @@ def _edit_description_dialog(row: dict) -> None:
 
 
 def _criteria_section() -> None:
-    ui.label("Evaluation criteria").classes("text-xl font-semibold text-gray-900 mt-4")
-    ui.table(
-        columns=[{"name": "metric", "label": "Metric", "field": "metric", "align": "left"},
-                 {"name": "meaning", "label": "Definition", "field": "meaning", "align": "left",
-                  "style": "white-space: normal"},
-                 {"name": "better", "label": "Better", "field": "better", "align": "left"}],
-        rows=[{"metric": n, "meaning": m, "better": b} for n, m, b in METRIC_DOCS], row_key="metric",
-    ).props("dense flat").classes("w-full max-w-5xl")
+    """Keep the metric definitions available in a collapsed disclosure."""
+    with ui.expansion("Evaluation criteria", caption="Metric definitions and scoring rules").props(
+        "switch-toggle-side expand-icon=chevron_right expanded-icon=expand_more"
+    ).classes("epi-benchmark-disclosure epi-leaderboard-criteria"):
+        ui.table(
+            columns=[{"name": "metric", "label": "Metric", "field": "metric", "align": "left"},
+                     {"name": "meaning", "label": "Definition", "field": "meaning", "align": "left",
+                      "style": "white-space: normal; min-width: 12rem"},
+                     {"name": "better", "label": "Better", "field": "better", "align": "left"}],
+            rows=[{"metric": n, "meaning": m, "better": b} for n, m, b in METRIC_DOCS], row_key="metric",
+        ).props("dense flat").classes("epi-benchmark-table w-full")
 
 
 def register_leaderboard_page() -> None:
@@ -161,7 +196,7 @@ def register_leaderboard_page() -> None:
         """One scored run of a benchmark (opened in its own window from the leaderboard)."""
         header("/ui/benchmarks", api=f"benchmarks/{benchmark_id}/leaderboard?all_runs=true")
         with ui.column().classes("epi-page-padding w-full max-w-5xl gap-3"):
-            ui.link("← Back to the leaderboard", f"/ui/benchmarks/{benchmark_id}").classes("text-sm")
+            ui.link("← Back to the leaderboard", f"/ui/benchmarks/{benchmark_id}?tab=leaderboard").classes("text-sm")
             try:
                 board = actions.read_leaderboard(benchmark_id, "interval_score", False)
             except actions.NotFound:
@@ -227,26 +262,16 @@ def register_leaderboard_page() -> None:
                         benchmark_details.generated_data(row, manifest)
                     else:
                         ui.label("No generated files are recorded for this benchmark.").classes("epi-benchmark-body")
-                with ui.tab_panel("leaderboard").classes("gap-3"):
-                    with ui.row().classes("items-end gap-3"):
-                        def set_rank(e):
-                            state["rank_by"] = e.value
-                            board_view.refresh()
-
-                        def set_all(e):
-                            state["all_runs"] = bool(e.value)
-                            board_view.refresh()
-
-                        ui.select(LABELS, label="Rank by", value=state["rank_by"], on_change=set_rank).props("outlined dense")
-                        ui.switch("Show all runs", value=state["all_runs"], on_change=set_all)
-                    view = ui.column().classes("w-full gap-3")
-                    candidates_box = ui.column().classes("w-full gap-2 mt-6")
+                with ui.tab_panel("leaderboard").classes("epi-benchmark-panel epi-leaderboard-panel"):
+                    view = ui.column().classes("epi-leaderboard-view")
+                    candidates_box = ui.column().classes("w-full gap-2")
                     _criteria_section()
 
         @ui.refreshable
         def board_view():
+            """Render the ranking summary, filters, and comparison table."""
             try:
-                board = actions.read_leaderboard(selected, state["rank_by"], False)  # every run; the top ones are cut below
+                board = actions.read_leaderboard(selected, state["rank_by"], False)
             except actions.NotFound:
                 error_label("Benchmark not found.")
                 return
@@ -254,77 +279,130 @@ def register_leaderboard_page() -> None:
                 logger.exception("could not load the leaderboard")
                 error_label("Could not load the leaderboard.")
                 return
-            ui.label(summary(board)).classes("text-sm text-gray-700")
-            if not board.entries:
-                ui.label("No runs on this leaderboard yet." + (" Add one from the candidates below." if logged_in else " Log in to add runs.")).classes(
-                    "text-sm text-gray-500")
-                return
+
+            metric = board.rank_by
+            with ui.row().classes("epi-leaderboard-heading"):
+                with ui.column().classes("gap-0"):
+                    ui.label("Ranked runs").classes("epi-benchmark-heading").props("role=heading aria-level=2")
+                    ui.label(summary(board)).classes("epi-benchmark-body")
+                if board.entries and board.entries[0].metrics.get(metric) is not None:
+                    leader = table_rows(board, board.entries[:1])[0]
+                    with ui.row().classes("epi-leaderboard-best"):
+                        ui.label(_BEST_LABELS[metric]).classes("font-semibold")
+                        ui.label(leader[metric]).classes("epi-leaderboard-best-value")
+                        qid = leader["run_qid"]
+                        ui.link(f"{qid} ↗", f"/ui/benchmarks/{selected}/runs/{quote(qid, safe='')}", new_tab=True)
+
             columns = [
                 {"name": "rank", "label": "#", "field": "rank", "align": "left", "sortable": True},
-                {"name": "model", "label": "Model", "field": "model", "align": "left", "sortable": True,
-                 "style": "white-space: normal; max-width: 15rem"},
-                {"name": "run", "label": "Run", "field": "run_qid", "align": "left", "sortable": True},
-                {"name": "date", "label": "Date", "field": "date", "align": "left", "sortable": True,
-                 "style": "white-space: normal; max-width: 6rem"},
-                {"name": "params", "label": "Parameters", "field": "params", "align": "left",
-                 "style": "white-space: normal; max-width: 14rem"},
-                {"name": "used", "label": "Used columns", "field": "used", "align": "left",
-                 "style": "white-space: normal; max-width: 14rem"},
-                {"name": "history", "label": "History (A→B)", "field": "history", "align": "left", "sortable": True,
-                 "style": "white-space: normal; min-width: 8rem"},
-                *[{"name": m, "label": LABELS[m], "field": m, "align": "right", "sortable": True,
-                   ":sort": _RAW_SORT.replace("METRIC", m)} for m in LABELS],
+                {"name": "model", "label": "Model / run", "field": "model", "align": "left", "sortable": True},
+                {"name": "used", "label": "Input columns", "field": "input_label", "align": "left"},
+                *[
+                    {"name": m, "label": ("Interval score" if m == "interval_score" else LABELS[m])
+                     + (" ↓" if m == metric and m != "coverage" else ""),
+                     "field": m, "align": "right", "sortable": True, ":sort": _RAW_SORT.replace("METRIC", m),
+                     "headerClasses": "epi-leaderboard-ranked" if m == metric else ""}
+                    for m in LABELS
+                ],
                 {"name": "scored", "label": "Scored", "field": "scored", "align": "right"},
+                {"name": "details", "label": "Details", "field": "run_qid", "align": "left"},
             ]
-            models = sorted({e.model_name for e in board.entries})
-            flt = {"model": state["model"], "min_days": state["min_days"], "text": state["text"]}
+            models = sorted({entry.model_name for entry in board.entries})
+            model_options = {_ALL_MODELS: _ALL_MODELS, **{name: model_label(name) for name in models}}
 
             @ui.refreshable
             def board_table():
-                entries = filter_entries(board.entries, flt["model"], flt["min_days"], flt["text"])
-                if flt["model"] or flt["min_days"] or flt["text"].strip():
-                    ui.label(f"Showing {len(entries)} of {len(board.entries)} entries").classes("text-xs text-gray-500")
+                """Filter the ranked runs and render the visible comparison rows."""
+                if not board.entries:
+                    ui.label("No runs on this leaderboard yet." + (
+                        " Add one from the candidates below." if logged_in else " Log in to add runs."
+                    )).classes("epi-benchmark-body")
+                    return
+                entries = filter_entries(board.entries, state["model"], state["min_days"], state["text"])
+                if not entries:
+                    ui.label("No runs match these filters.").classes("epi-benchmark-body")
+                    return
+                if state["model"] or state["min_days"] or state["text"].strip():
+                    ui.label(f"Showing {len(entries)} of {len(board.entries)} entries").classes("epi-benchmark-note")
                 if not state["all_runs"] and len(entries) > _TOP_N:
-                    ui.label(f"The top {_TOP_N} of {len(entries)} runs. Turn on \"Show all runs\" to see all of them."
-                             ).classes("text-xs text-gray-500")
+                    ui.label(f'The top {_TOP_N} of {len(entries)} runs. Turn on "Show all runs" to see all of them.'
+                             ).classes("epi-benchmark-note")
                     entries = entries[:_TOP_N]
-                table = ui.table(columns=columns, rows=table_rows(board, entries), row_key="run_qid",
-                                 pagination={"rowsPerPage": 25}).classes("w-full")
+                with ui.column().classes("w-full min-w-0 gap-1"):
+                    ui.label("Scroll to compare scores").classes("epi-benchmark-note epi-leaderboard-scroll-hint")
+                    table = ui.table(columns=columns, rows=comparison_rows(board, entries), row_key="run_qid",
+                                     pagination={"rowsPerPage": 25}).classes(
+                        "epi-benchmark-table epi-leaderboard-table w-full"
+                    ).props('flat bordered :rows-per-page-options="[10, 25, 50, 0]"')
                 _help_headers(table, columns)
-                table.props(':rows-per-page-options="[10, 25, 50, 0]"')   # bound: Quasar needs an array, not a string
-                table.add_slot("body-cell-model", _MODEL_CELL)
-                table.add_slot("body-cell-run", _run_cell(selected))
-                for m in LABELS:
-                    table.add_slot(f"body-cell-{m}", (
-                        "<q-td :props='props' :class=\"props.row.best." + m + " ? 'text-green-700 font-bold' : ''\">"
-                        "{{ props.value }}</q-td>"
-                    ))
-                # The click is handled in the browser so window.open runs inside the user's click (no popup
-                # blocking); every entry has its own page, which can also be linked or opened in a new tab.
+                _run_cells(table, selected)
+                table.add_slot(f"body-cell-{metric}", (
+                    "<q-td :props='props' class='epi-leaderboard-ranked' "
+                    f''':class="props.row.best.{metric} ? 'epi-leaderboard-metric-best' : ''">'''
+                    "{{ props.value }}</q-td>"
+                ))
                 table.on("rowClick", js_handler=_OPEN_RUN_JS.replace("BENCHMARK", str(selected)))
 
+            def set_rank(e):
+                """Reload the runs using the selected ranking metric.
+
+                Args:
+                    e: Value change carrying the metric key.
+                """
+                state["rank_by"] = e.value
+                board_view.refresh()
+
+            def set_all(e):
+                """Toggle the limit on the number of ranked runs shown.
+
+                Args:
+                    e: Value change carrying the switch state.
+                """
+                state["all_runs"] = bool(e.value)
+                board_table.refresh()
+
             def set_model(e):
-                flt["model"] = state["model"] = e.value if e.value != _ALL_MODELS else None
+                """Apply the model filter using the full catalog identifier.
+
+                Args:
+                    e: Value change carrying the model identifier.
+                """
+                state["model"] = e.value if e.value != _ALL_MODELS else None
                 board_table.refresh()
 
             def set_min_days(e):
+                """Filter by the minimum number of calendar days of input history.
+
+                Args:
+                    e: Value change carrying the requested minimum.
+                """
                 try:
-                    flt["min_days"] = state["min_days"] = max(0, int(e.value or 0))
+                    state["min_days"] = max(0, int(e.value or 0))
                 except (TypeError, ValueError):
-                    flt["min_days"] = state["min_days"] = 0
+                    state["min_days"] = 0
                 board_table.refresh()
 
             def set_text(e):
-                flt["text"] = state["text"] = e.value or ""
+                """Search the model names, run identifiers, and parameters.
+
+                Args:
+                    e: Value change carrying the search query.
+                """
+                state["text"] = e.value or ""
                 board_table.refresh()
 
-            with ui.row().classes("items-end gap-3"):
-                ui.input("Search", value=flt["text"], placeholder="model, run or parameter",
-                         on_change=set_text).props("outlined dense clearable").classes("min-w-[16rem]")
-                ui.select([_ALL_MODELS, *models], label="Model", value=flt["model"] or _ALL_MODELS,
-                          on_change=set_model).props("outlined dense").classes("min-w-[14rem]")
-                ui.number("Min. history (days)", value=flt["min_days"], min=0, precision=0,
+            with ui.row().classes("epi-leaderboard-filters"):
+                ui.select(LABELS, label="Rank by", value=state["rank_by"], on_change=set_rank).props("outlined dense")
+                search = ui.input(value=state["text"], placeholder="Search runs", on_change=set_text).props(
+                    "outlined dense clearable aria-label='Search runs'"
+                )
+                with search.add_slot("prepend"):
+                    ui.icon("search")
+                ui.select(model_options, label="Model", value=state["model"] or _ALL_MODELS,
+                          on_change=set_model).props("outlined dense")
+                ui.number("Min. history (days)", value=state["min_days"], min=0, precision=0,
                           on_change=set_min_days).props("outlined dense")
+                ui.switch("Show all runs", value=state["all_runs"], on_change=set_all)
             board_table()
 
         @ui.refreshable

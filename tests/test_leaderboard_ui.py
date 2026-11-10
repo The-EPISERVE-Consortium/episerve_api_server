@@ -78,12 +78,14 @@ _click = click
 
 
 def test_page_renders_the_requested_benchmark_from_the_database_only(monkeypatch):
+    """Render the comparison summary and rankings from stored entries."""
     log = []
     out = _render(monkeypatch, board=_board([_entry(), _entry("Q11", "other", mae=2.0)]), rank_log=log)
     assert out["status"] == 200
     assert [r["model"] for r in out["table"].rows] == ["timesfm", "other"]
     assert log[0] == (3, "mae", False)      # ranked by MAE, every run is read; the top ones are cut in the page
-    assert "Best entry: timesfm, ranked by interval score." in out["labels"]
+    assert "2 runs · Ranked by interval score" in out["labels"]
+    assert "Lowest interval score" in out["labels"]
 
 
 def test_leaderboard_read_failure_shows_generic_text_and_logs(monkeypatch, caplog):
@@ -116,6 +118,7 @@ def _detail(monkeypatch, qid="Q10", **kw):
 
 
 def test_run_page_shows_link_window_params_pins_and_per_date_rows(monkeypatch):
+    """Keep run metadata and results accessible through the detail page."""
     def grab(out, client, find, drain):
         out["links"] = [(e.props.get("href"), e.props.get("target")) for e in find(ui.link)]
         out["tables"] = find(ui.table)
@@ -124,7 +127,7 @@ def test_run_page_shows_link_window_params_pins_and_per_date_rows(monkeypatch):
     out = _detail(monkeypatch, after=grab)
     assert out["status"] == 200
     assert ("https://data.episerve.zib.de/dataset/q10", "_blank") in out["links"]
-    assert ("/ui/benchmarks/3", "_self") in out["links"]
+    assert ("/ui/benchmarks/3?tab=leaderboard", "_self") in out["links"]
     labels = out["labels"]
     assert any(t.startswith("History window:") and "→ 2021-12-31" in t for t in labels)
     assert "history_length: 91" in labels
@@ -352,7 +355,7 @@ def test_data_tab_has_the_files_the_sources_and_the_steps_and_the_criteria_close
 
     out = _render(monkeypatch, board=_board([_entry()]), after=grab)
     for heading in ("Model input", "Scoring reference", "Columns in each file", "Sources and filters",
-                    "Time windows", "Rules", "Evaluation criteria"):
+                    "Time windows", "Rules"):
         assert heading in out["labels"]
     assert out["disclosures"] == dict.fromkeys(
         ["Generation rules and merge details", "File checksums", "Reproduce both files"], False
@@ -513,25 +516,29 @@ def test_the_run_page_shows_the_api_box_too(monkeypatch):
 
 
 def test_the_leaderboard_tab_has_no_start_button_and_no_command_line_block(monkeypatch):
+    """Show metric definitions on demand without exposing workflow controls."""
     def grab(out, client, find, drain):
+        """Collect actions, code blocks, and disclosure states in the Leaderboard tab."""
         out["buttons"] = [b.props.get("label") for b in find(ui.button) if _panel_of(b) == "leaderboard"]
         out["code"] = [e.content for e in find(ui.code) if _panel_of(e) == "leaderboard"]
-        out["expansions"] = [e.props.get("label") for e in find(ui.expansion) if _panel_of(e) == "leaderboard"]
+        out["expansions"] = [(e.props.get("label"), e.value) for e in find(ui.expansion) if _panel_of(e) == "leaderboard"]
 
     out = _render(monkeypatch, board=_board([_entry()]), logged_in=True, after=grab)
     assert "Start a run from this benchmark" not in out["buttons"]
-    assert out["code"] == [] and out["expansions"] == []
+    assert out["code"] == [] and out["expansions"] == [("Evaluation criteria", False)]
     assert "Add run" not in out["buttons"]                   # runs are added from the candidates table below
 
 
 def test_column_titles_of_the_leaderboard_have_a_tooltip_with_the_explanation(monkeypatch):
+    """Retain metric guidance in the compact comparison table."""
     def grab(out, client, find, drain):
         table = next(t for t in find(ui.table) if t.props.get("row-key") == "run_qid")
         out["slots"] = {name: slot.template for name, slot in table.slots.items() if name.startswith("header-cell-")}
 
     out = _render(monkeypatch, board=_board([_entry()]), after=grab)
     assert {"header-cell-mae", "header-cell-rmse", "header-cell-coverage", "header-cell-interval_score",
-            "header-cell-history", "header-cell-scored"} <= set(out["slots"])
+            "header-cell-used", "header-cell-scored"} <= set(out["slots"])
+    assert "Target: 80%" in out["slots"]["header-cell-coverage"]
     assert "<q-tooltip" in out["slots"]["header-cell-mae"] and "Mean absolute error" in out["slots"]["header-cell-mae"]
     assert "{{ props.col.label }}" in out["slots"]["header-cell-mae"]       # the title itself stays
 

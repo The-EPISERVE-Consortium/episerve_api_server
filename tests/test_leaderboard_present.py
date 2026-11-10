@@ -34,9 +34,10 @@ def test_rows_format_values_and_mark_best_per_column():
     assert rows[0]["params"] == "history_length=91"
 
 
-def test_summary_names_the_best_entry_and_the_ranking_only():
+def test_summary_names_the_run_count_and_ranking_metric():
+    """State how many runs were ranked and which metric was used."""
     text = summary(_board([_entry("Q1", "a", mae=1.0)]))
-    assert text == "Best entry: a, ranked by MAE."
+    assert text == "1 run · Ranked by MAE"
 
 
 def _hist(qid, name, start, end=date(2021, 12, 31), **metrics):
