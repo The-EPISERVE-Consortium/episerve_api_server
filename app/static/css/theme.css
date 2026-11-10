@@ -78,6 +78,7 @@ body:has(.epi-header) .q-tab__indicator { color: var(--epi-accent) !important; }
   .epi-header { padding: 12px 16px; }
   body:has(.epi-header) .nicegui-content { width: calc(100% - 24px); }
   .epi-api-row { padding: 16px 16px 0; }
+  .epi-search { flex: 1 1 100%; }
   .epi-stepper { row-gap: 12px; }
   .epi-stepper > .h-px { display: none; }
   .epi-stepper > .nicegui-row { flex: 1 1 140px; }

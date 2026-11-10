@@ -5,6 +5,7 @@ import duckdb
 from nicegui import ui
 from app.clients import ckan as ckan_client
 from app.config import settings
+from app.model_config import config_problems
 from app.sql_validation import validate_transformation_sql
 from app.ui.layout import header
 from app.ui.components.messages import error_label
@@ -294,11 +295,17 @@ def register_trigger_page():
 
             def do_submit():
                 """Validate the reviewed request and submit it to the model runner."""
+                if not require_login("runs"):
+                    return
                 m = model_table.selected[0]
                 try:
                     config = json.loads(config_input.value)
                 except json.JSONDecodeError as e:
                     ui.notify(f"Invalid JSON: {e}", type="negative", position="top")
+                    return
+                problems = config_problems(config, m["parameters"]) if m.get("parameters") else []
+                if problems:
+                    ui.notify("Invalid model config: " + "; ".join(problems), type="negative", position="top")
                     return
                 filenames = [inp.value.strip() for _, inp, _sql in filename_inputs]
                 if len(filenames) != len(set(filenames)):

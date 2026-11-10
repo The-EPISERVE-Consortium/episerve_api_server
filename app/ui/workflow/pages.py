@@ -558,6 +558,8 @@ def register_workflow_pages():
 
         def do_submit():
             """Validate the reviewed request and submit it to the model runner."""
+            if not require_login("runs"):
+                return
             filenames = [inp.value.strip() for _, inp, _ in filename_refs]
             if len(filenames) != len(set(filenames)):
                 ui.notify("All target filenames must be unique", type="negative", position="top")

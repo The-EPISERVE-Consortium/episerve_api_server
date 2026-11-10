@@ -4,7 +4,7 @@ import asyncio
 import re
 
 import httpx
-from nicegui import Client, background_tasks, events, ui
+from nicegui import Client, background_tasks, events, helpers, ui
 
 from app.main import app
 from app.clients import ckan as ckan_client
@@ -69,9 +69,17 @@ def render(monkeypatch, module, path, *, logged_in=False, setup=None, after=None
 
 
 async def click(button, client, args=None):
+    """Invoke click handlers using NiceGUI's callback argument convention.
+
+    Args:
+        button: Button whose registered click callbacks should run.
+        client: NiceGUI client receiving the event.
+        args: Optional browser event payload.
+    """
     for listener in list(button._event_listeners.values()):   # a handler may remove the button itself
         if listener.type == "click":
-            res = listener.handler(events.GenericEventArguments(sender=button, client=client, args=args or {}))
+            arguments = events.GenericEventArguments(sender=button, client=client, args=args or {})
+            res = listener.handler(arguments) if helpers.expects_arguments(listener.handler) else listener.handler()
             if asyncio.iscoroutine(res):
                 await res
 
