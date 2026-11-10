@@ -557,15 +557,35 @@ def test_without_show_all_runs_only_the_top_three_are_listed_and_the_page_says_s
     assert any(t.startswith("The top 3 of 5 runs") for t in out["labels"])
 
 
-def test_show_all_runs_lists_every_run(monkeypatch):
+def test_show_all_runs_keeps_the_selected_page_size(monkeypatch):
+    """Apply the selected page size when switching from the top three to all runs.
+
+    Args:
+        monkeypatch: Fixture replacing database reads.
+    """
     async def scenario(out, client, find, drain):
+        """Select a page size, toggle the run limit, and inspect the rebuilt table.
+
+        Args:
+            out: Mutable harness result.
+            client: Rendered NiceGUI client.
+            find: Helper selecting elements by type.
+            drain: Helper running deferred callbacks.
+        """
+        initial = out["table"]
+        listener = next(event for event in initial._event_listeners.values() if event.type == "update:pagination")
+        listener.handler(events.GenericEventArguments(sender=initial, client=client,
+                                                       args={"page": 1, "rowsPerPage": 10}))
         next(sw for sw in find(ui.switch) if sw.text == "Show all runs").value = True
         await drain()
         table = next(t for t in find(ui.table) if t.props.get("row-key") == "run_qid")
         out["qids"] = [r["run_qid"] for r in table.rows]
+        out["pagination"] = table.pagination
         out["labels"] = _labels(find)
 
-    out = _render(monkeypatch, board=_five(), after=scenario)
-    assert out["qids"] == ["Q1", "Q2", "Q3", "Q4", "Q5"]
+    entries = [_entry(f"Q{i}", mae=float(i)) for i in range(1, 32)]
+    out = _render(monkeypatch, board=_board(entries), after=scenario)
+    assert out["qids"] == [entry.run_qid for entry in entries]
+    assert out["pagination"] == {"page": 1, "rowsPerPage": 10}
     assert not any(t.startswith("The top 3 of") for t in out["labels"])
 

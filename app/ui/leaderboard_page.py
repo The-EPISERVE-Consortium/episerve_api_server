@@ -28,6 +28,7 @@ _LOGIN_EXPIRED = "Your login has expired; please log in again."
 _ALL_MODELS = "All models"
 _DEFAULT_RANK_BY = "mae"
 _TOP_N = 3  # runs shown while "Show all runs" is off
+_PAGE_SIZES = (10, 25, 50, 0)  # Quasar uses zero for an unpaginated table
 _BEST_LABELS = {"mae": "Lowest MAE", "rmse": "Lowest RMSE", "coverage": "Closest to 80%", "interval_score": "Lowest interval score"}
 # Metric cells show formatted strings; sort on the raw numbers, missing values last when ascending.
 _RAW_SORT = (
@@ -237,7 +238,8 @@ def register_leaderboard_page() -> None:
                 ui.link("← All benchmarks", "/ui/benchmarks").classes("text-sm")
                 error_label("Benchmark not found.")
             return
-        state = {"rank_by": _DEFAULT_RANK_BY, "all_runs": False, "model": None, "min_days": 0, "text": ""}
+        state = {"rank_by": _DEFAULT_RANK_BY, "all_runs": False, "rows_per_page": 25,
+                 "model": None, "min_days": 0, "text": ""}
         tab = _FORMER_TABS.get(tab, tab)
         open_tab = tab if tab in dict(_TABS) else _DEFAULT_TAB
 
@@ -310,6 +312,16 @@ def register_leaderboard_page() -> None:
             models = sorted({entry.model_name for entry in board.entries})
             model_options = {_ALL_MODELS: _ALL_MODELS, **{name: model_label(name) for name in models}}
 
+            def save_page_size(e):
+                """Remember the page size when the table is rebuilt.
+
+                Args:
+                    e: Table pagination change carrying the selected page size.
+                """
+                size = e.value.get("rowsPerPage")
+                if size in _PAGE_SIZES:
+                    state["rows_per_page"] = size
+
             @ui.refreshable
             def board_table():
                 """Filter the ranked runs and render the visible comparison rows."""
@@ -325,15 +337,16 @@ def register_leaderboard_page() -> None:
                 if state["model"] or state["min_days"] or state["text"].strip():
                     ui.label(f"Showing {len(entries)} of {len(board.entries)} entries").classes("epi-benchmark-note")
                 if not state["all_runs"] and len(entries) > _TOP_N:
-                    ui.label(f'The top {_TOP_N} of {len(entries)} runs. Turn on "Show all runs" to see all of them.'
+                    ui.label(f'The top {_TOP_N} of {len(entries)} runs. Turn on "Show all runs" to browse all pages.'
                              ).classes("epi-benchmark-note")
                     entries = entries[:_TOP_N]
                 with ui.column().classes("w-full min-w-0 gap-1"):
                     ui.label("Scroll to compare scores").classes("epi-benchmark-note epi-leaderboard-scroll-hint")
                     table = ui.table(columns=columns, rows=comparison_rows(board, entries), row_key="run_qid",
-                                     pagination={"rowsPerPage": 25}).classes(
+                                     pagination={"page": 1, "rowsPerPage": state["rows_per_page"]},
+                                     on_pagination_change=save_page_size).classes(
                         "epi-benchmark-table epi-leaderboard-table w-full"
-                    ).props('flat bordered :rows-per-page-options="[10, 25, 50, 0]"')
+                    ).props(f'flat bordered :rows-per-page-options="{list(_PAGE_SIZES)}"')
                 _help_headers(table, columns)
                 _run_cells(table, selected)
                 table.add_slot(f"body-cell-{metric}", (
