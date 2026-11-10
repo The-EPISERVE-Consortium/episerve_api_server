@@ -71,7 +71,7 @@ def header(current: str = "", api: str | None = None, method: str = "GET") -> No
             # Avatar button + dropdown menu
             with ui.element("div").classes("relative"):
                 with ui.button(icon="account_circle").props("flat round aria-label=Account").classes(
-                    "epi-account-button text-gray-600 hover:text-blue-700"
+                    "text-gray-600 hover:text-blue-700"
                 ):
                     with ui.menu().classes("mt-1"):
                         ui.menu_item("User Details", on_click=_open_details_dialog)
