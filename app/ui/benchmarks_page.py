@@ -14,7 +14,8 @@ from app.leaderboard import actions as lboard_actions
 from app.leaderboard.about import description_text
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.present import LABELS
-from app.ui.pages import _error_label, _header
+from app.ui.components.messages import error_label
+from app.ui.layout import header
 
 logger = logging.getLogger(__name__)
 
@@ -413,7 +414,7 @@ def register_benchmarks_page() -> None:
 
     @ui.page("/ui/benchmarks")
     def benchmarks_page(request: Request):
-        _header("/ui/benchmarks", api="benchmarks")
+        header("/ui/benchmarks", api="benchmarks")
         logged_in = _is_logged_in()
         reload = ui.navigate.reload
 
@@ -444,8 +445,8 @@ def register_benchmarks_page() -> None:
             finals = bactions.list_final()
         except Exception:
             logger.exception("could not load the benchmarks")
-            with ui.column().classes("px-8 py-6"):
-                _error_label("Could not load benchmarks.")
+            with ui.column().classes("epi-page-padding"):
+                error_label("Could not load benchmarks.")
             return
         drafts, drafts_error = [], False
         if logged_in:
@@ -461,20 +462,20 @@ def register_benchmarks_page() -> None:
             logger.exception("could not load the best entries")
             best = {}
 
-        with ui.column().classes("px-8 py-6 w-full gap-4"):
+        with ui.column().classes("epi-page"):
             with ui.row().classes("w-full items-start justify-between"):
                 with ui.column().classes("gap-0"):
-                    ui.label("Benchmarks").classes("text-3xl font-bold text-gray-900")
+                    ui.label("Benchmarks").classes("epi-page-title")
                     ui.label(
                         "A benchmark fixes the series, the test window and the data version that forecasts "
                         "are scored against. Design it as a draft, check it against the data, then finalize it."
-                    ).classes("text-sm text-gray-500 mt-1")
+                    ).classes("epi-page-description")
                 if logged_in:
                     ui.button("New benchmark", on_click=lambda: guarded(lambda: _designer_dialog(None, reload)))
             if logged_in:
                 ui.label("Drafts").classes("text-xl font-semibold text-gray-900")
                 if drafts_error:
-                    _error_label("Could not load drafts.")
+                    error_label("Could not load drafts.")
                 elif not drafts:
                     ui.label("No drafts.").classes("text-sm text-gray-500")
                 for d in drafts:

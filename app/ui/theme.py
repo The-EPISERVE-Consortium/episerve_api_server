@@ -1,34 +1,39 @@
-"""The look of the UI pages: a beige page, the content in a white card with rounded corners, a blue accent.
+"""Design tokens and stylesheet loading for application and authentication pages."""
 
-``apply_theme()`` is called by the page header, so every page that has the top bar gets it; the login pages, which
-are full-bleed, do not.
-"""
+from pathlib import Path
 
 from nicegui import ui
 
-# One place for the colours. The beige is also the footer's.
 BEIGE = "#f2eee5"
 LINE = "#d4cfc5"
 ACCENT = "#0772a0"
 NAVY = "#1e3a5f"
 
-THEME_CSS = f"""
-:root {{ --epi-bg: {BEIGE}; --epi-line: {LINE}; --epi-accent: {ACCENT}; --epi-navy: {NAVY}; }}
-body, .q-layout, .q-page-container {{ background: var(--epi-bg); }}
-.q-page {{ padding: 24px 0 32px; min-height: 0 !important; }}
-.nicegui-content {{
-  background: #fff;
-  border-radius: 16px;
-  box-shadow: 0 1px 3px rgba(60, 50, 30, 0.08);
-  width: min(calc(100% - 48px), 1400px);
-  margin: 0 auto;
-  padding: 0 !important;
+_STYLES = Path(__file__).resolve().parent.parent / "static" / "css"
+TOKENS_CSS = f"""
+:root {{
+  --epi-bg: {BEIGE};
+  --epi-line: {LINE};
+  --epi-accent: {ACCENT};
+  --epi-navy: {NAVY};
+  --epi-surface: #fff;
+  --epi-text: #111827;
+  --epi-muted: #6b7280;
+  --epi-radius: 12px;
+  --epi-page-padding: 24px 32px;
 }}
-.q-tab--active {{ color: var(--epi-accent) !important; }}
-.q-tab__indicator {{ color: var(--epi-accent) !important; }}
 """
+THEME_CSS = TOKENS_CSS + (_STYLES / "theme.css").read_text()
+AUTH_CSS = TOKENS_CSS + (_STYLES / "auth.css").read_text()
 
 
 def apply_theme() -> None:
+    """Apply shared colors and application-scoped component styles."""
     ui.colors(primary=ACCENT)
     ui.add_css(THEME_CSS)
+
+
+def apply_auth_theme() -> None:
+    """Apply the independent full-screen authentication layout."""
+    ui.colors(primary=ACCENT)
+    ui.add_css(AUTH_CSS)

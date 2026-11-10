@@ -7,7 +7,7 @@ import httpx
 from nicegui import Client, background_tasks, events, ui
 
 from app.main import app
-from app.ui import pages
+from app.clients import ckan as ckan_client
 
 
 def render(monkeypatch, module, path, *, logged_in=False, setup=None, after=None, table_key=None):
@@ -21,8 +21,8 @@ def render(monkeypatch, module, path, *, logged_in=False, setup=None, after=None
     def external(*args, **kwargs):
         raise AssertionError("the page must not call CKAN, DOIP or lakeFS")
 
-    monkeypatch.setattr(pages.ckan_client, "list_processed_datasets", external)
-    monkeypatch.setattr(pages.ckan_client, "list_model_runs", external)
+    monkeypatch.setattr(ckan_client, "list_processed_datasets", external)
+    monkeypatch.setattr(ckan_client, "list_model_runs", external)
     monkeypatch.setattr(module, "_is_logged_in", lambda: logged_in)
     from tests.conftest import ADMIN
     monkeypatch.setattr(module, "_current_user", lambda: ADMIN if logged_in else None, raising=False)

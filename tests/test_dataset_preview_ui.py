@@ -11,7 +11,7 @@ from nicegui import Client, background_tasks, events, ui
 
 from app.dataset_preview import LoadedDataset
 from app.main import app
-from app.ui import pages
+from app.ui import datasets_page as pages
 
 
 @pytest.mark.parametrize("scheduler_style", ["wrapped"])

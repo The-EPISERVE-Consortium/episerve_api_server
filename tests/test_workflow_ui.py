@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 from nicegui import ui
 
-from app.ui import pages
+from app.ui.workflow import pages
 from tests.ui_harness import button, click, labels, render as _render
 
-# The harness fakes ``module._is_logged_in``; the workflow pages use ``_require_login`` (patched in _setup).
+# The harness fakes ``module._is_logged_in``; the workflow pages use ``require_login`` (patched in _setup).
 _SHIM = SimpleNamespace(_is_logged_in=None)
 
 
@@ -34,9 +34,9 @@ def _fresh_state():
 
 def _setup(monkeypatch, state, finals=None, spec=SPEC, get=None):
     def setup():
-        monkeypatch.setattr(pages, "_require_login", lambda right=None: True)
-        monkeypatch.setattr(pages, "_executor", lambda: "episerve_user_1")
-        monkeypatch.setattr(pages, "_tv2_state", lambda: state)
+        monkeypatch.setattr(pages, "require_login", lambda right=None: True)
+        monkeypatch.setattr(pages, "executor", lambda: "episerve_user_1")
+        monkeypatch.setattr(pages, "workflow_state", lambda: state)
         # the handlers persist the state in the per-user storage, which needs a browser session
         monkeypatch.setattr(pages, "_napp", SimpleNamespace(storage=SimpleNamespace(user={})))
         monkeypatch.setattr(pages.ckan_client, "list_processed_datasets", lambda: [dict(DATASET), {"qid": "Q2", "name": "Other"}])

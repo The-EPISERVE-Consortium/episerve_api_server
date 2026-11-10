@@ -78,15 +78,42 @@ shows only FDO metadata, which the DOIP server serves openly.
 
 ## Web UI
 
-The NiceGUI interface is served at `/` (redirects to `/ui`).
+The landing page is served at `/`. The NiceGUI entry point `/ui` redirects to
+`/ui/datasets`.
+
+### UI code organization
+
+`app/ui/pages.py` registers routes only. Feature modules own their page builders
+and event handlers: `auth_pages.py`, `datasets_page.py`, `models_page.py`,
+`model_runs_page.py`, `blackboard_page.py`, `trigger_page.py`,
+`benchmarks_page.py`, and `leaderboard_page.py`. The five-step run workflow lives
+in `app/ui/workflow/`, with separate modules for routes, session state, and shared
+workflow components. Business rules and backend access stay in the existing
+benchmark, leaderboard, preview, and client modules.
+
+Shared navigation belongs in `app/ui/layout.py`; reusable API hints and messages
+belong in `app/ui/components/`. Feature modules import those helpers directly,
+rather than importing the page registrar. Session identity and permission checks
+belong in `app/ui/session.py`.
+
+`app/ui/theme.py` defines the design tokens and loads `app/static/css/theme.css`
+and the separate authentication stylesheet, `auth.css`. Use shared `epi-*` classes
+for recurring appearances (page padding, titles, navigation, search fields, table
+containers, and workflow panels), utility classes for local arrangement, and
+NiceGUI/Quasar properties for component behavior. Scope application shell styles
+to pages with `.epi-header`; authentication screens use their own layout. Document
+new functions with Google-style docstrings.
 
 | Page | URL | Description |
 |---|---|---|
-| Datasets – Raw | `/ui/datasets/raw` | Raw dataset list |
-| Datasets – Processed | `/ui/datasets/processed` | Processed FDO datasets with DOIP links |
+| Datasets | `/ui/datasets` | Processed FDO datasets, previews, and DOIP links |
 | Models | `/ui/models` | Registered forecast models |
 | Model Runs | `/ui/model-runs` | All runs with status and provenance |
 | Trigger | `/ui/trigger` | Select a dataset + model and submit a run |
+| Run Workflow | `/ui/run_workflow/1` | Five-step dataset, transformation, model, configuration, and review flow |
+| Benchmarks | `/ui/benchmarks` | Browse benchmarks and manage drafts |
+| Benchmark detail | `/ui/benchmarks/{benchmark_id}` | Overview, data, and leaderboard |
+| AI Blackboard | `/ui/blackboard` | Task monitoring and routing controls |
 
 The `/ui/datasets` preview uses column selection, filtering, sorting, and server-side
 pagination instead of executable SQL. The server resolves the selected dataset from

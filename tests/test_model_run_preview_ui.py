@@ -13,7 +13,7 @@ from nicegui import Client, background_tasks, events, ui
 
 from app import dataset_preview
 from app.main import app
-from app.ui import pages
+from app.ui import model_runs_page as pages
 from tests.test_dataset_preview import FakeResponse
 
 

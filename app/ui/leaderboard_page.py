@@ -17,7 +17,8 @@ from app.leaderboard.scoring import NotScorable
 from app.leaderboard.present import (
     LABELS, chart_option, columns_text, filter_entries, history_text, history_window, params_text, point_rows, summary, table_rows,
 )
-from app.ui.pages import _error_label, _header
+from app.ui.components.messages import error_label
+from app.ui.layout import header
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +228,6 @@ def _generated_data_sections(row: dict, manifest: dict) -> None:
 
 
 def _data_tab(row: dict, benchmark_id: int) -> None:
-    ui.add_css(".nicegui-code pre, .nicegui-code code { white-space: pre-wrap !important; word-break: break-word; }")
     manifest = materialized_from_row(row)
     if manifest:
         _generated_data_sections(row, manifest)
@@ -258,27 +258,27 @@ def register_leaderboard_page() -> None:
     @ui.page("/ui/benchmarks/{benchmark_id}/runs/{run_qid}")
     def run_page(benchmark_id: int, run_qid: str):
         """One scored run of a benchmark (opened in its own window from the leaderboard)."""
-        _header("/ui/benchmarks", api=f"benchmarks/{benchmark_id}/leaderboard?all_runs=true")
-        with ui.column().classes("px-8 py-6 w-full max-w-5xl gap-3"):
+        header("/ui/benchmarks", api=f"benchmarks/{benchmark_id}/leaderboard?all_runs=true")
+        with ui.column().classes("epi-page-padding w-full max-w-5xl gap-3"):
             ui.link("← Back to the leaderboard", f"/ui/benchmarks/{benchmark_id}").classes("text-sm")
             try:
                 board = actions.read_leaderboard(benchmark_id, "interval_score", False)
             except actions.NotFound:
-                _error_label("Benchmark not found.")
+                error_label("Benchmark not found.")
                 return
             except Exception:
                 logger.exception("could not load the run")
-                _error_label("Could not load the run.")
+                error_label("Could not load the run.")
                 return
             entry = next((x for x in board.entries if x.run_qid == run_qid), None)
             if entry is None:
-                _error_label("Run not found.")
+                error_label("Run not found.")
                 return
             _entry_detail(entry, benchmark_id)
 
     @ui.page("/ui/benchmarks/{benchmark_id}")
     def leaderboard_page(benchmark_id: int, tab: str = _DEFAULT_TAB):
-        _header("/ui/benchmarks", api=f"benchmarks/{benchmark_id}/leaderboard?rank_by={_DEFAULT_RANK_BY}&all_runs=true")
+        header("/ui/benchmarks", api=f"benchmarks/{benchmark_id}/leaderboard?rank_by={_DEFAULT_RANK_BY}&all_runs=true")
         logged_in = _is_logged_in()
         selected = benchmark_id
         try:
@@ -287,21 +287,21 @@ def register_leaderboard_page() -> None:
             row = None
         except Exception:
             logger.exception("could not load the benchmark")
-            with ui.column().classes("px-8 py-6"):
-                _error_label("Could not load the benchmark.")
+            with ui.column().classes("epi-page-padding"):
+                error_label("Could not load the benchmark.")
             return
         if row is None:
-            with ui.column().classes("px-8 py-6 gap-2"):
+            with ui.column().classes("epi-page-padding gap-2"):
                 ui.link("← All benchmarks", "/ui/benchmarks").classes("text-sm")
-                _error_label("Benchmark not found.")
+                error_label("Benchmark not found.")
             return
         state = {"rank_by": _DEFAULT_RANK_BY, "all_runs": False, "model": None, "min_days": 0, "text": ""}
         tab = _FORMER_TABS.get(tab, tab)
         open_tab = tab if tab in dict(_TABS) else _DEFAULT_TAB
 
-        with ui.column().classes("px-8 py-6 w-full gap-4"):
+        with ui.column().classes("epi-page"):
             ui.link("← All benchmarks", "/ui/benchmarks").classes("text-sm")
-            ui.label(row["name"]).classes("text-3xl font-bold text-gray-900")
+            ui.label(row["name"]).classes("epi-page-title")
             with ui.tabs(value=open_tab).classes("w-full") as tabs:
                 for key, label in _TABS:
                     ui.tab(key, label=label)
@@ -331,11 +331,11 @@ def register_leaderboard_page() -> None:
             try:
                 board = actions.read_leaderboard(selected, state["rank_by"], False)  # every run; the top ones are cut below
             except actions.NotFound:
-                _error_label("Benchmark not found.")
+                error_label("Benchmark not found.")
                 return
             except Exception:
                 logger.exception("could not load the leaderboard")
-                _error_label("Could not load the leaderboard.")
+                error_label("Could not load the leaderboard.")
                 return
             ui.label(summary(board)).classes("text-sm text-gray-700")
             if not board.entries:
@@ -430,7 +430,7 @@ def register_leaderboard_page() -> None:
             except Exception:
                 logger.exception("could not list the candidate runs")
                 loading.delete()
-                _error_label("Could not list the candidate runs.")
+                error_label("Could not list the candidate runs.")
                 return
             loading.delete()
             input_columns = list(((materialized_from_row(row) or {}).get("input") or {}).get("columns") or [])
