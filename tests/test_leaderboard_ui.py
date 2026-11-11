@@ -701,7 +701,7 @@ def test_input_history_is_lazy_and_reused_when_toggled(monkeypatch):
         await drain()
         assert calls == [(3, "Q10")]
 
-    _detail(monkeypatch, after=toggle_history)
+    _detail(monkeypatch, board=_board([_entry(history_start=date(2021, 12, 31))]), after=toggle_history)
 
 
 def test_input_history_load_failure_leaves_forecast_usable_and_allows_retry(monkeypatch):
@@ -755,3 +755,56 @@ def test_input_history_load_failure_leaves_forecast_usable_and_allows_retry(monk
         assert find(ui.echart)[0].options["xAxis"]["data"][0] == "2021-12-31"
 
     _detail(monkeypatch, after=retry)
+
+
+def test_missing_input_dates_resolve_without_enabling_chart_history(monkeypatch):
+    """Recover missing labels on page open and retain them when history is hidden.
+
+    Args:
+        monkeypatch: Fixture isolating the recorded history loader.
+    """
+    from app.ui import run_details
+    calls = []
+    entry = _entry(history_start=None)
+    history = [{"date": "2021-12-01", "value": 4.0}, {"date": "2021-12-31", "value": 5.0}]
+
+    async def read(function, *args):
+        """Return recovered input history while recording requests.
+
+        Args:
+            function: Loader that would otherwise run in a worker.
+            *args: Requested benchmark and run identifiers.
+
+        Returns:
+            Verified input dates and target values.
+        """
+        calls.append(args)
+        return history
+
+    monkeypatch.setattr(run_details.run, "io_bound", read)
+
+    async def resolve_dates(out, client, find, drain):
+        """Resolve date labels and verify chart visibility remains independent.
+
+        Args:
+            out: UI harness results.
+            client: NiceGUI client.
+            find: Element lookup helper.
+            drain: Deferred callback runner.
+        """
+        toggle = find(ui.switch)[0]
+        assert "Loading input dates…" in [label.text for label in find(ui.label)]
+        await find(ui.timer)[0].callback()
+        assert not toggle.value
+        assert "01 Dec 2021 – 31 Dec 2021" in [label.text for label in find(ui.label)]
+        assert "Model input · 31 days" in [label.text for label in find(ui.label)]
+        assert len(find(ui.echart)[0].options["series"]) == 4
+        toggle.set_value(True)
+        await drain()
+        toggle.set_value(False)
+        await drain()
+        assert "01 Dec 2021 – 31 Dec 2021" in [label.text for label in find(ui.label)]
+        assert calls == [(3, "Q10")]
+        assert entry.history_start is None
+
+    _detail(monkeypatch, board=_board([entry]), after=resolve_dates)
