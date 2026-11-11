@@ -219,9 +219,9 @@ def test_read_input_history_requires_the_same_pin_as_the_stored_run(monkeypatch,
                   truth_commit=MANIFEST["commit"])
     monkeypatch.setattr(actions.store, "list_entries", lambda bid: [entry])
     calls = []
-    monkeypatch.setattr(actions.loaders, "input_history", lambda *args: calls.append(args) or [{"date": "2021-12-31", "value": 2.0}])
+    monkeypatch.setattr(actions.loaders, "run_input_history", lambda *args: calls.append(args) or [{"date": "2021-12-31", "value": 2.0}])
     assert actions.read_input_history(3, "Q10") == [{"date": "2021-12-31", "value": 2.0}]
-    assert calls[0][0] == MANIFEST and calls[0][2:] == (None, date(2021, 12, 31))
+    assert calls[0][0] == MANIFEST and calls[0][2] is entry
     calls.clear()
     entry.truth_commit = "ff" * 32
     with pytest.raises(actions.LoadError, match="version"):
@@ -231,13 +231,16 @@ def test_read_input_history_requires_the_same_pin_as_the_stored_run(monkeypatch,
         actions.read_input_history(3, "Q999")
 
 
-def test_legacy_run_history_uses_the_original_source_commit(monkeypatch, world):
+@pytest.mark.parametrize("manifest", [MANIFEST, None])
+def test_legacy_run_history_uses_the_original_source_commit(monkeypatch, world, manifest):
     """Dispatch a pre-generated-input run to its verified saved input recipe.
 
     Args:
         monkeypatch: Fixture replacing stored entries and history readers.
         world: Public finalized benchmark fixture.
+        manifest: Generated files present after migration, or absent on older rows.
     """
+    monkeypatch.setattr(actions.bstore, "get", lambda bid: {**FINAL_ROW, "materialized": manifest})
     entry = Entry("Q10", "timesfm", "latest", {}, None, date(2021, 12, 31), "", 2, 2, {}, truth_commit=COMMIT)
     monkeypatch.setattr(actions.store, "list_entries", lambda bid: [entry])
     calls = []

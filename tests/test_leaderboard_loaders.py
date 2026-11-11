@@ -219,3 +219,79 @@ def test_legacy_input_history_rejects_unverifiable_or_unsafe_inputs(monkeypatch,
     entry = Entry("Q10", "model", "latest", {}, None, date(2021, 12, 31), "", 1, 1, {}, truth_commit=commit)
     with pytest.raises(loaders.LoadError):
         loaders.legacy_input_history(entry, BENCH, "data.parquet", "https://doip.example")
+
+
+@pytest.mark.parametrize("query", [
+    "SELECT datum, value * multiplier AS value FROM df WHERE datum >= '2021-12-15'",
+    None, [], "", "   ",
+])
+def test_generated_run_history_replays_saved_sql(monkeypatch, query):
+    """Use transformed values and rows, including queries needing other columns.
+
+    Args:
+        monkeypatch: Fixture providing a saved config and frozen input bytes.
+        query: Saved SQL, or an empty transformation for an unchanged input.
+    """
+    import hashlib
+    import json
+    from app.leaderboard.service import Entry
+
+    commit = "ab" * 32
+    data = _parquet_bytes(pd.DataFrame({
+        "datum": ["2021-12-01", "2021-12-15", "2021-12-31"],
+        "value": [10.0, 20.0, 30.0], "multiplier": [2.0, 3.0, 4.0],
+    }))
+    manifest = {"commit": commit, "input": {
+        "qid": "Q123", "component": "input.parquet", "sha256": hashlib.sha256(data).hexdigest(),
+    }}
+    config = {"input_data_files": [[
+        f"https://doip.example/doip/retrieve/Q123/input.parquet?version={commit}", "input.parquet",
+    ]]}
+    config["data_transformation_sql"] = [query] if isinstance(query, str) else query
+    monkeypatch.setattr(loaders, "download_preview_bytes", lambda *args: json.dumps(config).encode())
+    monkeypatch.setattr(loaders.lakefs_client, "read_benchmark_component", lambda *args: data)
+    entry = Entry("Q10", "model", "latest", {}, None, date(2021, 12, 31), "", 1, 1, {}, truth_commit=commit)
+    result = loaders.run_input_history(manifest, BENCH, entry, "https://doip.example")
+    expected = ([{"date": "2021-12-15", "value": 60.0}, {"date": "2021-12-31", "value": 120.0}]
+                if query and query.strip() else [
+                    {"date": "2021-12-01", "value": 10.0}, {"date": "2021-12-15", "value": 20.0},
+                    {"date": "2021-12-31", "value": 30.0},
+                ])
+    assert result == expected
+
+
+@pytest.mark.parametrize("change", ["version", "missing-config", "write-sql", "external-sql", "hash"])
+def test_generated_run_history_rejects_unverified_inputs(monkeypatch, change):
+    """Keep source checks, checksums, and query isolation during run replay.
+
+    Args:
+        monkeypatch: Fixture supplying a saved config and frozen input bytes.
+        change: Invalid source, configuration, query, or checksum to reject.
+    """
+    import hashlib
+    import json
+    from app.leaderboard.service import Entry
+
+    commit = "ab" * 32
+    data = _parquet_bytes(pd.DataFrame({"datum": ["2021-12-01"], "value": [10.0]}))
+    manifest = {"commit": commit, "input": {
+        "qid": "Q123", "component": "input.parquet", "sha256": hashlib.sha256(data).hexdigest(),
+    }}
+    config = {"input_data_files": [[
+        f"https://doip.example/doip/retrieve/Q123/input.parquet?version={commit}", "input.parquet",
+    ]], "data_transformation_sql": ["SELECT * FROM df"]}
+    if change == "version":
+        config["input_data_files"][0][0] = config["input_data_files"][0][0].replace(commit, "cd" * 32)
+    elif change == "missing-config":
+        config = {}
+    elif change == "write-sql":
+        config["data_transformation_sql"] = ["DELETE FROM df"]
+    elif change == "external-sql":
+        config["data_transformation_sql"] = ["SELECT * FROM read_csv('/etc/passwd')"]
+    else:
+        manifest["input"]["sha256"] = "0" * 64
+    monkeypatch.setattr(loaders, "download_preview_bytes", lambda *args: json.dumps(config).encode())
+    monkeypatch.setattr(loaders.lakefs_client, "read_benchmark_component", lambda *args: data)
+    entry = Entry("Q10", "model", "latest", {}, None, date(2021, 12, 31), "", 1, 1, {}, truth_commit=commit)
+    with pytest.raises(loaders.LoadError):
+        loaders.run_input_history(manifest, BENCH, entry, "https://doip.example")

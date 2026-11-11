@@ -171,7 +171,9 @@ def fetch_run_params(qid: str, doip_base: str) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def input_history(manifest: dict, benchmark: Benchmark, start: date | None, end: date) -> list[dict]:
+def input_history(
+    manifest: dict, benchmark: Benchmark, start: date | None, end: date, *, sql: str | None = None,
+) -> list[dict]:
     """Read target history from the exact frozen input supplied to a model run.
 
     Args:
@@ -179,6 +181,7 @@ def input_history(manifest: dict, benchmark: Benchmark, start: date | None, end:
         benchmark: Supplies the generated date and target column names.
         start: First input date recorded for the run, or an unbounded start.
         end: Last input date recorded for the run.
+        sql: Saved run transformation to apply before selecting history.
 
     Returns:
         Sorted date and value pairs, retaining gaps for missing target values.
@@ -195,7 +198,7 @@ def input_history(manifest: dict, benchmark: Benchmark, start: date | None, end:
     if hashlib.sha256(data).hexdigest() != info["sha256"]:
         raise LoadError("The benchmark's input file does not match its recorded hash.")
     try:
-        frame = pq.read_table(BytesIO(data), columns=[benchmark.date_column, benchmark.target_column]).to_pandas()
+        frame = _replay_input(data, sql)
     except (pa.ArrowException, KeyError, ValueError, TypeError) as exc:
         raise LoadError("The benchmark's frozen input series could not be read.") from exc
     return _history_points(frame, benchmark, start, end)
@@ -250,6 +253,50 @@ def legacy_input_history(entry: Entry, benchmark: Benchmark, component: str, doi
         LoadError: Saved configuration is unavailable, does not match the recorded
             source pin, or cannot be replayed as a single read-only transformation.
     """
+    sql = _saved_input_query(entry, benchmark.dataset_qid, component, doip_base)
+    try:
+        data = lakefs_client.read_processed_component(entry.truth_commit, benchmark.dataset_qid, component, MAX_DOWNLOAD_BYTES)
+        frame = _replay_input(data, sql)
+    except Exception as exc:
+        raise LoadError("The run's recorded input transformation could not be replayed.") from exc
+    return _history_points(frame, benchmark, entry.history_start, entry.history_end)
+
+
+def run_input_history(manifest: dict, benchmark: Benchmark, entry: Entry, doip_base: str) -> list[dict]:
+    """Replay a generated-input run's saved transformation on its verified file.
+
+    Args:
+        manifest: Frozen generated input metadata, including its checksum.
+        benchmark: Date and target columns and reference boundaries.
+        entry: Scored run with its source pin and history boundaries.
+        doip_base: Trusted service hosting the saved run configuration.
+
+    Returns:
+        Sorted history points from the transformed model input.
+
+    Raises:
+        LoadError: The saved input pin, query, or frozen file cannot be verified.
+    """
+    info = manifest["input"]
+    sql = _saved_input_query(entry, info["qid"], info["component"], doip_base)
+    return input_history(manifest, benchmark, entry.history_start, entry.history_end, sql=sql)
+
+
+def _saved_input_query(entry: Entry, qid: str, component: str, doip_base: str) -> str | None:
+    """Read a single-input run's query after verifying its saved source pin.
+
+    Args:
+        entry: Scored run identifying the saved configuration and source version.
+        qid: Expected source object identifier.
+        component: Expected source component name.
+        doip_base: Trusted service hosting the saved configuration and source.
+
+    Returns:
+        Saved SQL, or None when the run used the file without a transformation.
+
+    Raises:
+        LoadError: Configuration is unavailable, malformed, or uses another source.
+    """
     if not re.fullmatch(r"Q[0-9]+", entry.run_qid):
         raise LoadError("The recorded run identifier is invalid.")
     try:
@@ -262,18 +309,45 @@ def legacy_input_history(entry: Entry, benchmark: Benchmark, component: str, doi
         raise LoadError("The run's saved input configuration could not be read.") from exc
     if not isinstance(config, dict):
         raise LoadError("The run's saved input configuration is invalid.")
-    files, queries = config.get("input_data_files"), config.get("data_transformation_sql")
+    files, queries = config.get("input_data_files"), config.get("data_transformation_sql", [])
+    if queries is None:
+        queries = []
     if (not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], list) or len(files[0]) != 2
-            or not isinstance(queries, list) or len(queries) != 1):
-        raise LoadError("The legacy run needs one recorded source and one input transformation.")
+            or not isinstance(queries, list) or len(queries) > 1):
+        raise LoadError("The run needs one recorded source and at most one input transformation.")
     try:
         source = urlsplit(validate_component_url(files[0][0], doip_base))
-        expected_path = f"{urlsplit(doip_base).path.rstrip('/')}/doip/retrieve/{benchmark.dataset_qid}/{component}"
+        expected_path = f"{urlsplit(doip_base).path.rstrip('/')}/doip/retrieve/{qid}/{component}"
         if source.path != expected_path or parse_qs(source.query) != {"version": [entry.truth_commit]}:
             raise LoadError("The saved input source does not match the run's recorded dataset and data version.")
-        validate_transformation_sql(queries[0])
-        data = lakefs_client.read_processed_component(entry.truth_commit, benchmark.dataset_qid, component, MAX_DOWNLOAD_BYTES)
+        sql = queries[0] if queries else None
+        if sql is not None and not isinstance(sql, str):
+            raise LoadError("The run's recorded input transformation is invalid.")
+        return sql if sql and sql.strip() else None
+    except LoadError:
+        raise
+    except Exception as exc:
+        raise LoadError("The run's saved input source is invalid.") from exc
+
+
+def _replay_input(data: bytes, sql: str | None) -> pd.DataFrame:
+    """Apply a saved read-only query in an engine with external access disabled.
+
+    Args:
+        data: Original pinned Parquet input bytes.
+        sql: Saved transformation, or None for an unchanged input file.
+
+    Returns:
+        Input rows and columns after the saved transformation.
+
+    Raises:
+        LoadError: The input or query is invalid or cannot be safely replayed.
+    """
+    try:
         table = pq.read_table(BytesIO(data))
+        if sql is None:
+            return table.to_pandas()
+        validate_transformation_sql(sql)
         with duckdb.connect(config={
             "enable_external_access": "false", "allow_unsigned_extensions": "false",
             "autoinstall_known_extensions": "false", "autoload_known_extensions": "false",
@@ -281,9 +355,6 @@ def legacy_input_history(entry: Entry, benchmark: Benchmark, component: str, doi
         }) as connection:
             connection.register("df", table)
             connection.execute("SET lock_configuration = true")
-            frame = connection.execute(queries[0]).df()
-    except LoadError:
-        raise
+            return connection.execute(sql).df()
     except Exception as exc:
         raise LoadError("The run's recorded input transformation could not be replayed.") from exc
-    return _history_points(frame, benchmark, entry.history_start, entry.history_end)

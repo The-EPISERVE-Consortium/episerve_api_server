@@ -164,9 +164,9 @@ def read_input_history(benchmark_id: int, run_qid: str) -> list[dict]:
     entry = next((item for item in store.list_entries(benchmark_id) if item.run_qid == run_qid), None)
     if entry is None:
         raise NotFound("Run not found")
-    manifest = _manifest(row)
-    if manifest["commit"] != entry.truth_commit:
+    manifest = materialized_from_row(row)
+    if not manifest or manifest["commit"] != entry.truth_commit:
         if entry.truth_commit == row.get("data_commit") and row.get("component_name"):
             return loaders.legacy_input_history(entry, bstore.benchmark_from_row(row), row["component_name"], settings.doip_url)
         raise LoadError("The run's data version differs from the benchmark's frozen input.")
-    return loaders.input_history(manifest, bstore.benchmark_from_row(row), entry.history_start, entry.history_end)
+    return loaders.run_input_history(manifest, bstore.benchmark_from_row(row), entry, settings.doip_url)
