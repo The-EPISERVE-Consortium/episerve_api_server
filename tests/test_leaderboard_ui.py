@@ -419,7 +419,7 @@ def test_data_tab_describes_layout_sources_and_steps_of_a_benchmark_with_covaria
                         {"column": "wetter__temp", "role": "covariate (wetter)", "input": "yes", "reference": "-"}]]
     assert urls["d.parquet"].endswith(f"/doip/retrieve/Q1/d.parquet?version={COMMIT}")
     assert urls["w.parquet"].endswith(f"/doip/retrieve/Q2/w.parquet?version={COMMIT}")
-    assert urls["Q2 ↗"].endswith("/dataset/q2")
+    assert urls["Q2 ↗"].endswith(f"/dataset/q2?version={COMMIT}")
     assert "city = 'Berlin'" in out["labels"]
     assert "Merge" in out["labels"]
     merge = next(rows for key, rows in out["tables"] if key == "covariate")
@@ -808,3 +808,22 @@ def test_missing_input_dates_resolve_without_enabling_chart_history(monkeypatch)
         assert entry.history_start is None
 
     _detail(monkeypatch, board=_board([entry]), after=resolve_dates)
+
+
+@pytest.mark.parametrize("commit", [COMMIT, None])
+def test_source_links_explain_the_benchmark_version(monkeypatch, commit):
+    """Distinguish the source dataset and file and explain their version links.
+
+    Args:
+        monkeypatch: Fixture isolating page data from external systems.
+        commit: Benchmark source pin, or missing version metadata.
+    """
+    out = _render(monkeypatch, row={**ROW, "data_commit": commit}, board=_board([]))
+    assert "Source dataset" in out["labels"] and "Source file" in out["labels"]
+    expected_note = ("Benchmark-pinned version" if commit else
+                     "Latest version · benchmark version not recorded")
+    assert expected_note in out["labels"]
+    source_link = next(link for link in out["find"](ui.link) if link.text == "Q1 ↗")
+    assert source_link.props["href"] == (
+        "https://data.episerve.zib.de/dataset/q1" + (f"?version={commit}" if commit else "")
+    )

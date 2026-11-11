@@ -177,14 +177,16 @@ def _sources(sources: list[dict]) -> None:
             for source in sources:
                 with ui.element("article").classes("epi-benchmark-source"):
                     with ui.column().classes("epi-benchmark-source-identity"):
-                        ui.label("Target series" if source["role"] == "target" else
+                        ui.label("Source dataset" if source["role"] == "target" else
                                  f"Covariate · {source['role']}").classes("font-semibold")
                         if source.get("catalog"):
                             ui.link(source["qid"] + " ↗", source["catalog"], new_tab=True)
                         else:
                             ui.label(source["qid"])
+                        ui.label("Benchmark-pinned version" if source.get("commit") else
+                                 "Latest version · benchmark version not recorded").classes("epi-benchmark-note")
                     with ui.column().classes("epi-benchmark-source-field epi-benchmark-source-file"):
-                        ui.label("Filename").classes("epi-benchmark-note")
+                        ui.label("Source file").classes("epi-benchmark-note")
                         if source.get("url"):
                             ui.link(source.get("file") or "Source file", source["url"], new_tab=True)
                         else:

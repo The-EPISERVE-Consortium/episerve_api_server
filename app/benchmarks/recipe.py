@@ -40,8 +40,16 @@ def file_layouts(row: dict, manifest: dict) -> list[dict]:
 
 
 def source_rows(row: dict, manifest: dict) -> list[dict]:
-    """The datasets the files were generated from, with links to the catalog entry and to the file at the pinned
-    data commit. Older manifests do not list their sources; the target is then taken from the benchmark row."""
+    """Describe source datasets with catalog and file links at the benchmark pin.
+
+    Args:
+        row: Benchmark row containing its pinned source commit and target dataset.
+        manifest: Generated-file metadata, optionally listing source components.
+
+    Returns:
+        Source rows with versioned links, or latest links when no pin was recorded.
+        Older manifests use the target source stored on the benchmark row.
+    """
     sources = manifest.get("sources") or [
         {"role": "target", "qid": row["dataset_qid"], "component": row.get("component_name")}]
     commit = row.get("data_commit")
@@ -51,7 +59,8 @@ def source_rows(row: dict, manifest: dict) -> list[dict]:
         component = source.get("component")
         rows.append({
             "role": source["role"], "qid": source["qid"],
-            "catalog": f"{CATALOG_URL}/dataset/{source['qid'].lower()}",
+            "catalog": f"{CATALOG_URL}/dataset/{source['qid'].lower()}" + (f"?version={commit}" if commit else ""),
+            "commit": commit,
             "file": component,
             "url": f"{base}/doip/retrieve/{source['qid']}/{component}" + (f"?version={commit}" if commit else "")
             if component else None,
@@ -180,7 +189,7 @@ def describe(row: dict, manifest: dict) -> dict:
         source = by_role.get(role, {})
         sources.append({
             "role": role, "qid": qid, "catalog": source.get("catalog"), "file": source.get("file"),
-            "url": source.get("url"), "filters": [f"{c} = {_sql_text(v)}" for c, v in flt] or ["none"],
+            "url": source.get("url"), "commit": source.get("commit"), "filters": [f"{c} = {_sql_text(v)}" for c, v in flt] or ["none"],
             "date_column": date_col, "columns": columns,
         })
 

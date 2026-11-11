@@ -1,6 +1,8 @@
 """The description of how a benchmark's files were generated."""
 
 import json
+
+import pytest
 from datetime import date
 
 from app.benchmarks import recipe
@@ -18,7 +20,7 @@ def test_an_older_manifest_without_sources_still_names_the_target_file():
     (target,) = recipe.source_rows(ROW, MANIFEST)
     assert (target["role"], target["qid"], target["file"]) == ("target", "Q1", "d.parquet")
     assert target["url"].endswith("/doip/retrieve/Q1/d.parquet?version=" + "c" * 64)
-    assert target["catalog"] == "https://data.episerve.zib.de/dataset/q1"
+    assert target["catalog"] == "https://data.episerve.zib.de/dataset/q1?version=" + "c" * 64
 
 
 def test_one_column_table_serves_both_files():
@@ -148,3 +150,23 @@ def test_files_in_the_older_layout_have_no_links_but_keep_their_lakefs_uri():
     assert layouts[0]["rows"] == 1339
     # the URI a model run recorded when it read the file, so qualifying runs still works
     assert input_uri(OLD_MANIFEST) == f"lakefs://benchmarks/main/2/input.parquet?version={'ca' * 32}"
+
+
+@pytest.mark.parametrize("commit", ["c" * 64, None])
+def test_source_catalog_links_use_the_source_pin_for_every_dataset(commit):
+    """Pin target and covariate catalog pages to the source repository version.
+
+    Args:
+        commit: Benchmark source pin, or missing version metadata.
+    """
+    manifest = {**MANIFEST, "sources": [
+        {"role": "target", "qid": "Q1", "component": "d.parquet"},
+        {"role": "weather", "qid": "Q2", "component": "weather.parquet"},
+    ]}
+    rows = recipe.source_rows({**ROW, "data_commit": commit}, manifest)
+    suffix = f"?version={commit}" if commit else ""
+    assert [source["catalog"] for source in rows] == [
+        f"https://data.episerve.zib.de/dataset/q1{suffix}",
+        f"https://data.episerve.zib.de/dataset/q2{suffix}",
+    ]
+    assert all(source["commit"] == commit for source in rows)
