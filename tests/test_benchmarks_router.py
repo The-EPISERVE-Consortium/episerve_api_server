@@ -280,3 +280,25 @@ def test_a_final_benchmark_lists_its_generated_objects_with_their_doip_urls(monk
     assert files["reference"]["url"].endswith(f"/doip/retrieve/Q1791000000002/reference.parquet?version={COMMIT}")
     assert client.get("/benchmarks/3/data/input").status_code in (404, 405)       # the download goes through DOIP
 
+
+
+def test_descriptor_download_url_uses_its_own_commit_after_legacy_export(monkeypatch):
+    """Expose the later descriptor version while preserving original Parquet URLs.
+
+    Args:
+        monkeypatch: Fixture replacing the stored benchmark lookup.
+    """
+    import json
+
+    manifest = {'version': 3, 'qid': 'Q1791000000001', 'commit': 'ab' * 32,
+                'input': {'qid': 'Q1791000000001', 'component': 'input.parquet'},
+                'reference': {'qid': 'Q1791000000001', 'component': 'reference.parquet'},
+                'definition': {'qid': 'Q1791000000001', 'component': 'benchmark-definition.json',
+                               'commit': 'cd' * 32, 'media_type': 'application/json'}}
+    monkeypatch.setattr(router.bactions, 'get', lambda *args, **kwargs: {**ROW, 'materialized': json.dumps(manifest)})
+    response = client.get('/benchmarks/3')
+    assert response.status_code == 200
+    files = response.json()['generated_files']
+    assert files['input']['url'].endswith('?version=' + 'ab' * 32)
+    assert files['reference']['url'].endswith('?version=' + 'ab' * 32)
+    assert files['definition']['url'].endswith('/benchmark-definition.json?version=' + 'cd' * 32)

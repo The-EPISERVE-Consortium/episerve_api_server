@@ -40,8 +40,8 @@ def test_finalize_sets_the_pin_once(monkeypatch):
     assert store.finalize(3, data_commit="ab" * 32, component_name="d.parquet", truth_points=27,
                           prediction_length=27, history_end=date(2026, 3, 25)) is True
     update_sql, params = conn.executed[1]
-    assert "finalized_at = NOW()" in update_sql and "data_commit" in update_sql
-    assert params == ("ab" * 32, "d.parquet", 27, 27, date(2026, 3, 25), None, None, 3)
+    assert "finalized_at = COALESCE(%s, NOW())" in update_sql and "data_commit" in update_sql
+    assert params == ("ab" * 32, "d.parquet", 27, 27, date(2026, 3, 25), None, None, None, 3)
 
 
 def test_finalize_refuses_a_final_benchmark_and_reports_unknown_ids(monkeypatch):
@@ -121,6 +121,26 @@ def test_target_preview_updates_only_a_missing_image_on_the_expected_final_manif
     assert not store.set_target_preview(3, {"image": "png"}, expected_commit="ab" * 32)
 
 
+def test_definition_pointer_preserves_data_pins_and_concurrent_manifest_fields(monkeypatch):
+    """Attach only an absent descriptor pointer to the expected active final row.
+
+    Args:
+        monkeypatch: Fixture providing a fake metadata update connection.
+    """
+    conn = _use(monkeypatch, ([], 1, None))
+    pointer = {"component": "benchmark-definition.json", "commit": "cd" * 32}
+    assert store.set_definition(3, pointer, expected_commit="ab" * 32)
+    sql, params = conn.executed[0]
+    assert "JSON_SET(materialized, '$.definition'" in sql
+    assert "JSON_EXTRACT(materialized, '$.definition') IS NULL" in sql
+    assert "JSON_UNQUOTE(JSON_EXTRACT(materialized, '$.commit')) = %s" in sql
+    assert "finalized_at IS NOT NULL" in sql and "retired_at IS NULL" in sql
+    assert params[1:] == (3, "ab" * 32)
+    assert conn.commits == 1 and conn.closed
+    _use(monkeypatch, ([], 0, None))
+    assert not store.set_definition(3, pointer, expected_commit="ab" * 32)
+
+
 def test_create_draft_stores_the_creator(monkeypatch):
     conn = _use(monkeypatch, ([], 1, 7))
     assert store.create_draft("Flu", None, BENCH, created_by=18) == 7
@@ -156,8 +176,8 @@ def test_covariates_and_the_manifest_are_stored_as_json_and_read_back():
     preview = {"image": "data:image/png;base64,preview", "mobile_image": "data:image/png;base64,mobile"}
     store.finalize(3, data_commit="ab" * 32, component_name="d.parquet", truth_points=1, prediction_length=1,
                    history_end=date(2026, 3, 25), materialized=manifest, target_preview=preview)
-    assert json.loads(conn.executed[1][1][-3]) == manifest
-    assert json.loads(conn.executed[1][1][-2]) == preview
-    assert target_preview_from_row({"target_preview": conn.executed[1][1][-2]}) == preview
+    assert json.loads(conn.executed[1][1][-4]) == manifest
+    assert json.loads(conn.executed[1][1][-3]) == preview
+    assert target_preview_from_row({"target_preview": conn.executed[1][1][-3]}) == preview
     assert materialized_from_row({"materialized": json.dumps(manifest)}) == manifest and materialized_from_row({}) is None
 

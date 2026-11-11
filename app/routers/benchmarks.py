@@ -55,11 +55,19 @@ def _patch_fields(request: BenchmarkPatch) -> dict:
 
 
 def _generated_files(row: dict) -> dict | None:
-    """The manifest of a final benchmark's generated objects with their DOIP download URLs."""
+    """Add pinned download URLs to data and definition component metadata.
+
+    Args:
+        row: Stored benchmark with an optional generated-file manifest.
+
+    Returns:
+        Component metadata with download URLs, or None when no files exist.
+    """
     manifest = materialized_from_row(row)
     if not manifest or manifest.get("version", 1) < 2:
         return manifest
-    return {**manifest, **{kind: {**manifest[kind], "url": object_url(manifest, kind)} for kind in ("input", "reference")}}
+    return {**manifest, **{kind: {**manifest[kind], "url": object_url(manifest, kind)}
+                          for kind in ("input", "reference", "definition") if kind in manifest}}
 
 
 def _benchmark_out(row: dict) -> BenchmarkOut:

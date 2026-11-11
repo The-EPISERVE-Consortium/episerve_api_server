@@ -8,11 +8,11 @@ spec makes model runs read their input at the same commit.
 import json
 from io import BytesIO
 from dataclasses import dataclass, field, replace
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pandas as pd
 
-from app.benchmarks import fdo, materialize, preview, recipe, store
+from app.benchmarks import descriptor, fdo, materialize, preview, recipe, store
 from app.benchmarks.definition import (
     Benchmark, DefinitionError, derive_horizon, input_uri, materialized_from_row,
     normalize_covariates, normalize_filters, target_preview_from_row, validate,
@@ -231,7 +231,7 @@ def _covariate_data(benchmark: Benchmark, commit: str, sources: list | None = No
 
 def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materialize.Built",
               sources: list | None, view: dict) -> dict:
-    """Store generated files and freeze their recipe.
+    """Store data, a portable definition, and FDO metadata in one lakeFS commit.
 
     Args:
         benchmark_id: Benchmark receiving the generated object.
@@ -242,7 +242,7 @@ def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materi
         view: Resolved benchmark row used to freeze the generation recipe.
 
     Returns:
-        Manifest containing file checksums, provenance, and the generation recipe.
+        Manifest containing file checksums, provenance, recipe, and descriptor pointer.
     """
     input_bytes, input_sha = materialize.to_parquet(built.input)
     reference_bytes, reference_sha = materialize.to_parquet(built.reference)
@@ -252,7 +252,8 @@ def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materi
         "input": ("input.parquet", input_bytes, input_sha, built.input),
         "reference": ("reference.parquet", reference_bytes, reference_sha, built.reference),
     }
-    manifest = {"version": 3, "repo": settings.lakefs_benchmarks_repo, "qid": qid, "sources": sources or []}
+    manifest = {"version": 3, "repo": settings.lakefs_benchmarks_repo, "branch": settings.lakefs_branch,
+                "qid": qid, "sources": sources or []}
     files = {}
     for role, (component, data, sha, frame) in parts.items():
         files[fdo.component_path(qid, component)] = data
@@ -260,17 +261,70 @@ def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materi
                           "columns": list(frame.columns)}
     manifest["input"].update(first_date=str(built.input[benchmark.date_column].min()),
                              last_date=str(built.input[benchmark.date_column].max()))
+    manifest["recipe"] = recipe.describe(view, manifest)
+    definition_bytes = descriptor.build(view, manifest)
+    manifest["definition"] = descriptor.file_metadata(qid, definition_bytes)
+    files[fdo.component_path(qid, descriptor.COMPONENT)] = definition_bytes
     files[fdo.fdo_path(qid)] = fdo.build_fdo(
         qid=qid, benchmark_id=benchmark_id, benchmark_name=name,
-        files={role: {k: v for k, v in manifest[role].items() if k != "qid"} for role in parts},
+        files={role: {k: v for k, v in manifest[role].items() if k != "qid"}
+               for role in (*parts, "definition")},
         benchmark=benchmark, source_qids=source_qids, sources=sources,
         description=f"{name}. Generated model input (history window, target series and covariates) and "
                     "reference data (the test window the forecasts are scored against).")
     branch, commit = lakefs_client.write_benchmark_objects(
-        files, f"benchmark {benchmark_id}: generated input and reference files")
+        files, f"benchmark {benchmark_id}: generated files and frozen definition")
     manifest.update(branch=branch, commit=commit)
-    manifest["recipe"] = recipe.describe(view, manifest)
     return manifest
+
+
+def export_definition(benchmark_id: int) -> dict:
+    """Export an existing finalized definition without replacing its data objects.
+
+    Args:
+        benchmark_id: Final benchmark whose descriptor has not yet been exported.
+
+    Returns:
+        Descriptor pointer, including the new metadata commit and checksum.
+
+    Raises:
+        NotFound: The benchmark is not final or lacks a generated FDO object.
+        Conflict: Its manifest changed during the export.
+    """
+    row = _row(benchmark_id)
+    manifest = materialized_from_row(row)
+    if store.state(row) != "final" or not manifest or not manifest.get("qid"):
+        raise NotFound(f"Benchmark {benchmark_id} has no finalized generated object")
+    if manifest.get("definition"):
+        return manifest["definition"]
+    frozen = {**manifest, "recipe": recipe.display(row, manifest)}
+    data = descriptor.build(row, frozen)
+    pointer = descriptor.file_metadata(manifest["qid"], data)
+    document = lakefs_client.read_benchmark_fdo(manifest["commit"], manifest["qid"], 4 * 1024 * 1024)
+    recorded = document["profile"]["episerveBenchmark"]
+    if document["@id"] != manifest["qid"] or recorded["id"] != benchmark_id \
+            or recorded["data_commit"] != row["data_commit"]:
+        raise Conflict("The frozen FDO does not match the benchmark identity or source commit")
+    for kind in ("input", "reference"):
+        if any(recorded["files"][kind].get(key) != manifest[kind].get(key)
+               for key in ("component", "sha256", "rows", "columns")):
+            raise Conflict("The frozen FDO and database file metadata differ")
+    document["kernel"]["fdo:hasComponent"].append({
+        "@id": f"#{descriptor.COMPONENT}", "componentId": descriptor.COMPONENT, "mediaType": "application/json"})
+    document["profile"]["episerveBenchmark"]["files"]["definition"] = {
+        key: value for key, value in pointer.items() if key != "qid"}
+    document["kernel"]["modified"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _, commit = lakefs_client.write_benchmark_objects({
+        fdo.component_path(manifest["qid"], descriptor.COMPONENT): data,
+        fdo.fdo_path(manifest["qid"]): json.dumps(document, ensure_ascii=False, indent=2).encode(),
+    }, f"benchmark {benchmark_id}: export frozen definition")
+    pointer["commit"] = commit
+    if not store.set_definition(benchmark_id, pointer, expected_commit=manifest["commit"]):
+        current = materialized_from_row(_row(benchmark_id)) or {}
+        if current.get("commit") == manifest["commit"] and current.get("definition"):
+            return current["definition"]
+        raise Conflict("The benchmark manifest changed while its definition was exported")
+    return pointer
 
 
 def store_target_preview(benchmark_id: int) -> dict:
@@ -369,14 +423,17 @@ def finalize(benchmark_id: int, expected_commit: str | None = None, *, by: User)
     again = _row(benchmark_id)
     if (again["name"], store.benchmark_from_row(again)) != (row["name"], benchmark):
         raise Conflict("The draft changed while it was being finalized; check it again.")
-    view = {**row, "history_end": report.history_end, "data_commit": commit, "component_name": report.component_name}
+    finalized_at = datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
+    view = {**row, "history_end": report.history_end, "data_commit": commit, "component_name": report.component_name,
+            "truth_points": report.truth_points, "prediction_length": report.prediction_length,
+            "finalized_at": finalized_at}
     manifest = _manifest(benchmark_id, row["name"], replace(benchmark, data_commit=commit), report.built,
                          report.sources, view)
     target_preview = preview.build(benchmark, report.built)
     done = store.finalize(
         benchmark_id, data_commit=commit, component_name=report.component_name, truth_points=report.truth_points,
         prediction_length=report.prediction_length, history_end=report.history_end, materialized=manifest,
-        target_preview=target_preview,
+        target_preview=target_preview, finalized_at=finalized_at,
     )
     if not done:
         raise NotFound(f"Benchmark {benchmark_id} not found")

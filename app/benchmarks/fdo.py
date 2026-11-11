@@ -1,6 +1,6 @@
 """The FDO objects of a benchmark's generated files.
 
-The generated files (input, reference) of a benchmark are ONE digital object with its own QID and one component per file, stored in the lakeFS repository
+The input, reference, and definition files of a benchmark are ONE digital object with its own QID and one component per file, stored in the lakeFS repository
 ``benchmarks`` in the layout every other object uses (``pp/qq/rr/<QID>/<QID>.fdo.json`` and
 ``pp/qq/rr/<QID>/components/<file>``), so the DOIP server serves it and the sync registers it in CKAN.
 """
@@ -74,12 +74,17 @@ def build_fdo(
 
     Args:
         qid: The object's QID.
-        files: Role (``input``: what models read; ``reference``: what forecasts are scored against) to
-            ``{"component", "sha256", "rows", "columns"}``.
+        benchmark_id: Original database identifier preserved by the generated object.
+        benchmark_name: Display name of the benchmark.
+        files: Component roles mapped to file metadata; optional media_type defaults to Parquet.
         benchmark: The frozen definition; its pinned commit goes into the provenance.
         source_qids: The datasets the files were generated from.
         sources: The files read (``{"role", "qid", "component"}``); with the pinned commit they become the
             versioned ``prov:wasDerivedFrom`` entries.
+        description: Human-readable object description.
+
+    Returns:
+        Serialized FDO metadata registering each component with its media type.
     """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     document = {
@@ -99,7 +104,7 @@ def build_fdo(
             "modified": now,
             "fdo:hasComponent": [
                 {"@id": f"#{info['component']}", "componentId": info["component"],
-                 "mediaType": "application/vnd.apache.parquet"}
+                 "mediaType": info.get("media_type", "application/vnd.apache.parquet")}
                 for info in files.values()
             ],
         },

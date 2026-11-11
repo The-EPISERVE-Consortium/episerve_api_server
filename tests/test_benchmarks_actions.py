@@ -162,7 +162,8 @@ def test_finalize_pins_the_commit_read_during_the_check(world):
     bid, kw = world["log"]["finalized"][0]
     assert bid == 3 and kw == {"data_commit": COMMIT, "component_name": "d.parquet", "truth_points": 27,
                                "prediction_length": 27, "history_end": date(2026, 3, 25),
-                               "materialized": kw["materialized"], "target_preview": kw["target_preview"]}
+                               "materialized": kw["materialized"], "target_preview": kw["target_preview"],
+                               "finalized_at": kw["finalized_at"]}
     manifest = kw["materialized"]
     assert manifest["input"]["columns"] == ["datum", "v"] and manifest["reference"]["rows"] == 27
     assert manifest["commit"] == "ee" * 32
@@ -403,7 +404,12 @@ def test_check_reports_a_covariate_that_cannot_be_used(world):
     assert any("Q404" in p for p in actions.check(3).problems)
 
 
-def test_finalize_stores_one_fdo_object_with_two_components_and_records_the_manifest(world):
+def test_finalize_stores_data_and_definition_in_one_fdo_commit(world):
+    """Register both data files and the portable definition in the same object.
+
+    Args:
+        world: Fixture capturing writes to lakeFS and the database.
+    """
     world["state"]["row"] = _row(covariates=json.dumps(COVARIATES))
     actions.finalize(3, by=CREATOR)
     files, _ = world["log"]["written"][0]
@@ -413,11 +419,14 @@ def test_finalize_stores_one_fdo_object_with_two_components_and_records_the_mani
     qid = manifest["qid"]
     assert manifest["input"]["qid"] == manifest["reference"]["qid"] == qid       # one object, two components
     assert manifest["input"]["columns"] == ["datum", "v", "wetter__temp"]
-    assert sorted(f.rsplit("/", 1)[-1] for f in files) == sorted([f"{qid}.fdo.json", "input.parquet", "reference.parquet"])
+    assert sorted(f.rsplit("/", 1)[-1] for f in files) == sorted(
+        [f"{qid}.fdo.json", "input.parquet", "reference.parquet", "benchmark-definition.json"])
     assert len(manifest["input"]["sha256"]) == 64 and manifest["reference"]["rows"] == 27
     description = json.loads(files[f"{actions.fdo.shard(qid)}/{qid}.fdo.json"])
     assert description["@id"] == qid and description["profile"]["accessRights"] == "open"
-    assert sorted(description["profile"]["episerveBenchmark"]["files"]) == ["input", "reference"]
+    assert sorted(description["profile"]["episerveBenchmark"]["files"]) == ["definition", "input", "reference"]
+    components = {item["componentId"]: item["mediaType"] for item in description["kernel"]["fdo:hasComponent"]}
+    assert components["benchmark-definition.json"] == "application/json"
     assert description["profile"]["episerveBenchmark"]["source_qids"] == ["Q1", "Q2"]
     assert description["profile"]["episerveBenchmark"]["data_commit"] == COMMIT
     info = manifest["recipe"]                                             # kept with the benchmark, as it ran
@@ -480,3 +489,112 @@ def test_the_recipe_can_be_stored_for_a_benchmark_finalized_earlier(world, monke
     world["state"]["row"] = _final()
     with pytest.raises(actions.NotFound):
         actions.store_recipe(3)
+
+
+def test_descriptor_reconstructs_a_final_benchmark_without_database_or_catalog(world, monkeypatch):
+    """Recover the scientific definition and exact file versions from the exported JSON.
+
+    Args:
+        world: Fixture holding a benchmark with pinned target and covariate data.
+        monkeypatch: Fixture making any recovery-time database or catalog access fail.
+    """
+    import hashlib
+    from datetime import datetime
+
+    world['state']['row'] = _row(description='A portable definition with weather.',
+                                  input_filename='forecast-input.parquet',
+                                  covariates=json.dumps([{**COVARIATES[0], 'aggregation': 'sum'}]))
+    actions.finalize(3, by=CREATOR)
+    saved = world['log']['finalized'][0][1]
+    manifest = saved['materialized']
+    files = world['log']['written'][0][0]
+    data = files[actions.fdo.component_path(manifest['qid'], actions.descriptor.COMPONENT)]
+    document = json.loads(data)
+    assert len(world['log']['written']) == 1
+    assert 'commit' not in document['generated_files']
+    assert 'definition' not in document['generated_files']
+    assert document['benchmark']['prediction_length'] == 27
+    assert datetime.fromisoformat(document['benchmark']['finalized_at']) == saved['finalized_at']
+    assert hashlib.sha256(data).hexdigest() == manifest['definition']['sha256']
+
+    def unavailable(*args, **kwargs):
+        """Reject attempts to consult systems assumed lost during recovery.
+
+        Args:
+            *args: Positional arguments of the forbidden call.
+            **kwargs: Keyword arguments of the forbidden call.
+        """
+        raise AssertionError('Recovery must use the descriptor alone')
+
+    monkeypatch.setattr(actions.store, '_connect', unavailable)
+    monkeypatch.setattr(actions.ckan_client, 'list_processed_datasets', unavailable)
+    restored = actions.descriptor.rebuild_row(data, object_commit=manifest['commit'])
+    recovered_manifest = json.loads(restored['materialized'])
+    assert restored['id'] == 3 and restored['description'] == world['state']['row']['description']
+    assert restored['prediction_length'] == 27 and restored['truth_points'] == 27
+    assert restored['history_end'] == date(2026, 3, 25)
+    assert restored['component_name'] == 'd.parquet'
+    assert restored['created_by'] is None and restored['target_preview'] is None
+    assert json.loads(restored['filters']) == [['typ', 'Influenza A+B']]
+    assert json.loads(restored['covariates'])[0]['aggregation'] == 'sum'
+    assert recovered_manifest['recipe'] == manifest['recipe']
+    assert input_uri(recovered_manifest) == input_uri(manifest)
+    assert recovered_manifest['input'] == manifest['input']
+    assert recovered_manifest['reference'] == manifest['reference']
+    for section, key, value in [('root', 'schema_version', 99), ('benchmark', 'data_commit', 'main'),
+                                ('input', 'sha256', 'invalid')]:
+        damaged = json.loads(data)
+        target = damaged if section == 'root' else damaged['generated_files']['input'] if section == 'input' else damaged[section]
+        target[key] = value
+        with pytest.raises(DefinitionError):
+            actions.descriptor.rebuild_row(json.dumps(damaged).encode(), object_commit=manifest['commit'])
+
+
+def test_existing_descriptor_export_preserves_original_data_versions(world, monkeypatch):
+    """Export an older object using only metadata writes and keep its run input URI.
+
+    Args:
+        world: Fixture capturing generated files and the original manifest.
+        monkeypatch: Fixture replacing the frozen FDO read and guarded pointer update.
+    """
+    from copy import deepcopy
+
+    actions.finalize(3, by=CREATOR)
+    original = world['log']['finalized'][0][1]['materialized']
+    manifest = {key: value for key, value in original.items() if key != 'definition'}
+    document = json.loads(world['log']['written'][0][0][actions.fdo.fdo_path(manifest['qid'])])
+    document['kernel']['fdo:hasComponent'] = [part for part in document['kernel']['fdo:hasComponent']
+                                             if part['componentId'] != actions.descriptor.COMPONENT]
+    document['profile']['episerveBenchmark']['files'].pop('definition')
+    world['state']['row'] = _final(materialized=json.dumps(manifest))
+    monkeypatch.setattr(actions.lakefs_client, 'read_benchmark_fdo', lambda *args: deepcopy(document))
+    monkeypatch.setattr(actions.lakefs_client, 'write_benchmark_objects',
+                        lambda files, message: world['log']['written'].append((files, message)) or ('main', 'ff' * 32))
+    attached = []
+
+    def attach(benchmark_id, pointer, *, expected_commit):
+        """Record a descriptor pointer without replacing the original file pins.
+
+        Args:
+            benchmark_id: Benchmark receiving the descriptor.
+            pointer: New metadata component and its containing commit.
+            expected_commit: Guard for the original generated-file version.
+
+        Returns:
+            True for a successful metadata-only update.
+        """
+        attached.append((benchmark_id, expected_commit))
+        world['state']['row']['materialized'] = json.dumps({**manifest, 'definition': pointer})
+        return True
+
+    monkeypatch.setattr(actions.store, 'set_definition', attach)
+    pointer = actions.export_definition(3)
+    assert pointer['commit'] == 'ff' * 32 and attached == [(3, manifest['commit'])]
+    written = world['log']['written'][-1][0]
+    assert sorted(path.rsplit('/', 1)[-1] for path in written) == [f"{manifest['qid']}.fdo.json", 'benchmark-definition.json']
+    data = written[actions.fdo.component_path(manifest['qid'], actions.descriptor.COMPONENT)]
+    restored = actions.descriptor.rebuild_row(data, object_commit=pointer['commit'])
+    assert input_uri(json.loads(restored['materialized'])) == input_uri(manifest)
+    updated = json.loads(world['state']['row']['materialized'])
+    assert updated['commit'] == manifest['commit'] and updated['input'] == manifest['input']
+    assert actions.export_definition(3) == pointer and len(world['log']['written']) == 2

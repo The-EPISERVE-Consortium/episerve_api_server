@@ -6,7 +6,7 @@ one transaction (``SELECT … FOR UPDATE``) before changing anything.
 """
 
 import json
-from datetime import date
+from datetime import date, datetime
 
 from app import db
 from app.benchmarks.definition import Benchmark, covariates_from_row, covariates_json, filters_from_row
@@ -113,6 +113,7 @@ def update_draft(benchmark_id: int, name: str, description: str | None, benchmar
 def finalize(
     benchmark_id: int, *, data_commit: str, component_name: str, truth_points: int,
     prediction_length: int, history_end: date, materialized: dict | None = None, target_preview: dict | None = None,
+    finalized_at: datetime | None = None,
 ) -> bool:
     """Freeze a draft and atomically store its generated manifest and target image.
 
@@ -125,6 +126,7 @@ def finalize(
         history_end: Resolved input window boundary.
         materialized: Generated-file manifest and recipe.
         target_preview: Static images for the dedicated target_preview column.
+        finalized_at: Timestamp shared with the descriptor, or database time when omitted.
 
     Returns:
         Whether a known draft was finalized.
@@ -139,10 +141,11 @@ def finalize(
                 return False
             cur.execute(
                 "UPDATE benchmarks SET data_commit = %s, component_name = %s, truth_points = %s, "
-                "prediction_length = %s, history_end = %s, materialized = %s, target_preview = %s, finalized_at = NOW() WHERE id = %s",
+                "prediction_length = %s, history_end = %s, materialized = %s, target_preview = %s, "
+                "finalized_at = COALESCE(%s, NOW()) WHERE id = %s",
                 (data_commit, component_name, truth_points, prediction_length, history_end,
                  json.dumps(materialized) if materialized else None,
-                 json.dumps(target_preview) if target_preview else None, benchmark_id),
+                 json.dumps(target_preview) if target_preview else None, finalized_at, benchmark_id),
             )
         conn.commit()
         return True
@@ -181,6 +184,34 @@ def set_target_preview(benchmark_id: int, preview: dict, *, expected_commit: str
                 "AND JSON_UNQUOTE(JSON_EXTRACT(materialized, '$.commit')) = %s "
                 "AND target_preview IS NULL",
                 (json.dumps(preview), benchmark_id, expected_commit),
+            )
+            updated = cur.rowcount == 1
+        conn.commit()
+        return updated
+    finally:
+        conn.close()
+
+
+def set_definition(benchmark_id: int, definition: dict, *, expected_commit: str) -> bool:
+    """Attach a descriptor pointer while preserving frozen data versions.
+
+    Args:
+        benchmark_id: Existing final benchmark receiving an export pointer.
+        definition: Descriptor component identity, checksum, and containing commit.
+        expected_commit: Original generated-data commit guarded by the update.
+
+    Returns:
+        Whether a missing pointer was added to the unchanged final manifest.
+    """
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE benchmarks SET materialized = JSON_SET(materialized, '$.definition', JSON_EXTRACT(%s, '$')) "
+                "WHERE id = %s AND finalized_at IS NOT NULL AND retired_at IS NULL "
+                "AND JSON_UNQUOTE(JSON_EXTRACT(materialized, '$.commit')) = %s "
+                "AND JSON_EXTRACT(materialized, '$.definition') IS NULL",
+                (json.dumps(definition), benchmark_id, expected_commit),
             )
             updated = cur.rowcount == 1
         conn.commit()

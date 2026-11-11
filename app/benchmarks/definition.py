@@ -139,17 +139,22 @@ def target_preview_from_row(row: dict) -> dict | None:
 
 
 def object_url(manifest: dict, kind: str = "input", *, versioned: bool = True) -> str:
-    """The DOIP URL of a generated file (``input`` or ``reference``); with ``versioned`` it carries the commit of the
-    benchmarks repository it was stored in.
+    """Build a generated component URL using its exact repository version.
 
-    Files in the older layout (filed under the benchmark id, ``path`` instead of ``qid``) are not served by DOIP: their
-    URL is the lakeFS URI a model run recorded when it read them (``lakefs://<repo>/<branch>/<path>``)."""
+    Args:
+        manifest: Generated object metadata, including its original data commit.
+        kind: Input, reference, or definition component role.
+        versioned: Whether to append the exact component or object commit.
+
+    Returns:
+        DOIP URL, or a lakeFS URI for older objects not served by DOIP.
+    """
     entry = manifest[kind]
     if "qid" not in entry:
         url = f"lakefs://{manifest.get('repo', 'benchmarks')}/{manifest.get('branch', 'main')}/{entry['path']}"
     else:
         url = f"{settings.doip_url.rstrip('/')}/doip/retrieve/{entry['qid']}/{entry['component']}"
-    return f"{url}?version={manifest['commit']}" if versioned else url
+    return f"{url}?version={entry.get('commit') or manifest['commit']}" if versioned else url
 
 
 def input_uri(manifest: dict, *, versioned: bool = True) -> str:

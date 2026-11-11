@@ -244,6 +244,29 @@ def read_benchmark_component(commit: str, qid: str, filename: str, max_bytes: in
     return data
 
 
+def read_benchmark_fdo(commit: str, qid: str, max_bytes: int) -> dict:
+    """Read generated object metadata at its exact frozen repository version.
+
+    Args:
+        commit: Commit of the benchmarks repository.
+        qid: Generated object identifier.
+        max_bytes: Maximum accepted metadata size.
+
+    Returns:
+        Decoded FDO document.
+
+    Raises:
+        ValueError: An argument is unsafe, metadata is oversized, or JSON is invalid.
+    """
+    if not _COMMIT.fullmatch(commit or "") or not _QID.fullmatch(qid or ""):
+        raise ValueError("Invalid commit or object name.")
+    repo = lakefs.Repository(settings.lakefs_benchmarks_repo, client=_client())
+    data = repo.ref(commit).object(f"{_shard_qid(qid)}/{qid}.fdo.json").reader().read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise ValueError("The metadata exceeds the size limit.")
+    return json.loads(data)
+
+
 def read_processed_fdo(commit: str, qid: str) -> dict | None:
     """The FDO of a dataset in the processed-data repository as it was at a commit, or None when it did not exist.
 
