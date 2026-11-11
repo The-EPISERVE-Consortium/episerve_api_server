@@ -205,6 +205,7 @@ def chart_option(entry: Entry, history: list[dict] | None = None) -> dict:
         "textStyle": {"color": "#475569", "fontSize": 13},
         ":formatter": "(name) => name === 'q10–q90' ? '80% prediction interval (q10–q90)' : name",
     }
+    grid = {"left": 14, "right": 48, "top": 40, "bottom": 76, "containLabel": True}
     return {
         "tooltip": {
             "trigger": "axis",
@@ -221,7 +222,7 @@ def chart_option(entry: Entry, history: list[dict] | None = None) -> dict:
         "animation": False,
         "aria": {"enabled": True},
         "color": ["#111111", "#c62828", "#c62828", "#c62828", "#111111"],
-        "grid": {"left": 14, "right": 18, "top": 40, "bottom": 76, "containLabel": True},
+        "grid": grid,
         "legend": legend,
         "xAxis": {"type": "category", "boundaryGap": False, "data": [p["date"] for p in points],
                   "axisLabel": {"color": "#475569", "hideOverlap": True,
@@ -233,7 +234,7 @@ def chart_option(entry: Entry, history: list[dict] | None = None) -> dict:
                   ":min": "(extent) => Math.min(0, extent.min)", "nameTextStyle": {"color": "#475569"},
                   "axisLabel": {"color": "#475569"}, "splitLine": {"lineStyle": {"color": "#e2e8f0"}}},
         "media": [{"query": {"maxWidth": 500}, "option": {
-            "grid": {"bottom": 135 if history else 110},
+            "grid": {**grid, "bottom": 135 if history else 110},
             "legend": {**legend, "orient": "vertical", "left": "center", "bottom": 0,
                        "itemGap": 8, "textStyle": {"fontSize": 11}},
         }}],
