@@ -161,3 +161,61 @@ def test_input_history_rejects_invalid_dates_duplicates_or_no_history(monkeypatc
     manifest = {"commit": "ab" * 32, "input": {"qid": "Q123", "component": "input.parquet", "sha256": hashlib.sha256(data).hexdigest()}}
     with pytest.raises(loaders.LoadError):
         loaders.input_history(manifest, BENCH, None, date(2021, 12, 31))
+
+
+def test_legacy_input_history_replays_the_saved_transformation_at_the_source_pin(monkeypatch):
+    """Recover the original transformed input rather than a newer benchmark file.
+
+    Args:
+        monkeypatch: Fixture supplying a saved configuration and pinned source.
+    """
+    import json
+    from app.leaderboard.service import Entry
+    commit = "ab" * 32
+    source = _parquet_bytes(pd.DataFrame({
+        "datum": ["2021-12-01", "2021-12-15", "2021-12-15", "2022-01-05"],
+        "value": [10.0, 20.0, 99.0, 30.0], "typ": ["a", "a", "b", "a"],
+    }))
+    config = {"input_data_files": [[f"https://doip.example/doip/retrieve/Q1/data.parquet?version={commit}", "input.parquet"]],
+              "data_transformation_sql": ["SELECT datum, value * 2 AS value FROM df WHERE typ = 'a'"]}
+    monkeypatch.setattr(loaders, "download_preview_bytes", lambda *args: json.dumps(config).encode())
+    calls = []
+    monkeypatch.setattr(loaders.lakefs_client, "read_processed_component", lambda *args: calls.append(args) or source)
+    entry = Entry("Q10", "model", "latest", {}, None, date(2021, 12, 31), "", 1, 1, {}, truth_commit=commit)
+    assert loaders.legacy_input_history(entry, BENCH, "data.parquet", "https://doip.example") == [
+        {"date": "2021-12-01", "value": 20.0}, {"date": "2021-12-15", "value": 40.0},
+    ]
+    assert calls[0][:3] == (commit, "Q1", "data.parquet")
+
+
+@pytest.mark.parametrize("change", ["version", "origin", "dataset", "missing-config", "write-sql", "external-sql"])
+def test_legacy_input_history_rejects_unverifiable_or_unsafe_inputs(monkeypatch, change):
+    """Refuse another source pin and block SQL writes or external reads.
+
+    Args:
+        monkeypatch: Fixture replacing saved configuration and lakeFS reads.
+        change: Configuration defect or unsupported query to exercise.
+    """
+    import json
+    from app.leaderboard.service import Entry
+    commit = "ab" * 32
+    url = f"https://doip.example/doip/retrieve/Q1/data.parquet?version={commit}"
+    config = {"input_data_files": [[url, "input.parquet"]], "data_transformation_sql": ["SELECT * FROM df"]}
+    if change == "version":
+        config["input_data_files"][0][0] = url.replace(commit, "cd" * 32)
+    elif change == "origin":
+        config["input_data_files"][0][0] = url.replace("doip.example", "elsewhere.example")
+    elif change == "dataset":
+        config["input_data_files"][0][0] = url.replace("/Q1/", "/Q2/")
+    elif change == "missing-config":
+        config = {}
+    elif change == "write-sql":
+        config["data_transformation_sql"] = ["DELETE FROM df"]
+    else:
+        config["data_transformation_sql"] = ["SELECT * FROM read_csv('/etc/passwd')"]
+    monkeypatch.setattr(loaders, "download_preview_bytes", lambda *args: json.dumps(config).encode())
+    data = _parquet_bytes(pd.DataFrame({"datum": ["2021-12-01"], "value": [10.0]}))
+    monkeypatch.setattr(loaders.lakefs_client, "read_processed_component", lambda *args: data)
+    entry = Entry("Q10", "model", "latest", {}, None, date(2021, 12, 31), "", 1, 1, {}, truth_commit=commit)
+    with pytest.raises(loaders.LoadError):
+        loaders.legacy_input_history(entry, BENCH, "data.parquet", "https://doip.example")

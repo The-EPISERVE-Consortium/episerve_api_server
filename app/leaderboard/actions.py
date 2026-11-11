@@ -151,7 +151,8 @@ def read_input_history(benchmark_id: int, run_qid: str) -> list[dict]:
         run_qid: Identifier of the scored run whose input should be displayed.
 
     Returns:
-        Target values within the run's recorded input history window.
+        Target values within the run's recorded input history window. Legacy runs
+        replay their saved transformation against their pinned processed source.
 
     Raises:
         NotFound: Benchmark or scored run does not exist.
@@ -165,5 +166,7 @@ def read_input_history(benchmark_id: int, run_qid: str) -> list[dict]:
         raise NotFound("Run not found")
     manifest = _manifest(row)
     if manifest["commit"] != entry.truth_commit:
+        if entry.truth_commit == row.get("data_commit") and row.get("component_name"):
+            return loaders.legacy_input_history(entry, bstore.benchmark_from_row(row), row["component_name"], settings.doip_url)
         raise LoadError("The run's data version differs from the benchmark's frozen input.")
     return loaders.input_history(manifest, bstore.benchmark_from_row(row), entry.history_start, entry.history_end)

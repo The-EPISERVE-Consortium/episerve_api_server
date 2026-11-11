@@ -2,8 +2,10 @@
 
 import hashlib
 import json
+import re
 from datetime import date
 from io import BytesIO
+from urllib.parse import parse_qs, urlsplit
 
 import duckdb
 import numpy as np
@@ -14,9 +16,11 @@ from lakefs.exceptions import NotFoundException
 
 from app.clients import lakefs as lakefs_client
 from app.dataset_preview import (
-    MAX_DOWNLOAD_BYTES, _column_sql, download_preview_bytes,
+    MAX_DOWNLOAD_BYTES, _column_sql, download_preview_bytes, validate_component_url,
 )
 from app.leaderboard.entries import Benchmark
+from app.leaderboard.service import Entry
+from app.sql_validation import validate_transformation_sql
 
 MAX_CONFIG_BYTES = 64 * 1024
 
@@ -192,10 +196,31 @@ def input_history(manifest: dict, benchmark: Benchmark, start: date | None, end:
         raise LoadError("The benchmark's input file does not match its recorded hash.")
     try:
         frame = pq.read_table(BytesIO(data), columns=[benchmark.date_column, benchmark.target_column]).to_pandas()
-        dates = pd.to_datetime(frame[benchmark.date_column], errors="coerce").dt.normalize()
-        values = pd.to_numeric(frame[benchmark.target_column], errors="coerce")
     except (pa.ArrowException, KeyError, ValueError, TypeError) as exc:
         raise LoadError("The benchmark's frozen input series could not be read.") from exc
+    return _history_points(frame, benchmark, start, end)
+
+
+def _history_points(frame: pd.DataFrame, benchmark: Benchmark, start: date | None, end: date) -> list[dict]:
+    """Normalize target history without leaking reference dates into the input.
+
+    Args:
+        frame: Generated input or the replayed legacy input transformation.
+        benchmark: Supplies date, target, and reference boundary columns.
+        start: First recorded input date, or an unbounded start.
+        end: Last recorded input date.
+
+    Returns:
+        Sorted date and value pairs, retaining missing target values as gaps.
+
+    Raises:
+        LoadError: Input dates or columns are invalid, ambiguous, or empty.
+    """
+    try:
+        dates = pd.to_datetime(frame[benchmark.date_column], errors="coerce").dt.normalize()
+        values = pd.to_numeric(frame[benchmark.target_column], errors="coerce")
+    except (KeyError, ValueError, TypeError) as exc:
+        raise LoadError("The recorded input series could not be read.") from exc
     if dates.isna().any() or dates.duplicated().any():
         raise LoadError("The benchmark's frozen input contains invalid or duplicate dates.")
     selected = (dates <= pd.Timestamp(end)) & (dates < pd.Timestamp(benchmark.test_start))
@@ -206,3 +231,59 @@ def input_history(manifest: dict, benchmark: Benchmark, start: date | None, end:
         raise LoadError("The benchmark's frozen input has no history for this run.")
     return [{"date": row.date.date().isoformat(), "value": float(row.value) if pd.notna(row.value) and np.isfinite(row.value) else None}
             for row in out.itertuples(index=False)]
+
+
+
+def legacy_input_history(entry: Entry, benchmark: Benchmark, component: str, doip_base: str) -> list[dict]:
+    """Replay a legacy run's saved input transformation at its recorded source pin.
+
+    Args:
+        entry: Stored run scored before generated benchmark inputs were introduced.
+        benchmark: Expected dataset, date column, target, and reference boundaries.
+        component: Expected processed-data component from the stored benchmark.
+        doip_base: Trusted service hosting the run's saved configuration.
+
+    Returns:
+        Target history from the original versioned and transformed model input.
+
+    Raises:
+        LoadError: Saved configuration is unavailable, does not match the recorded
+            source pin, or cannot be replayed as a single read-only transformation.
+    """
+    if not re.fullmatch(r"Q[0-9]+", entry.run_qid):
+        raise LoadError("The recorded run identifier is invalid.")
+    try:
+        raw = download_preview_bytes(
+            f"{doip_base.rstrip('/')}/doip/retrieve/{entry.run_qid}/input/config_prefect.json",
+            doip_base, MAX_CONFIG_BYTES,
+        )
+        config = json.loads(raw)
+    except Exception as exc:
+        raise LoadError("The run's saved input configuration could not be read.") from exc
+    if not isinstance(config, dict):
+        raise LoadError("The run's saved input configuration is invalid.")
+    files, queries = config.get("input_data_files"), config.get("data_transformation_sql")
+    if (not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], list) or len(files[0]) != 2
+            or not isinstance(queries, list) or len(queries) != 1):
+        raise LoadError("The legacy run needs one recorded source and one input transformation.")
+    try:
+        source = urlsplit(validate_component_url(files[0][0], doip_base))
+        expected_path = f"{urlsplit(doip_base).path.rstrip('/')}/doip/retrieve/{benchmark.dataset_qid}/{component}"
+        if source.path != expected_path or parse_qs(source.query) != {"version": [entry.truth_commit]}:
+            raise LoadError("The saved input source does not match the run's recorded dataset and data version.")
+        validate_transformation_sql(queries[0])
+        data = lakefs_client.read_processed_component(entry.truth_commit, benchmark.dataset_qid, component, MAX_DOWNLOAD_BYTES)
+        table = pq.read_table(BytesIO(data))
+        with duckdb.connect(config={
+            "enable_external_access": "false", "allow_unsigned_extensions": "false",
+            "autoinstall_known_extensions": "false", "autoload_known_extensions": "false",
+            "memory_limit": "256MB", "threads": "1", "temp_directory": "",
+        }) as connection:
+            connection.register("df", table)
+            connection.execute("SET lock_configuration = true")
+            frame = connection.execute(queries[0]).df()
+    except LoadError:
+        raise
+    except Exception as exc:
+        raise LoadError("The run's recorded input transformation could not be replayed.") from exc
+    return _history_points(frame, benchmark, entry.history_start, entry.history_end)

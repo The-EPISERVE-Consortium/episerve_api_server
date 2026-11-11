@@ -127,7 +127,7 @@ def _forecast_chart(entry: Entry, board: Leaderboard) -> None:
                 toggle.enable()
                 state["loading"] = False
         history = state["history"] if toggle.value else None
-        status.set_text("Target values from the frozen benchmark input supplied to this run." if history else state["error"])
+        status.set_text("Target values from the versioned input supplied to this run." if history else state["error"])
         options = chart_option(entry, history)
         options["yAxis"]["name"] = board.benchmark.target_column
         chart.options.clear()
