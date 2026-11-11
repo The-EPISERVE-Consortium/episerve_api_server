@@ -118,8 +118,20 @@ def _detail(monkeypatch, qid="Q10", **kw):
 
 
 def test_run_page_shows_link_window_params_pins_and_per_date_rows(monkeypatch):
-    """Keep run metadata and results accessible through the detail page."""
+    """Preserve exact stored values and forecast arithmetic across the new tabs.
+
+    Args:
+        monkeypatch: Fixture isolating stored leaderboard reads.
+    """
     def grab(out, client, find, drain):
+        """Collect detail links, charts, and tables from the rendered client.
+
+        Args:
+            out: Result dictionary populated by the UI harness.
+            client: Rendered NiceGUI client.
+            find: Element lookup helper.
+            drain: Deferred callback runner.
+        """
         out["links"] = [(e.props.get("href"), e.props.get("target")) for e in find(ui.link)]
         out["tables"] = find(ui.table)
         out["charts"] = find(ui.echart)
@@ -129,10 +141,12 @@ def test_run_page_shows_link_window_params_pins_and_per_date_rows(monkeypatch):
     assert ("https://data.episerve.zib.de/dataset/q10", "_blank") in out["links"]
     assert ("/ui/benchmarks/3?tab=leaderboard", "_self") in out["links"]
     labels = out["labels"]
-    assert any(t.startswith("History window:") and "→ 2021-12-31" in t for t in labels)
-    assert "history_length: 91" in labels
-    assert "timesfm — run Q10" in labels
-    assert f"Data: lakeFS commit {COMMIT} · CKAN last modified 2026-10-14T00:00:00Z · scored 2026-10-16 10:00:00" in labels
+    assert "… → 2021-12-31" in labels
+    assert "history_length" in labels and "91" in labels
+    assert "Timesfm" in labels and "Run Q10" in labels
+    assert COMMIT in labels and "2026-10-14T00:00:00Z" in labels and "2026-10-16 10:00:00" in labels
+    assert "2 of 2 reference values scored" in labels
+    assert "80.00%" in labels
     detail = out["tables"][-1]
     assert [c["name"] for c in detail.columns] == ["date", "observed", "forecast", "q10", "q90", "error"]
     assert detail.rows[0]["error"] == "1.00"
@@ -606,3 +620,36 @@ def test_show_all_runs_keeps_the_selected_page_size(monkeypatch):
     assert out["pagination"] == {"page": 1, "rowsPerPage": 10}
     assert not any(t.startswith("The top 3 of") for t in out["labels"])
 
+
+
+@pytest.mark.parametrize("tab", ["results", "forecast-data", "run-details", "unknown"])
+def test_run_detail_tab_links_open_the_requested_section(monkeypatch, tab):
+    """Keep shared run URLs usable for every tab and unknown tab values.
+
+    Args:
+        monkeypatch: Fixture isolating stored leaderboard reads.
+        tab: Requested detail tab or an unsupported value.
+    """
+    out = _render(monkeypatch, board=_board([_entry()]), path=f"/ui/benchmarks/3/runs/Q10?tab={tab}")
+    tabs = out["find"](ui.tabs)
+    assert len(tabs) == 1
+    assert tabs[0].value == ("results" if tab == "unknown" else tab)
+
+
+def test_run_detail_keeps_missing_metrics_and_quantiles_explicit(monkeypatch):
+    """Leave gaps in the band and missing values visible instead of inventing zeros.
+
+    Args:
+        monkeypatch: Fixture isolating stored leaderboard reads.
+    """
+    entry = _entry(metrics={"mae": None, "rmse": None, "coverage": None, "interval_score": None},
+                   points=[{"date": "2022-01-05", "truth": 10.0, "forecast": None}],
+                   used_columns=[], run_timestamp="", params={})
+    out = _detail(monkeypatch, board=_board([entry]))
+    assert "—" in out["labels"] and "None" in out["labels"]
+    assert "Run on Not recorded" in out["labels"]
+    chart = out["find"](ui.echart)[0].options
+    assert next(series for series in chart["series"] if series["name"] == "q10–q90")["data"] == [None]
+    table = out["find"](ui.table)[0]
+    assert table.rows[0]["forecast"] == "—" and table.rows[0]["error"] == "—"
+    assert table.props["pagination"]["rowsPerPage"] == 10

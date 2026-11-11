@@ -6,7 +6,7 @@ from urllib.parse import quote
 
 from nicegui import run, ui
 
-from app.ui import benchmark_details, session
+from app.ui import benchmark_details, run_details, session
 from app.benchmarks import actions as bactions
 from app.leaderboard import actions
 from app.benchmarks.definition import materialized_from_row
@@ -14,8 +14,8 @@ from app.leaderboard.about import COLUMN_HELP, METRIC_DOCS
 from app.leaderboard.loaders import LoadError
 from app.leaderboard.scoring import NotScorable
 from app.leaderboard.present import (
-    LABELS, chart_option, columns_text, comparison_rows, filter_entries, history_text, history_window, model_label,
-    params_text, point_rows, summary, table_rows,
+    LABELS, columns_text, comparison_rows, filter_entries, history_text, model_label,
+    params_text, summary, table_rows,
 )
 from app.ui.components.messages import error_label
 from app.ui.layout import header
@@ -96,43 +96,6 @@ _OPEN_RUN_JS = (
 )
 
 
-def _entry_detail(entry, benchmark_id: int) -> None:
-    """Render the run metadata, chart, and per-date forecast results.
-
-    Args:
-        entry: Stored scored run to display.
-        benchmark_id: Benchmark the run was scored against.
-    """
-    ui.label(f"{entry.model_name} — run {entry.run_qid}").classes("text-2xl font-semibold")
-    ui.link(
-        "Show run in ModelHub",
-        f"https://data.episerve.zib.de/dataset/{entry.run_qid.lower()}", new_tab=True,
-    ).classes("text-sm")
-    ui.label(f"Run date: {entry.run_timestamp or 'Not recorded'}").classes("text-sm text-gray-600")
-    ui.label(f"History window: {history_window(entry)}").classes("text-sm text-gray-600")
-    used = "Not recorded" if entry.used_columns is None else ", ".join(entry.used_columns) or "None"
-    ui.label(f"Input columns: {used}").classes("text-sm text-gray-600 break-words")
-    ui.label(
-        f"Data: lakeFS commit {entry.truth_commit} · CKAN last modified "
-        f"{entry.truth_as_of or 'unknown'} · scored {entry.scored_at}"
-    ).classes("text-sm text-gray-600")
-    if entry.params:
-        with ui.column().classes("gap-0"):
-            for k, v in entry.params.items():
-                ui.label(f"{k}: {v}").classes("text-sm text-gray-600")
-    else:
-        ui.label("Parameters: —").classes("text-sm text-gray-600")
-    ui.echart(chart_option(entry)).classes("w-full h-80")
-    ui.table(
-        columns=[
-            {"name": c, "label": c if c != "error" else "error (forecast − observed)",
-             "field": c, "align": "left" if c == "date" else "right"}
-            for c in ("date", "observed", "forecast", "q10", "q90", "error")
-        ],
-        rows=point_rows(entry), row_key="date",
-    ).props("dense flat").classes("w-full")
-
-
 def _is_admin() -> bool:
     return session.can("admin")
 
@@ -192,10 +155,17 @@ def register_leaderboard_page() -> None:
         ui.navigate.to(target)
 
     @ui.page("/ui/benchmarks/{benchmark_id}/runs/{run_qid}")
-    def run_page(benchmark_id: int, run_qid: str):
-        """One scored run of a benchmark (opened in its own window from the leaderboard)."""
+    def run_page(benchmark_id: int, run_qid: str, tab: str = "results"):
+        """Render one stored run and its requested detail tab.
+
+        Args:
+            benchmark_id: Benchmark owning the scored run.
+            run_qid: Identifier of the run to display.
+            tab: Initial Results, Forecast data, or Run details tab.
+        """
         header("/ui/benchmarks", api=f"benchmarks/{benchmark_id}/leaderboard?all_runs=true")
-        with ui.column().classes("epi-page-padding w-full max-w-5xl gap-3"):
+        ui.add_css(BENCHMARK_DETAIL_CSS)
+        with ui.column().classes("epi-page epi-benchmark-page epi-run-page"):
             ui.link("← Back to the leaderboard", f"/ui/benchmarks/{benchmark_id}?tab=leaderboard").classes("text-sm")
             try:
                 board = actions.read_leaderboard(benchmark_id, "interval_score", False)
@@ -210,7 +180,7 @@ def register_leaderboard_page() -> None:
             if entry is None:
                 error_label("Run not found.")
                 return
-            _entry_detail(entry, benchmark_id)
+            run_details.render(entry, board, tab=tab)
 
     @ui.page("/ui/benchmarks/{benchmark_id}")
     def leaderboard_page(benchmark_id: int, tab: str = _DEFAULT_TAB):

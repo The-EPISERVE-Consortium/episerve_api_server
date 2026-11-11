@@ -177,7 +177,14 @@ def history_window(entry: Entry) -> str:
 
 
 def chart_option(entry: Entry) -> dict:
-    """ECharts option: observed and forecast lines with a shaded q10-q90 band (stacked areas)."""
+    """Build an accessible forecast chart with a shaded q10–q90 interval.
+
+    Args:
+        entry: Stored forecast and observed values, including optional quantiles.
+
+    Returns:
+        ECharts options using the benchmark blue and teal palette.
+    """
     points = entry.points
     q10 = [p.get("q10") for p in points]
     widths = [
@@ -186,6 +193,13 @@ def chart_option(entry: Entry) -> dict:
     ]
     # Missing q10/q90 leave a gap; the band is only drawn where both bounds exist.
     base = [lo if w is not None else None for lo, w in zip(q10, widths)]
+    legend = {
+        "data": ["Observed", "Forecast", {"name": "q10–q90", "icon": "roundRect"}],
+        "bottom": 4,
+        "type": "plain",
+        "textStyle": {"color": "#475569", "fontSize": 13},
+        ":formatter": "(name) => name === 'q10–q90' ? '80% prediction interval (q10–q90)' : name",
+    }
     return {
         "tooltip": {
             "trigger": "axis",
@@ -198,16 +212,31 @@ def chart_option(entry: Entry) -> dict:
                 " t += '<br/>q10: ' + fmt(d[q]) + '<br/>q90: ' + fmt(e[q]); return t; }"
             ) % (_json(q10), _json([p.get("q90") for p in points])),
         },
-        "legend": {"data": ["Observed", "Forecast", "q10–q90"]},
-        "xAxis": {"type": "category", "data": [p["date"] for p in points]},
-        "yAxis": {"type": "value", "scale": True},
+        "animation": False,
+        "aria": {"enabled": True},
+        "color": ["#216dc2", "#008895", "#008895", "#008895"],
+        "grid": {"left": 14, "right": 18, "top": 40, "bottom": 76, "containLabel": True},
+        "legend": legend,
+        "xAxis": {"type": "category", "boundaryGap": False, "data": [p["date"] for p in points],
+                  "axisLabel": {"color": "#475569", "hideOverlap": True,
+                                "interval": max(0, (len(points) - 1) // 4 - 1),
+                                ":formatter": "(value) => { const d = new Date(value + 'T00:00:00Z'); return d.toLocaleDateString('en-GB', {day: '2-digit', month: 'short', timeZone: 'UTC'}); }"},
+                  "axisLine": {"lineStyle": {"color": "#d4cfc5"}}},
+        "yAxis": {"type": "value", "scale": True, "splitNumber": 4,
+                  ":min": "(extent) => Math.min(0, extent.min)", "nameTextStyle": {"color": "#475569"},
+                  "axisLabel": {"color": "#475569"}, "splitLine": {"lineStyle": {"color": "#e2e8f0"}}},
+        "media": [{"query": {"maxWidth": 500}, "option": {
+            "grid": {"bottom": 110},
+            "legend": {**legend, "orient": "vertical", "left": "center", "bottom": 0,
+                       "itemGap": 8, "textStyle": {"fontSize": 11}},
+        }}],
         "series": [
-            {"name": "Observed", "type": "line", "data": [p.get("truth") for p in points]},
-            {"name": "Forecast", "type": "line", "data": [p.get("forecast") for p in points]},
+            {"name": "Observed", "type": "line", "showSymbol": False, "lineStyle": {"width": 2}, "data": [p.get("truth") for p in points]},
+            {"name": "Forecast", "type": "line", "showSymbol": False, "lineStyle": {"width": 2}, "data": [p.get("forecast") for p in points]},
             {"name": "q10 base", "type": "line", "stack": "band", "symbol": "none", "silent": True,
              "lineStyle": {"opacity": 0}, "areaStyle": {"opacity": 0}, "data": base},
             {"name": "q10–q90", "type": "line", "stack": "band", "symbol": "none", "silent": True,
-             "lineStyle": {"opacity": 0}, "areaStyle": {"color": "rgba(59,130,246,0.2)"}, "data": widths},
+             "lineStyle": {"opacity": 0}, "areaStyle": {"color": "rgba(0,136,149,0.18)"}, "data": widths},
         ],
     }
 
