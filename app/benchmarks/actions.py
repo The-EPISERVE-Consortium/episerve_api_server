@@ -15,7 +15,7 @@ import pandas as pd
 from app.benchmarks import fdo, materialize, preview, recipe, store
 from app.benchmarks.definition import (
     Benchmark, DefinitionError, derive_horizon, input_uri, materialized_from_row,
-    normalize_covariates, normalize_filters, validate,
+    normalize_covariates, normalize_filters, target_preview_from_row, validate,
 )
 from app.benchmarks.errors import Conflict, Forbidden, NotDraft, NotFound  # noqa: F401  (re-exported)
 from app.clients import ckan as ckan_client
@@ -231,7 +231,7 @@ def _covariate_data(benchmark: Benchmark, commit: str, sources: list | None = No
 
 def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materialize.Built",
               sources: list | None, view: dict) -> dict:
-    """Store generated files and freeze their recipe and target preview.
+    """Store generated files and freeze their recipe.
 
     Args:
         benchmark_id: Benchmark receiving the generated object.
@@ -242,7 +242,7 @@ def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materi
         view: Resolved benchmark row used to freeze the generation recipe.
 
     Returns:
-        Manifest containing file checksums, provenance, recipe, and static images.
+        Manifest containing file checksums, provenance, and the generation recipe.
     """
     input_bytes, input_sha = materialize.to_parquet(built.input)
     reference_bytes, reference_sha = materialize.to_parquet(built.reference)
@@ -270,15 +270,14 @@ def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materi
         files, f"benchmark {benchmark_id}: generated input and reference files")
     manifest.update(branch=branch, commit=commit)
     manifest["recipe"] = recipe.describe(view, manifest)
-    manifest["target_preview"] = preview.build(benchmark, built)
     return manifest
 
 
 def store_target_preview(benchmark_id: int) -> dict:
-    """Add a missing static image using an existing benchmark's frozen files.
+    """Fill the dedicated preview column using an existing benchmark's frozen files.
 
     Args:
-        benchmark_id: Final benchmark whose manifest should receive the preview.
+        benchmark_id: Final benchmark whose preview column should be populated.
 
     Returns:
         The stored target preview, including an existing image when present.
@@ -294,8 +293,9 @@ def store_target_preview(benchmark_id: int) -> dict:
     manifest = materialized_from_row(row)
     if store.state(row) != "final" or not manifest:
         raise NotFound(f"Benchmark {benchmark_id} has no finalized generated files")
-    if manifest.get("target_preview"):
-        return manifest["target_preview"]
+    existing = target_preview_from_row(row)
+    if existing:
+        return existing
     frames = {}
     for kind in ("input", "reference"):
         info = manifest[kind]
@@ -308,9 +308,11 @@ def store_target_preview(benchmark_id: int) -> dict:
         frames[kind] = pd.read_parquet(BytesIO(data))
     result = preview.build(store.benchmark_from_row(row), materialize.Built(**frames))
     if not store.set_target_preview(benchmark_id, result, expected_commit=manifest["commit"]):
-        current = materialized_from_row(_row(benchmark_id)) or {}
-        if current.get("commit") == manifest["commit"] and current.get("target_preview"):
-            return current["target_preview"]
+        current_row = _row(benchmark_id)
+        current = materialized_from_row(current_row) or {}
+        existing = target_preview_from_row(current_row)
+        if current.get("commit") == manifest["commit"] and existing:
+            return existing
         raise Conflict("The benchmark manifest changed while its preview was generated")
     return result
 
@@ -339,6 +341,11 @@ def finalize(benchmark_id: int, expected_commit: str | None = None, *, by: User)
     With ``expected_commit`` (the commit of the last check) the finalization is refused when
     the head moved since.
 
+    Args:
+        benchmark_id: Draft whose data and preview should be frozen.
+        expected_commit: Optional source commit observed by the previous check.
+        by: Authenticated user requesting finalization.
+
     Raises:
         Forbidden: ``by`` is not the creator of the draft.
         Conflict: ``expected_commit`` differs from the current head commit.
@@ -365,9 +372,11 @@ def finalize(benchmark_id: int, expected_commit: str | None = None, *, by: User)
     view = {**row, "history_end": report.history_end, "data_commit": commit, "component_name": report.component_name}
     manifest = _manifest(benchmark_id, row["name"], replace(benchmark, data_commit=commit), report.built,
                          report.sources, view)
+    target_preview = preview.build(benchmark, report.built)
     done = store.finalize(
         benchmark_id, data_commit=commit, component_name=report.component_name, truth_points=report.truth_points,
         prediction_length=report.prediction_length, history_end=report.history_end, materialized=manifest,
+        target_preview=target_preview,
     )
     if not done:
         raise NotFound(f"Benchmark {benchmark_id} not found")

@@ -123,6 +123,21 @@ def materialized_from_row(row: dict) -> dict | None:
     return stored or None
 
 
+def target_preview_from_row(row: dict) -> dict | None:
+    """Read static images from the benchmark's dedicated preview column.
+
+    Args:
+        row: Benchmark row whose target_preview may be JSON text or a dictionary.
+
+    Returns:
+        Stored image metadata, or None when no preview has been generated.
+    """
+    stored = row.get("target_preview")
+    if isinstance(stored, str):
+        return json.loads(stored) if stored else None
+    return stored or None
+
+
 def object_url(manifest: dict, kind: str = "input", *, versioned: bool = True) -> str:
     """The DOIP URL of a generated file (``input`` or ``reference``); with ``versioned`` it carries the commit of the
     benchmarks repository it was stored in.

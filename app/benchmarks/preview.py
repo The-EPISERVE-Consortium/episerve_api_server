@@ -29,7 +29,7 @@ def _image(benchmark: Benchmark, built: Built, *, mobile: bool) -> str:
         mobile: Whether to use a narrow layout with fewer date ticks.
 
     Returns:
-        PNG data URI with bounded size for the stored benchmark manifest.
+        PNG data URI with bounded size for the dedicated preview column.
     """
     figure = Figure(figsize=(5 if mobile else 11, 3), dpi=110, facecolor="white")
     FigureCanvasAgg(figure)

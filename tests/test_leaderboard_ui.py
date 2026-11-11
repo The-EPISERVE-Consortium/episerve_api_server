@@ -480,7 +480,7 @@ def test_overview_displays_frozen_target_images_instead_of_the_period_bar(monkey
         monkeypatch: Fixture replacing benchmark and leaderboard storage calls.
     """
     preview = {"image": "data:image/png;base64,desktop", "mobile_image": "data:image/png;base64,mobile"}
-    row = {**ROW, "materialized": json.dumps({**MANIFEST, "target_preview": preview})}
+    row = {**ROW, "target_preview": json.dumps(preview)}
     out = _render(monkeypatch, row=row, board=_board([]))
     elements = out["find"](ui.element)
     image = next(e for e in elements if e.props.get("alt", "").startswith("Observed target series"))

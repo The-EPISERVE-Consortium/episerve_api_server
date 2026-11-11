@@ -31,12 +31,17 @@ def test_update_draft_reports_unknown_ids_and_refuses_final_or_retired(monkeypat
 
 
 def test_finalize_sets_the_pin_once(monkeypatch):
+    """Persist the data pin, manifest, and preview in the finalization transaction.
+
+    Args:
+        monkeypatch: Fixture replacing the database connection.
+    """
     conn = _use(monkeypatch, ([{"finalized_at": None, "retired_at": None}], 1, None), ([], 1, None))
     assert store.finalize(3, data_commit="ab" * 32, component_name="d.parquet", truth_points=27,
                           prediction_length=27, history_end=date(2026, 3, 25)) is True
     update_sql, params = conn.executed[1]
     assert "finalized_at = NOW()" in update_sql and "data_commit" in update_sql
-    assert params == ("ab" * 32, "d.parquet", 27, 27, date(2026, 3, 25), None, 3)    # no manifest without covariates
+    assert params == ("ab" * 32, "d.parquet", 27, 27, date(2026, 3, 25), None, None, 3)
 
 
 def test_finalize_refuses_a_final_benchmark_and_reports_unknown_ids(monkeypatch):
@@ -107,9 +112,9 @@ def test_target_preview_updates_only_a_missing_image_on_the_expected_final_manif
     conn = _use(monkeypatch, ([], 1, None))
     assert store.set_target_preview(3, {"image": "png"}, expected_commit="ab" * 32)
     sql, params = conn.executed[0]
-    assert "JSON_SET(materialized" in sql
+    assert "SET target_preview = %s" in sql and "SET materialized" not in sql
     assert "finalized_at IS NOT NULL" in sql and "retired_at IS NULL" in sql
-    assert "$.commit" in sql and "JSON_EXTRACT(materialized, '$.target_preview') IS NULL" in sql
+    assert "$.commit" in sql and "AND target_preview IS NULL" in sql
     assert params == ('{"image": "png"}', 3, "ab" * 32)
     assert conn.commits == 1 and conn.closed
     _use(monkeypatch, ([], 0, None))
@@ -134,8 +139,9 @@ def test_the_filters_are_stored_as_json_and_read_back():
 
 
 def test_covariates_and_the_manifest_are_stored_as_json_and_read_back():
+    """Keep covariates, file manifests, and target images in separate JSON columns."""
     import json
-    from app.benchmarks.definition import Covariate, materialized_from_row
+    from app.benchmarks.definition import Covariate, materialized_from_row, target_preview_from_row
     cov = Covariate("wetter", "Q2", "day", ("temp",), (("city", "Berlin"),), "sum")
     bench = Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30), covariates=(cov,))
     stored = store._definition_params("n", None, bench)[-1]
@@ -147,8 +153,11 @@ def test_covariates_and_the_manifest_are_stored_as_json_and_read_back():
     assert store._definition_params("n", None, Benchmark("Q1", "v", "datum", date(2026, 4, 1), date(2026, 9, 30)))[-1] is None
     conn = _use(__import__("pytest").MonkeyPatch(), ([{"finalized_at": None, "retired_at": None}], 1, None), ([], 1, None))
     manifest = {"repo": "benchmarks", "commit": "c"}
+    preview = {"image": "data:image/png;base64,preview", "mobile_image": "data:image/png;base64,mobile"}
     store.finalize(3, data_commit="ab" * 32, component_name="d.parquet", truth_points=1, prediction_length=1,
-                   history_end=date(2026, 3, 25), materialized=manifest)
-    assert json.loads(conn.executed[1][1][-2]) == manifest
+                   history_end=date(2026, 3, 25), materialized=manifest, target_preview=preview)
+    assert json.loads(conn.executed[1][1][-3]) == manifest
+    assert json.loads(conn.executed[1][1][-2]) == preview
+    assert target_preview_from_row({"target_preview": conn.executed[1][1][-2]}) == preview
     assert materialized_from_row({"materialized": json.dumps(manifest)}) == manifest and materialized_from_row({}) is None
 

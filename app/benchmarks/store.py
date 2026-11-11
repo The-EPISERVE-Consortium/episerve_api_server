@@ -20,7 +20,7 @@ def _connect():
 _SELECT = (
     "SELECT b.id, b.name, b.description, b.dataset_qid, b.target_column, b.date_column, b.filters, "
     "b.test_start, b.test_end, b.history_start, b.history_end, b.input_filename, "
-    "b.component_name, b.prediction_length, b.truth_points, b.data_commit, b.covariates, b.materialized, b.created_by, "
+    "b.component_name, b.prediction_length, b.truth_points, b.data_commit, b.covariates, b.materialized, b.target_preview, b.created_by, "
     "(SELECT u.name FROM users u WHERE u.id = b.created_by) AS created_by_name, "
     "CAST(b.created_at AS CHAR) AS created_at, CAST(b.finalized_at AS CHAR) AS finalized_at, "
     "CAST(b.retired_at AS CHAR) AS retired_at, "
@@ -112,10 +112,22 @@ def update_draft(benchmark_id: int, name: str, description: str | None, benchmar
 
 def finalize(
     benchmark_id: int, *, data_commit: str, component_name: str, truth_points: int,
-    prediction_length: int, history_end: date, materialized: dict | None = None,
+    prediction_length: int, history_end: date, materialized: dict | None = None, target_preview: dict | None = None,
 ) -> bool:
-    """Freeze a draft and record the pin (and, for a benchmark with covariates, the manifest of its generated files);
-    False if the id is unknown.
+    """Freeze a draft and atomically store its generated manifest and target image.
+
+    Args:
+        benchmark_id: Draft to finalize.
+        data_commit: Pinned source data commit.
+        component_name: Target dataset component.
+        truth_points: Number of held-out observations.
+        prediction_length: Derived forecast horizon.
+        history_end: Resolved input window boundary.
+        materialized: Generated-file manifest and recipe.
+        target_preview: Static images for the dedicated target_preview column.
+
+    Returns:
+        Whether a known draft was finalized.
 
     Raises:
         NotDraft: If the benchmark is already final or retired.
@@ -127,9 +139,10 @@ def finalize(
                 return False
             cur.execute(
                 "UPDATE benchmarks SET data_commit = %s, component_name = %s, truth_points = %s, "
-                "prediction_length = %s, history_end = %s, materialized = %s, finalized_at = NOW() WHERE id = %s",
+                "prediction_length = %s, history_end = %s, materialized = %s, target_preview = %s, finalized_at = NOW() WHERE id = %s",
                 (data_commit, component_name, truth_points, prediction_length, history_end,
-                 json.dumps(materialized) if materialized else None, benchmark_id),
+                 json.dumps(materialized) if materialized else None,
+                 json.dumps(target_preview) if target_preview else None, benchmark_id),
             )
         conn.commit()
         return True
@@ -149,7 +162,7 @@ def set_materialized(benchmark_id: int, materialized: dict) -> None:
 
 
 def set_target_preview(benchmark_id: int, preview: dict, *, expected_commit: str) -> bool:
-    """Attach an image without replacing other fields of the frozen manifest.
+    """Populate the dedicated preview column without changing the frozen manifest.
 
     Args:
         benchmark_id: Final benchmark to update.
@@ -163,10 +176,10 @@ def set_target_preview(benchmark_id: int, preview: dict, *, expected_commit: str
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "UPDATE benchmarks SET materialized = JSON_SET(materialized, '$.target_preview', JSON_EXTRACT(%s, '$')) "
+                "UPDATE benchmarks SET target_preview = %s "
                 "WHERE id = %s AND finalized_at IS NOT NULL AND retired_at IS NULL "
                 "AND JSON_UNQUOTE(JSON_EXTRACT(materialized, '$.commit')) = %s "
-                "AND JSON_EXTRACT(materialized, '$.target_preview') IS NULL",
+                "AND target_preview IS NULL",
                 (json.dumps(preview), benchmark_id, expected_commit),
             )
             updated = cur.rowcount == 1

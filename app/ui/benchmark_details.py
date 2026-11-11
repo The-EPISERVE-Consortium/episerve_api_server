@@ -6,7 +6,7 @@ from datetime import date
 from nicegui import ui
 
 from app.benchmarks import recipe
-from app.benchmarks.definition import filters_from_row, materialized_from_row
+from app.benchmarks.definition import filters_from_row, materialized_from_row, target_preview_from_row
 from app.leaderboard.about import description_text, overview_facts
 
 
@@ -106,7 +106,7 @@ def overview(row: dict, *, can_edit: bool, on_edit: Callable[[], None]) -> None:
             ui.label("The model sees the input period. Forecasts are evaluated over the reference period.").classes(
                 "epi-benchmark-body"
             )
-            preview = manifest.get("target_preview")
+            preview = target_preview_from_row(row)
             if preview:
                 with ui.element("picture").classes("epi-benchmark-target-preview"):
                     source = ui.element("source").props('media="(max-width: 700px)"')

@@ -162,13 +162,14 @@ def test_finalize_pins_the_commit_read_during_the_check(world):
     bid, kw = world["log"]["finalized"][0]
     assert bid == 3 and kw == {"data_commit": COMMIT, "component_name": "d.parquet", "truth_points": 27,
                                "prediction_length": 27, "history_end": date(2026, 3, 25),
-                               "materialized": kw["materialized"]}
+                               "materialized": kw["materialized"], "target_preview": kw["target_preview"]}
     manifest = kw["materialized"]
     assert manifest["input"]["columns"] == ["datum", "v"] and manifest["reference"]["rows"] == 27
     assert manifest["commit"] == "ee" * 32
-    assert manifest["target_preview"]["input_points"] == 26
-    assert manifest["target_preview"]["reference_points"] == 27
-    assert manifest["target_preview"]["image"].startswith("data:image/png;base64,")
+    assert "target_preview" not in manifest
+    assert kw["target_preview"]["input_points"] == 26
+    assert kw["target_preview"]["reference_points"] == 27
+    assert kw["target_preview"]["image"].startswith("data:image/png;base64,")
 
 
 def test_existing_preview_uses_only_checksum_verified_frozen_files(world, monkeypatch):
@@ -180,7 +181,7 @@ def test_existing_preview_uses_only_checksum_verified_frozen_files(world, monkey
     """
     actions.finalize(3, by=CREATOR)
     manifest = world["log"]["finalized"][0][1]["materialized"]
-    original_preview = manifest.pop("target_preview")
+    original_preview = world["log"]["finalized"][0][1]["target_preview"]
     world["state"]["row"] = _final(materialized=json.dumps(manifest))
     files = world["log"]["written"][0][0]
     reads, saved = [], []
@@ -212,7 +213,7 @@ def test_existing_preview_uses_only_checksum_verified_frozen_files(world, monkey
             True to represent a successful guarded update.
         """
         saved.append((benchmark_id, expected_commit))
-        world["state"]["row"]["materialized"] = {**manifest, "target_preview": result}
+        world["state"]["row"]["target_preview"] = json.dumps(result)
         return True
 
     monkeypatch.setattr(actions.lakefs_client, "read_benchmark_component", read)
@@ -223,8 +224,9 @@ def test_existing_preview_uses_only_checksum_verified_frozen_files(world, monkey
     assert saved == [(3, manifest["commit"])] and len(reads) == 2
     assert all(commit == manifest["commit"] for commit, _, _ in reads)
     assert world["log"]["reads"] == before and len(world["log"]["written"]) == 1
+    assert world["state"]["row"]["materialized"] == json.dumps(manifest)
     assert actions.store_target_preview(3) == result and len(reads) == 2
-    world["state"]["row"]["materialized"] = manifest
+    world["state"]["row"]["target_preview"] = None
     monkeypatch.setattr(actions.lakefs_client, "read_benchmark_component", lambda *args: b"changed file")
     with pytest.raises(LoadError, match="checksum"):
         actions.store_target_preview(3)
