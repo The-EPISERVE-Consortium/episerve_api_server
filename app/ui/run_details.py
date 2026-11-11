@@ -1,11 +1,16 @@
 """Results, forecast rows, and provenance for one stored benchmark run."""
 
 from datetime import datetime, timezone
+import logging
 
-from nicegui import ui
+from nicegui import run, ui
+
+from app.leaderboard import actions
 
 from app.leaderboard.present import chart_option, history_days, history_window, model_label, point_rows
 from app.leaderboard.service import Entry, Leaderboard
+
+logger = logging.getLogger(__name__)
 
 _TABS = {"results": "Results", "forecast-data": "Forecast data", "run-details": "Run details"}
 _METRIC_HELP = {
@@ -92,8 +97,58 @@ def _metadata(entry: Entry) -> None:
                     _field(label, value, mono=mono)
 
 
+def _forecast_chart(entry: Entry, board: Leaderboard) -> None:
+    """Render the forecast and lazily fetch optional frozen model input history.
+
+    Args:
+        entry: Stored scored run with its recorded input window.
+        board: Parent benchmark supplying the target column and identifier.
+    """
+    state = {"history": None, "loading": False, "error": ""}
+
+    async def change_history() -> None:
+        """Update the chart after a history toggle and retain successful reads."""
+        if state["loading"]:
+            return
+        if toggle.value and state["history"] is None:
+            state["loading"] = True
+            toggle.disable()
+            state["error"] = ""
+            status.set_text("Loading frozen model input…")
+            try:
+                state["history"] = await run.io_bound(actions.read_input_history, board.benchmark_id, entry.run_qid)
+            except Exception:
+                logger.exception("could not load frozen input history for run %s", entry.run_qid)
+                state["error"] = "Model input history could not be loaded. Switch it on again to retry."
+                toggle.set_value(False)
+                status.set_text(state["error"])
+                return
+            finally:
+                toggle.enable()
+                state["loading"] = False
+        history = state["history"] if toggle.value else None
+        status.set_text("Target values from the frozen benchmark input supplied to this run." if history else state["error"])
+        options = chart_option(entry, history)
+        options["yAxis"]["name"] = board.benchmark.target_column
+        chart.options.clear()
+        chart.options.update(options)
+        chart.update()
+
+    with ui.row().classes("epi-run-history-control"):
+        toggle = ui.switch("Show model input history", value=False, on_change=change_history)
+    status = ui.label("").classes("epi-benchmark-note epi-run-history-status").props("role=status aria-live=polite")
+    if entry.used_columns is not None and board.benchmark.target_column not in entry.used_columns:
+        toggle.disable()
+        status.set_text("This run did not use the benchmark target column as an input.")
+    options = chart_option(entry)
+    options["yAxis"]["name"] = board.benchmark.target_column
+    chart = ui.echart(options).classes("epi-run-chart").props(
+        "aria-label='Observed values, forecast, prediction interval, and optional model input history'"
+    )
+
+
 def render(entry: Entry, board: Leaderboard, *, tab: str = "results") -> None:
-    """Render the approved run layout using only stored benchmark results.
+    """Render stored run results with an optional view of the frozen input.
 
     Args:
         entry: Stored scored run to display.
@@ -129,9 +184,7 @@ def render(entry: Entry, board: Leaderboard, *, tab: str = "results") -> None:
             with ui.element("section").classes("epi-run-forecast"):
                 ui.label("Forecast vs observed").classes("epi-benchmark-heading").props("role=heading aria-level=2")
                 ui.label(f"{_date(board.benchmark.test_start)} – {_date(board.benchmark.test_end)} · {board.benchmark.target_column}").classes("epi-benchmark-body")
-                chart = chart_option(entry)
-                chart["yAxis"]["name"] = board.benchmark.target_column
-                ui.echart(chart).classes("epi-run-chart").props("aria-label='Observed values, forecast, and 80% prediction interval'")
+                _forecast_chart(entry, board)
             ui.label("Coverage is the share of observed values inside the q10–q90 interval.").classes("epi-benchmark-note")
             with ui.element("div").classes("epi-run-windows"):
                 days = history_days(entry)

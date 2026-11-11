@@ -653,3 +653,105 @@ def test_run_detail_keeps_missing_metrics_and_quantiles_explicit(monkeypatch):
     table = out["find"](ui.table)[0]
     assert table.rows[0]["forecast"] == "—" and table.rows[0]["error"] == "—"
     assert table.props["pagination"]["rowsPerPage"] == 10
+
+
+def test_input_history_is_lazy_and_reused_when_toggled(monkeypatch):
+    """Fetch optional history only on demand and cache it for this page.
+
+    Args:
+        monkeypatch: Fixture isolating the history loader and thread execution.
+    """
+    from app.ui import run_details
+    calls = []
+    monkeypatch.setattr(run_details.actions, "read_input_history",
+                        lambda *args: calls.append(args) or [{"date": "2021-12-31", "value": 4.0}])
+
+    async def inline(function, *args):
+        """Execute the history read without a worker thread.
+
+        Args:
+            function: Loader being tested.
+            *args: Positional loader arguments.
+
+        Returns:
+            Loader result.
+        """
+        return function(*args)
+
+    monkeypatch.setattr(run_details.run, "io_bound", inline)
+
+    async def toggle_history(out, client, find, drain):
+        """Toggle history on, off, and on while checking chart dates.
+
+        Args:
+            out: UI harness results.
+            client: NiceGUI client.
+            find: Element lookup helper.
+            drain: Deferred callback runner.
+        """
+        toggle = find(ui.switch)[0]
+        assert calls == [] and not toggle.value
+        toggle.set_value(True)
+        await drain()
+        assert find(ui.echart)[0].options["xAxis"]["data"][0] == "2021-12-31"
+        toggle.set_value(False)
+        await drain()
+        assert find(ui.echart)[0].options["xAxis"]["data"][0] == "2022-01-05"
+        toggle.set_value(True)
+        await drain()
+        assert calls == [(3, "Q10")]
+
+    _detail(monkeypatch, after=toggle_history)
+
+
+def test_input_history_load_failure_leaves_forecast_usable_and_allows_retry(monkeypatch):
+    """Recover from an unavailable input without exposing service errors.
+
+    Args:
+        monkeypatch: Fixture isolating the history loader and thread execution.
+    """
+    from app.ui import run_details
+    attempts = []
+
+    async def read(function, *args):
+        """Simulate a failed read followed by a successful retry.
+
+        Args:
+            function: History loader, unused in this isolated scenario.
+            *args: Requested benchmark and run identifiers.
+
+        Returns:
+            Target history after the first failed attempt.
+
+        Raises:
+            RuntimeError: On the first attempt, with internal service details.
+        """
+        attempts.append(args)
+        if len(attempts) == 1:
+            raise RuntimeError("private lakeFS connection details")
+        return [{"date": "2021-12-31", "value": 4.0}]
+
+    monkeypatch.setattr(run_details.run, "io_bound", read)
+
+    async def retry(out, client, find, drain):
+        """Check forecast preservation, a readable error, and successful retry.
+
+        Args:
+            out: UI harness results.
+            client: NiceGUI client.
+            find: Element lookup helper.
+            drain: Deferred callback runner.
+        """
+        toggle = find(ui.switch)[0]
+        toggle.set_value(True)
+        await drain()
+        assert not toggle.value
+        assert find(ui.echart)[0].options["xAxis"]["data"] == ["2022-01-05", "2022-01-12"]
+        labels = [label.text for label in find(ui.label)]
+        assert any("Switch it on again to retry" in label for label in labels)
+        assert not any("private lakeFS" in label for label in labels)
+        toggle.set_value(True)
+        await drain()
+        assert find(ui.echart)[0].options["xAxis"]["data"][0] == "2021-12-31"
+
+    _detail(monkeypatch, after=retry)

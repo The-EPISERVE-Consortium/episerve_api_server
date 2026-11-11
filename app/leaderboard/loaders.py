@@ -165,3 +165,44 @@ def fetch_run_params(qid: str, doip_base: str) -> dict:
     except Exception:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def input_history(manifest: dict, benchmark: Benchmark, start: date | None, end: date) -> list[dict]:
+    """Read target history from the exact frozen input supplied to a model run.
+
+    Args:
+        manifest: Generated benchmark files with immutable commit and checksum.
+        benchmark: Supplies the generated date and target column names.
+        start: First input date recorded for the run, or an unbounded start.
+        end: Last input date recorded for the run.
+
+    Returns:
+        Sorted date and value pairs, retaining gaps for missing target values.
+
+    Raises:
+        LoadError: The frozen input is missing, altered, invalid, or empty.
+    """
+    info = manifest["input"]
+    try:
+        data = lakefs_client.read_benchmark_component(
+            manifest["commit"], info["qid"], info["component"], MAX_DOWNLOAD_BYTES)
+    except (NotFoundException, ValueError) as exc:
+        raise LoadError("The benchmark's frozen input file could not be read.") from exc
+    if hashlib.sha256(data).hexdigest() != info["sha256"]:
+        raise LoadError("The benchmark's input file does not match its recorded hash.")
+    try:
+        frame = pq.read_table(BytesIO(data), columns=[benchmark.date_column, benchmark.target_column]).to_pandas()
+        dates = pd.to_datetime(frame[benchmark.date_column], errors="coerce").dt.normalize()
+        values = pd.to_numeric(frame[benchmark.target_column], errors="coerce")
+    except (pa.ArrowException, KeyError, ValueError, TypeError) as exc:
+        raise LoadError("The benchmark's frozen input series could not be read.") from exc
+    if dates.isna().any() or dates.duplicated().any():
+        raise LoadError("The benchmark's frozen input contains invalid or duplicate dates.")
+    selected = (dates <= pd.Timestamp(end)) & (dates < pd.Timestamp(benchmark.test_start))
+    if start is not None:
+        selected &= dates >= pd.Timestamp(start)
+    out = pd.DataFrame({"date": dates[selected], "value": values[selected]}).sort_values("date")
+    if out.empty:
+        raise LoadError("The benchmark's frozen input has no history for this run.")
+    return [{"date": row.date.date().isoformat(), "value": float(row.value) if pd.notna(row.value) and np.isfinite(row.value) else None}
+            for row in out.itertuples(index=False)]

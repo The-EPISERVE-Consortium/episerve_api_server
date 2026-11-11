@@ -141,3 +141,29 @@ def candidates(benchmark_id: int) -> list[dict]:
         ckan_client.list_model_runs(), active, _manifest(row),
         load_params=lambda qid: loaders.fetch_run_params(qid, settings.doip_url),
     )
+
+
+def read_input_history(benchmark_id: int, run_qid: str) -> list[dict]:
+    """Read optional target history from a scored run's pinned benchmark input.
+
+    Args:
+        benchmark_id: Public benchmark containing the stored run.
+        run_qid: Identifier of the scored run whose input should be displayed.
+
+    Returns:
+        Target values within the run's recorded input history window.
+
+    Raises:
+        NotFound: Benchmark or scored run does not exist.
+        LoadError: Input pins differ from the scored run, or input cannot be read.
+    """
+    row = bstore.get(benchmark_id)
+    if row is None or not bstore.is_public(row):
+        raise NotFound(f"Benchmark {benchmark_id} not found")
+    entry = next((item for item in store.list_entries(benchmark_id) if item.run_qid == run_qid), None)
+    if entry is None:
+        raise NotFound("Run not found")
+    manifest = _manifest(row)
+    if manifest["commit"] != entry.truth_commit:
+        raise LoadError("The run's data version differs from the benchmark's frozen input.")
+    return loaders.input_history(manifest, bstore.benchmark_from_row(row), entry.history_start, entry.history_end)

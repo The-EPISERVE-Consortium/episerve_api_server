@@ -102,3 +102,21 @@ def test_columns_text_is_short_for_all_columns_and_lists_a_selection():
     assert columns_text(every, every) == "all (3)"
     assert columns_text(["datum", "v"], every) == "datum, v"
     assert columns_text(None, every) == "—" and columns_text([], every) == "none"
+
+
+def test_history_chart_aligns_forecasts_and_intervals_without_changing_values():
+    """Pad forecast series over history without shifting their quantiles or dates."""
+    from app.leaderboard.present import chart_option
+    entry = _with_points([
+        {"date": "2022-01-05", "truth": 10.0, "forecast": 11.0, "q10": 9.0, "q90": 13.0},
+        {"date": "2022-01-12", "truth": 20.0, "forecast": 21.0, "q10": 19.0, "q90": 23.0},
+    ])
+    chart = chart_option(entry, [{"date": "2021-12-30", "value": 3.0}, {"date": "2021-12-31", "value": None}])
+    assert chart["xAxis"]["data"] == ["2021-12-30", "2021-12-31", "2022-01-05", "2022-01-12"]
+    series = {item["name"]: item for item in chart["series"]}
+    assert series["Model input"]["data"] == [3.0, None, None, None]
+    assert series["Observed"]["data"] == [None, None, 10.0, 20.0]
+    assert series["Forecast"]["data"] == [None, None, 11.0, 21.0]
+    assert series["q10 base"]["data"] == [None, None, 9.0, 19.0]
+    assert series["q10–q90"]["data"] == [None, None, 4.0, 4.0]
+    assert series["Model input"]["markLine"]["data"] == [{"xAxis": "2022-01-05"}]

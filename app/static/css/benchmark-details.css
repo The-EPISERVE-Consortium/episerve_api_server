@@ -275,3 +275,8 @@
   .epi-run-field { grid-template-columns: 1fr; gap: 2px; }
   .epi-run-page .epi-benchmark-tabs .q-tab { padding-inline: 8px; }
 }
+.epi-run-history-control { align-items: center; margin-top: 8px; font-size: 0.875rem; }
+.epi-run-history-status:empty { display: none; }
+@media (max-width: 600px) {
+  .epi-run-forecast:has(.q-toggle__inner--truthy) .epi-run-chart { height: 380px; }
+}

@@ -121,3 +121,43 @@ def test_truth_from_reference_reads_the_file_at_the_commit_and_checks_its_hash(m
     with pytest.raises(loaders.LoadError, match="hash"):
         loaders.truth_from_reference({**manifest, "reference": {**manifest["reference"], "sha256": "0" * 64}}, BENCH)
 
+
+
+def test_input_history_checks_pin_and_keeps_missing_target_gaps(monkeypatch):
+    """Read only frozen input dates in the run window without filtering it again.
+
+    Args:
+        monkeypatch: Fixture replacing lakeFS with a frozen Parquet file.
+    """
+    import hashlib
+    data = _parquet_bytes(pd.DataFrame({
+        "datum": ["2021-11-30", "2021-12-01", "2021-12-15", "2021-12-31", "2022-01-01"],
+        "value": [5.0, 10.0, float("nan"), 20.0, 99.0],
+    }))
+    info = {"qid": "Q123", "component": "input.parquet", "sha256": hashlib.sha256(data).hexdigest()}
+    manifest = {"commit": "ab" * 32, "input": info}
+    calls = []
+    monkeypatch.setattr(loaders.lakefs_client, "read_benchmark_component",
+                        lambda *args: calls.append(args) or data)
+    result = loaders.input_history(manifest, BENCH, date(2021, 12, 1), date(2021, 12, 31))
+    assert calls[0][:3] == ("ab" * 32, "Q123", "input.parquet")
+    assert result == [{"date": "2021-12-01", "value": 10.0}, {"date": "2021-12-15", "value": None},
+                      {"date": "2021-12-31", "value": 20.0}]
+    with pytest.raises(loaders.LoadError, match="hash"):
+        loaders.input_history({**manifest, "input": {**info, "sha256": "0" * 64}}, BENCH, None, date(2021, 12, 31))
+
+
+@pytest.mark.parametrize("dates", [["invalid"], ["2021-12-01", "2021-12-01"], ["2022-01-05"]])
+def test_input_history_rejects_invalid_dates_duplicates_or_no_history(monkeypatch, dates):
+    """Refuse ambiguous dates and reference-only data rather than plotting history.
+
+    Args:
+        monkeypatch: Fixture replacing lakeFS reads.
+        dates: Invalid, duplicate, or out-of-window date values.
+    """
+    import hashlib
+    data = _parquet_bytes(pd.DataFrame({"datum": dates, "value": [1.0] * len(dates)}))
+    monkeypatch.setattr(loaders.lakefs_client, "read_benchmark_component", lambda *args: data)
+    manifest = {"commit": "ab" * 32, "input": {"qid": "Q123", "component": "input.parquet", "sha256": hashlib.sha256(data).hexdigest()}}
+    with pytest.raises(loaders.LoadError):
+        loaders.input_history(manifest, BENCH, None, date(2021, 12, 31))

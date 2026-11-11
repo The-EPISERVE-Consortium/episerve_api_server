@@ -206,3 +206,26 @@ def test_candidates_list_runs_that_read_the_input_file(world):
     assert [(c["qid"], c["reason"]) for c in actions.candidates(3)] == [("Q10", None)]
     world["stored"].append(Entry("Q10", "timesfm", "", {}, None, date(2021, 12, 31), "", 2, 2, {}, []))
     assert [(c["qid"], c["reason"]) for c in actions.candidates(3)] == [("Q10", "already on this leaderboard")]
+
+
+def test_read_input_history_requires_the_same_pin_as_the_stored_run(monkeypatch, world):
+    """Reject mismatched run versions before accessing any input file.
+
+    Args:
+        monkeypatch: Fixture replacing stored entries and the input loader.
+        world: Existing public benchmark fixture.
+    """
+    entry = Entry("Q10", "timesfm", "latest", {}, None, date(2021, 12, 31), "", 2, 2, {},
+                  truth_commit=MANIFEST["commit"])
+    monkeypatch.setattr(actions.store, "list_entries", lambda bid: [entry])
+    calls = []
+    monkeypatch.setattr(actions.loaders, "input_history", lambda *args: calls.append(args) or [{"date": "2021-12-31", "value": 2.0}])
+    assert actions.read_input_history(3, "Q10") == [{"date": "2021-12-31", "value": 2.0}]
+    assert calls[0][0] == MANIFEST and calls[0][2:] == (None, date(2021, 12, 31))
+    calls.clear()
+    entry.truth_commit = "ff" * 32
+    with pytest.raises(actions.LoadError, match="version"):
+        actions.read_input_history(3, "Q10")
+    assert not calls
+    with pytest.raises(actions.NotFound):
+        actions.read_input_history(3, "Q999")

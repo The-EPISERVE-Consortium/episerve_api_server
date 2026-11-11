@@ -176,16 +176,21 @@ def history_window(entry: Entry) -> str:
     return history_text(entry.history_start, entry.history_end)
 
 
-def chart_option(entry: Entry) -> dict:
+def chart_option(entry: Entry, history: list[dict] | None = None) -> dict:
     """Build an accessible forecast chart with a shaded q10–q90 interval.
 
     Args:
         entry: Stored forecast and observed values, including optional quantiles.
+        history: Optional date and value pairs from the frozen model input.
 
     Returns:
-        ECharts options using the benchmark blue and teal palette.
+        ECharts options with black observations, red forecasts, and optional history.
     """
-    points = entry.points
+    history = history or []
+    by_date = {point["date"]: point for point in entry.points}
+    dates = sorted({point["date"] for point in history} | set(by_date))
+    points = [by_date.get(day, {"date": day}) for day in dates]
+    input_by_date = {point["date"]: point["value"] for point in history}
     q10 = [p.get("q10") for p in points]
     widths = [
         p["q90"] - p["q10"] if p.get("q10") is not None and p.get("q90") is not None else None
@@ -194,7 +199,7 @@ def chart_option(entry: Entry) -> dict:
     # Missing q10/q90 leave a gap; the band is only drawn where both bounds exist.
     base = [lo if w is not None else None for lo, w in zip(q10, widths)]
     legend = {
-        "data": ["Observed", "Forecast", {"name": "q10–q90", "icon": "roundRect"}],
+        "data": (["Model input"] if history else []) + ["Observed", "Forecast", {"name": "q10–q90", "icon": "roundRect"}],
         "bottom": 4,
         "type": "plain",
         "textStyle": {"color": "#475569", "fontSize": 13},
@@ -207,37 +212,45 @@ def chart_option(entry: Entry) -> dict:
                 "(params) => { const q = params[0].dataIndex; const d = %s; const e = %s;"
                 " const fmt = (v) => (v === null || v === undefined) ? '—' : Number(v).toFixed(2);"
                 " let t = params[0].axisValueLabel;"
-                " params.forEach(p => { if (p.seriesName === 'Observed' || p.seriesName === 'Forecast')"
+                " params.forEach(p => { if (p.seriesName === 'Observed' || p.seriesName === 'Forecast' || p.seriesName === 'Model input')"
                 " t += '<br/>' + p.marker + p.seriesName + ': ' + fmt(p.value); });"
+                " if (params.some(p => p.seriesName === 'Forecast' && p.value !== null))"
                 " t += '<br/>q10: ' + fmt(d[q]) + '<br/>q90: ' + fmt(e[q]); return t; }"
             ) % (_json(q10), _json([p.get("q90") for p in points])),
         },
         "animation": False,
         "aria": {"enabled": True},
-        "color": ["#216dc2", "#008895", "#008895", "#008895"],
+        "color": ["#111111", "#c62828", "#c62828", "#c62828", "#111111"],
         "grid": {"left": 14, "right": 18, "top": 40, "bottom": 76, "containLabel": True},
         "legend": legend,
         "xAxis": {"type": "category", "boundaryGap": False, "data": [p["date"] for p in points],
                   "axisLabel": {"color": "#475569", "hideOverlap": True,
-                                "interval": max(0, (len(points) - 1) // 4 - 1),
-                                ":formatter": "(value) => { const d = new Date(value + 'T00:00:00Z'); return d.toLocaleDateString('en-GB', {day: '2-digit', month: 'short', timeZone: 'UTC'}); }"},
+                                "interval": max(0, (len(points) - 1) // 4 - 1), "showMaxLabel": True,
+                                ":formatter": "(value) => { const d = new Date(value + 'T00:00:00Z'); return d.toLocaleDateString('en-GB', {day: '2-digit', month: 'short', "
+                                + ("year: '2-digit', " if history else "") + "timeZone: 'UTC'}); }"},
                   "axisLine": {"lineStyle": {"color": "#d4cfc5"}}},
         "yAxis": {"type": "value", "scale": True, "splitNumber": 4,
                   ":min": "(extent) => Math.min(0, extent.min)", "nameTextStyle": {"color": "#475569"},
                   "axisLabel": {"color": "#475569"}, "splitLine": {"lineStyle": {"color": "#e2e8f0"}}},
         "media": [{"query": {"maxWidth": 500}, "option": {
-            "grid": {"bottom": 110},
+            "grid": {"bottom": 135 if history else 110},
             "legend": {**legend, "orient": "vertical", "left": "center", "bottom": 0,
                        "itemGap": 8, "textStyle": {"fontSize": 11}},
         }}],
         "series": [
-            {"name": "Observed", "type": "line", "showSymbol": False, "lineStyle": {"width": 2}, "data": [p.get("truth") for p in points]},
-            {"name": "Forecast", "type": "line", "showSymbol": False, "lineStyle": {"width": 2}, "data": [p.get("forecast") for p in points]},
+            {"name": "Observed", "type": "line", "showSymbol": False, "itemStyle": {"color": "#111111"}, "lineStyle": {"width": 2, "color": "#111111"}, "data": [p.get("truth") for p in points]},
+            {"name": "Forecast", "type": "line", "showSymbol": False, "itemStyle": {"color": "#c62828"}, "lineStyle": {"width": 2, "color": "#c62828"}, "data": [p.get("forecast") for p in points]},
             {"name": "q10 base", "type": "line", "stack": "band", "symbol": "none", "silent": True,
              "lineStyle": {"opacity": 0}, "areaStyle": {"opacity": 0}, "data": base},
             {"name": "q10–q90", "type": "line", "stack": "band", "symbol": "none", "silent": True,
-             "lineStyle": {"opacity": 0}, "areaStyle": {"color": "rgba(0,136,149,0.18)"}, "data": widths},
-        ],
+             "itemStyle": {"color": "rgba(198,40,40,0.3)"},
+             "lineStyle": {"opacity": 0}, "areaStyle": {"color": "rgba(198,40,40,0.14)"}, "data": widths},
+        ] + ([{"name": "Model input", "type": "line", "showSymbol": False,
+               "itemStyle": {"color": "#111111"}, "lineStyle": {"color": "#111111", "type": "dashed", "width": 2},
+               "data": [input_by_date.get(day) for day in dates],
+               "markLine": {"silent": True, "symbol": "none", "label": {"formatter": "Forecast starts", "position": "insideEndTop"},
+                            "lineStyle": {"color": "#6b7280", "type": "dashed"},
+                            "data": [{"xAxis": entry.points[0]["date"]}] if entry.points else []}}] if history else []),
     }
 
 
