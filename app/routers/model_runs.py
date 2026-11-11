@@ -1,5 +1,5 @@
 import json
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from app import users
 from app.auth import require_right
 from app.users import User
@@ -54,3 +54,34 @@ def get_model_run(run_id: str):
     if run is None:
         raise HTTPException(status_code=404, detail=f"Model run '{run_id}' not found")
     return run
+
+
+@router.get("/{run_id}/forecast-preview")
+def forecast_preview(run_id: str, response: Response, version: str | None = None):
+    """Return a lazy, versioned preview of supplied input and recorded forecasts.
+
+    Args:
+        run_id: Public model-run QID.
+        response: Response carrying cache-control headers.
+        version: Optional exact artifact commit.
+
+    Returns:
+        Generic chart data from the database cache or freshly reconstructed artifacts.
+
+    Raises:
+        HTTPException: Input, access, availability, or generation failure.
+    """
+    from app.forecast_preview import cache, service
+    import logging
+
+    response.headers['Cache-Control'] = 'no-store'
+    try:
+        return service.preview(run_id, version)
+    except service.PreviewError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc), headers={'Cache-Control': 'no-store'}) from exc
+    except cache.PreviewBusy as exc:
+        raise HTTPException(status_code=503, detail=str(exc), headers={'Retry-After': '3', 'Cache-Control': 'no-store'}) from exc
+    except Exception as exc:
+        logging.getLogger(__name__).exception('Forecast preview failed for %s', run_id)
+        raise HTTPException(status_code=503, detail='The preview service is unavailable. Please retry shortly.',
+                            headers={'Cache-Control': 'no-store'}) from exc
