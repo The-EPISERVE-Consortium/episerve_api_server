@@ -8,14 +8,15 @@ from starlette.requests import Request
 
 from app.ui import session
 from app.benchmarks import actions as bactions
-from app.benchmarks.definition import DefinitionError, covariates_from_row, filters_from_row
+from app.benchmarks.definition import DefinitionError, covariates_from_row, filters_from_row, materialized_from_row
 from app.clients import ckan as ckan_client
 from app.leaderboard import actions as lboard_actions
 from app.leaderboard.about import description_text
 from app.leaderboard.loaders import LoadError
-from app.leaderboard.present import LABELS
+from app.leaderboard.present import LABELS, model_label
 from app.ui.components.messages import error_label
 from app.ui.layout import header
+from app.ui.theme import BENCHMARK_LIST_CSS
 
 logger = logging.getLogger(__name__)
 
@@ -39,28 +40,51 @@ def _fmt(value) -> str:
 
 
 def _best_text(best: dict | None) -> str:
+    """Format a compact model name and its best score.
+
+    Args:
+        best: Best stored entry, or None when no entry has been scored.
+
+    Returns:
+        Model and metric summary, or a dash when no score is available.
+    """
     if not best:
         return "—"
-    return f"{best['model_name']} ({LABELS[best['metric']]} {best['value']:.2f})"
+    metric = "Interval score" if best["metric"] == "interval_score" else LABELS[best["metric"]]
+    return f"{model_label(best['model_name'])} · {metric} {best['value']:.2f}"
 
 
 def _input_range(row: dict) -> str:
-    start = _fmt(row.get("history_start")) or "first date"
-    end = _fmt(row.get("history_end")) or "last date before the test start"
-    return f"{start} → {end}"
+    """Format the input window, using generated-file dates for open boundaries.
 
+    Args:
+        row: Benchmark definition and optional generated-file manifest.
 
-def _filter_text(row: dict) -> str:
-    return ", ".join(f"{column} = {value}" for column, value in filters_from_row(row)) or "none"
+    Returns:
+        Readable input window with explicit fallbacks for unknown dates.
+    """
+    generated = (materialized_from_row(row) or {}).get("input") or {}
+    start = row.get("history_start") or generated.get("first_date")
+    end = row.get("history_end") or generated.get("last_date")
+    return f"{_pretty_date(start) if start else 'First available date'} – " + (
+        _pretty_date(end) if end else "Last date before the test start"
+    )
 
 
 def _pretty_date(value) -> str:
-    """'2026-10-16 22:46:17' or a date -> 'October 16, 2026'; a dash when there is no usable date."""
+    """Format a stored date as a compact, unambiguous calendar date.
+
+    Args:
+        value: Date object or ISO-formatted stored value.
+
+    Returns:
+        Date such as '16 Oct 2026', or a dash when no date is recorded.
+    """
     try:
         day = value if isinstance(value, _date) else _date.fromisoformat(str(value)[:10])
     except ValueError:
         return "—"
-    return f"{day:%B} {day.day}, {day.year}"
+    return f"{day:%d %b %Y}"
 
 
 def _runs_text(count) -> str:
@@ -414,7 +438,13 @@ def register_benchmarks_page() -> None:
 
     @ui.page("/ui/benchmarks")
     def benchmarks_page(request: Request):
+        """Render compact benchmark rows and authorized draft management controls.
+
+        Args:
+            request: Browser request handled by the benchmark list route.
+        """
         header("/ui/benchmarks", api="benchmarks")
+        ui.add_css(BENCHMARK_LIST_CSS)
         logged_in = _is_logged_in()
         reload = ui.navigate.reload
 
@@ -462,14 +492,12 @@ def register_benchmarks_page() -> None:
             logger.exception("could not load the best entries")
             best = {}
 
-        with ui.column().classes("epi-page"):
+        with ui.column().classes("epi-page epi-benchmark-list-page"):
             with ui.row().classes("w-full items-start justify-between"):
                 with ui.column().classes("gap-0"):
                     ui.label("Benchmarks").classes("epi-page-title")
-                    ui.label(
-                        "A benchmark fixes the series, the test window and the data version that forecasts "
-                        "are scored against. Design it as a draft, check it against the data, then finalize it."
-                    ).classes("epi-page-description")
+                    ui.label("Fixed data, test windows and scoring for comparing forecast models."
+                             ).classes("epi-page-description")
                 if logged_in:
                     ui.button("New benchmark", on_click=lambda: guarded(lambda: _designer_dialog(None, reload)))
             if logged_in:
@@ -487,34 +515,30 @@ def register_benchmarks_page() -> None:
                                   ).props("flat")
                         ui.button("Retire", on_click=lambda d=d: guarded(
                             lambda: _retire_dialog(d, reload, draft=True))).props("flat color=negative")
-            ui.label("Final benchmarks").classes("text-xl font-semibold text-gray-900")
+            with ui.row().classes("epi-benchmark-list-heading"):
+                ui.label("Final benchmarks").classes("text-xl font-semibold text-gray-900")
+                count = len(finals)
+                ui.label(f"{count} benchmark{'s' if count != 1 else ''}").classes("epi-benchmark-list-muted")
             if not finals:
                 ui.label("No benchmarks yet.").classes("text-sm text-gray-500")
-            for b in finals:
-                with ui.column().classes("w-full gap-0 border border-gray-200 rounded-xl overflow-hidden"):
-                    with ui.link(target=f"/ui/benchmarks/{b['id']}").classes("w-full no-underline text-inherit"):
-                        with ui.row().classes("w-full no-wrap items-stretch gap-0"):
-                            with ui.column().classes("items-center justify-center w-20 shrink-0"):
-                                ui.icon("insights", size="2.5rem").classes("text-blue-grey-5")
-                            with ui.column().classes("flex-1 gap-0 py-3 pr-4"):
-                                ui.label(b["name"]).classes("text-lg font-semibold text-gray-900")
-                                ui.label(description_text(b)).classes("text-sm text-gray-600 line-clamp-2")
-                                meta = [f"Dataset {b['dataset_qid']}", b["target_column"]]
-                                if filters_from_row(b):
-                                    meta.append(_filter_text(b))
-                                ui.label(" · ".join(meta)).classes("text-xs text-gray-500 italic")
-                            with ui.column().classes("w-44 shrink-0 items-center justify-center gap-2 text-white"
-                                                     ).style("background: #3d566e"):
-                                ui.label(_pretty_date(b.get("finalized_at"))).classes("text-sm")
-                                ui.label(_runs_text(b.get("entry_count"))).classes("text-sm font-semibold")
-                    with ui.row().classes("w-full items-center gap-x-5 gap-y-0 px-4 py-1 bg-gray-50 border-t border-gray-200"):
-                        ui.label(f"Test window {b['test_start']} → {b['test_end']} · input {_input_range(b)}"
-                                 ).classes("text-xs text-gray-600")
-                        ui.label(f"Best: {_best_text(best.get(b['id']))}"
-                                 ).classes("text-xs text-gray-600")
-                        ui.label(f"Data commit {(b.get('data_commit') or '')[:12]}").classes("text-xs text-gray-600")
-                        ui.link("Leaderboard", f"/ui/benchmarks/{b['id']}?tab=leaderboard").classes("text-xs")
+            with ui.element("div").classes("epi-benchmark-list"):
+                for b in finals:
+                    with ui.element("article").classes("epi-benchmark-list-row"):
+                        with ui.column().classes("epi-benchmark-list-content"):
+                            ui.link(b["name"], f"/ui/benchmarks/{b['id']}").classes("epi-benchmark-list-title")
+                            ui.label(description_text(b)).classes("epi-benchmark-list-description")
+                            with ui.row().classes("epi-benchmark-list-facts"):
+                                ui.label(f"Test window {_pretty_date(b['test_start'])} – {_pretty_date(b['test_end'])}")
+                                ui.label(f"Input {_input_range(b)}")
+                            with ui.row().classes("epi-benchmark-list-facts epi-benchmark-list-secondary"):
+                                ui.label(f"Best: {_best_text(best.get(b['id']))}")
+                                ui.label(f"Finalized {_pretty_date(b.get('finalized_at'))}"
+                                         ).classes("epi-benchmark-list-muted")
+                        with ui.column().classes("epi-benchmark-list-actions"):
+                            ui.label(_runs_text(b.get("entry_count"))).classes("font-semibold")
+                            ui.link("Leaderboard →", f"/ui/benchmarks/{b['id']}?tab=leaderboard")
                         if logged_in:
-                            ui.button("Copy as draft", on_click=lambda b=b: copy(b["id"])).props("flat dense size=sm")
-                            ui.button("Retire", on_click=lambda b=b: guarded(lambda: _retire_dialog(b, reload))
-                                      ).props("flat dense size=sm color=negative")
+                            with ui.row().classes("epi-benchmark-list-management"):
+                                ui.button("Copy as draft", on_click=lambda b=b: copy(b["id"])).props("flat dense size=sm")
+                                ui.button("Retire", on_click=lambda b=b: guarded(lambda: _retire_dialog(b, reload))
+                                          ).props("flat dense size=sm color=negative")

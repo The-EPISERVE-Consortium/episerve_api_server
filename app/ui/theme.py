@@ -26,6 +26,7 @@ TOKENS_CSS = f"""
 THEME_CSS = TOKENS_CSS + (_STYLES / "theme.css").read_text()
 AUTH_CSS = TOKENS_CSS + (_STYLES / "auth.css").read_text()
 BENCHMARK_DETAIL_CSS = (_STYLES / "benchmark-details.css").read_text()
+BENCHMARK_LIST_CSS = (_STYLES / "benchmark-list.css").read_text()
 
 
 def apply_theme() -> None:

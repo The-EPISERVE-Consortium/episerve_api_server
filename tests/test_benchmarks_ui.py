@@ -78,17 +78,22 @@ def _report(**kw):
 
 
 def test_page_lists_final_benchmarks_from_the_database_only(monkeypatch):
+    """Show compact benchmark facts and links without external data calls.
+
+    Args:
+        monkeypatch: Fixture replacing database and catalog dependencies.
+    """
     out = _render(monkeypatch)
     assert out["status"] == 200
     text = out["labels"]
-    assert "Flu 2022" in text
-    assert "Dataset Q1 · v · region = DE" in text
-    assert "Test window 2022-01-01 → 2022-01-31 · input first date → last date before the test start" in text
-    assert f"Data commit {COMMIT[:12]}" in text
-    assert "Best: timesfm (interval score 4.50)" in text
+    assert any(link.text == "Flu 2022" for link in out["find"](ui.link))
+    assert "1 benchmark" in text
+    assert "Test window 01 Jan 2022 – 31 Jan 2022" in text
+    assert "Input First available date – Last date before the test start" in text
+    assert "Best: timesfm · Interval score 4.50" in text
     assert COMMIT not in " ".join(text)
     hrefs = {e.text: e.props.get("href") for e in out["find"](ui.link) if "/ui/benchmarks/5" in (e.props.get("href") or "")}
-    assert hrefs == {"": "/ui/benchmarks/5", "Leaderboard": "/ui/benchmarks/5?tab=leaderboard"}
+    assert hrefs == {"Flu 2022": "/ui/benchmarks/5", "Leaderboard →": "/ui/benchmarks/5?tab=leaderboard"}
 
 
 def test_anonymous_users_see_no_management_controls(monkeypatch):

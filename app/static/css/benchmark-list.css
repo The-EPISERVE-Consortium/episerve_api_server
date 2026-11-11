@@ -1,0 +1,60 @@
+.epi-benchmark-list-page { gap: 20px; }
+.epi-benchmark-list-heading { align-items: baseline; gap: 16px; }
+.epi-benchmark-list-muted { color: var(--epi-muted); font-size: 0.875rem; }
+.epi-benchmark-list { width: 100%; min-width: 0; }
+.epi-benchmark-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px 32px;
+  padding: 24px 0;
+  border-top: 1px solid var(--epi-line);
+}
+.epi-benchmark-list-row:last-child { border-bottom: 1px solid var(--epi-line); }
+.epi-benchmark-list-content { min-width: 0; gap: 8px; }
+.epi-benchmark-list-title {
+  color: var(--epi-text);
+  font-size: 1.125rem;
+  font-weight: 600;
+  line-height: 1.4;
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+.epi-benchmark-list-title:hover { color: var(--epi-accent); text-decoration: underline; }
+.epi-benchmark-list-description {
+  color: #475569;
+  font-size: 0.9375rem;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.epi-benchmark-list-facts {
+  color: #374151;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  gap: 4px 20px;
+  overflow-wrap: anywhere;
+}
+.epi-benchmark-list-secondary { margin-top: 2px; }
+.epi-benchmark-list-actions { align-items: flex-start; gap: 6px; padding-top: 5px; }
+.epi-benchmark-list-actions a { color: var(--epi-accent); text-decoration: none; }
+.epi-benchmark-list-actions a:hover { text-decoration: underline; }
+.epi-benchmark-list-management { grid-column: 1 / -1; gap: 8px; }
+.epi-benchmark-list-row a:focus-visible { outline: 2px solid var(--epi-accent); outline-offset: 3px; }
+
+@media (max-width: 700px) {
+  .epi-benchmark-list-row { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 20px 0; }
+  .epi-benchmark-list-actions {
+    width: 100%;
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+    padding-top: 0;
+  }
+  .epi-benchmark-list-facts { flex-direction: column; gap: 4px; }
+}
