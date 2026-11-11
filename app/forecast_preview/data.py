@@ -132,6 +132,7 @@ def series(frame: pd.DataFrame, *, forecast: bool) -> list[dict]:
     """
     if frame.empty or len(frame.columns) < 2 or not frame.columns.is_unique:
         raise ValueError('A preview needs an axis and at least one numeric value column.')
+    frame = frame.reset_index(drop=True)
     columns = list(frame.columns)
     date_columns = []
     for column in columns:
@@ -143,6 +144,10 @@ def series(frame: pd.DataFrame, *, forecast: bool) -> list[dict]:
         raise ValueError('Multiple time columns were found; use the data table to inspect this output.')
     axis = date_columns[0] if date_columns else columns[0]
     remaining = [column for column in columns if column != axis]
+    position_axis = (forecast and 'x_auto_converted' in columns
+                     and pd.api.types.is_numeric_dtype(frame[axis])
+                     and frame[axis].equals(frame['x_auto_converted'])
+                     and bool(((frame[axis] > 0) & (frame[axis] % 1 == 0)).all()))
     numeric = [c for c in remaining if pd.api.types.is_numeric_dtype(frame[c]) and c != 'x_auto_converted']
     if forecast:
         numeric = [c for c in numeric if not (str(c).endswith(('_q10', '_q90')) and str(c)[:-4] in columns)]
@@ -174,6 +179,8 @@ def series(frame: pd.DataFrame, *, forecast: bool) -> list[dict]:
             out.append({'column': str(column), 'axis': str(axis), 'groups': labels,
                         'label': str(column) + (' · ' + ', '.join(f'{k}={v}' for k, v in labels.items()) if labels else ''),
                         'points': points, 'rows': len(group), 'sampled': len(group) > MAX_POINTS,
+                        'row_positions': [int(index) + 1 for index in group.index[positions]],
+                        'position_axis': position_axis,
                         'duplicate_x': group[axis].duplicated().any().item()})
     if not out:
         raise ValueError('No numeric series could be identified.')

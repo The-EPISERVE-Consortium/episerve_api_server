@@ -37,7 +37,10 @@ explicit evenly spaced display sample; original downloads remain unchanged.
 Categorical columns form separate series; multiple possible time axes or duplicate
 axis values are shown as tables rather than connected misleadingly. Quantiles are
 labelled "reported q10–q90", without asserting their statistical interpretation.
-Input and prediction axes are kept separate when their correspondence is unknown.
+The chart overlays matching series on compatible date, ISO-week, or numeric axes.
+Explicit x_auto_converted positions align to supplied input row positions. When
+axes cannot be aligned reliably, the preview retains the data tables and explains
+why the combined graph is unavailable. No model-internal history is inferred.
 
 If supplied input is unavailable, predictions remain viewable with an explanation.
 Incomplete previews are not stored as successful cache entries, so a later visit

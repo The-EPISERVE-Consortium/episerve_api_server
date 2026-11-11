@@ -51,6 +51,7 @@ def test_grouped_weekly_input_discovers_time_column_without_model_names():
     assert len(result) == 4
     target = next(s for s in result if s['column'] == 'incidence' and s['groups']['disease'] == 'A')
     assert target['axis'] == 'week'
+    assert target['row_positions'] == [1, 3]
     assert target['points'] == [{'x': '2026-W01', 'value': 1.}, {'x': '2026-W02', 'value': 3.}]
 
 
@@ -60,6 +61,7 @@ def test_numeric_forecast_positions_are_not_interpreted_as_dates():
     result = data.series(frame, forecast=True)
     assert [s['column'] for s in result] == ['a', 'b']
     assert result[0]['points'] == [{'x': '109', 'value': 5., 'q10': 3., 'q90': 8.}]
+    assert result[0]['position_axis'] is True
 
 
 def test_sampling_preserves_endpoints_and_missing_values():
