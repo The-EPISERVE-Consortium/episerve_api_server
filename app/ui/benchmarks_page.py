@@ -39,19 +39,19 @@ def _fmt(value) -> str:
     return "" if value is None else str(value)
 
 
-def _best_text(best: dict | None) -> str:
-    """Format a compact model name and its best score.
+def _best_result(best: dict | None) -> tuple[str, str]:
+    """Format a compact model name and a separate score caption.
 
     Args:
         best: Best stored entry, or None when no entry has been scored.
 
     Returns:
-        Model and metric summary, or a dash when no score is available.
+        Model name and metric summary, with a dash for an unavailable result.
     """
     if not best:
-        return "—"
+        return "—", ""
     metric = "Interval score" if best["metric"] == "interval_score" else LABELS[best["metric"]]
-    return f"{model_label(best['model_name'])} · {metric} {best['value']:.2f}"
+    return model_label(best["model_name"]), f"{metric} {best['value']:.2f}"
 
 
 def _input_range(row: dict) -> str:
@@ -85,11 +85,6 @@ def _pretty_date(value) -> str:
     except ValueError:
         return "—"
     return f"{day:%d %b %Y}"
-
-
-def _runs_text(count) -> str:
-    count = count or 0
-    return "No runs yet" if count == 0 else f"{count} run" + ("" if count == 1 else "s")
 
 
 def _parse_date(text, label: str, *, required: bool) -> _date | None:
@@ -438,7 +433,7 @@ def register_benchmarks_page() -> None:
 
     @ui.page("/ui/benchmarks")
     def benchmarks_page(request: Request):
-        """Render compact benchmark rows and authorized draft management controls.
+        """Render the searchable benchmark catalog and authorized draft controls.
 
         Args:
             request: Browser request handled by the benchmark list route.
@@ -492,6 +487,121 @@ def register_benchmarks_page() -> None:
             logger.exception("could not load the best entries")
             best = {}
 
+        state = {"search": "", "sort": "Newest first", "page": 1, "page_size": 10}
+
+        def update_search(e):
+            """Filter benchmark names and descriptions from the first page.
+
+            Args:
+                e: Input event carrying the current search text.
+            """
+            state["search"] = e.value or ""
+            state["page"] = 1
+            catalog.refresh()
+
+        def update_sort(e):
+            """Sort the catalog and return to its first page.
+
+            Args:
+                e: Selection event carrying the requested ordering.
+            """
+            state["sort"] = e.value
+            state["page"] = 1
+            catalog.refresh()
+
+        def update_page_size(e):
+            """Set the number of visible benchmarks per page.
+
+            Args:
+                e: Selection event carrying a page size, with zero meaning all.
+            """
+            state["page_size"] = int(e.value)
+            state["page"] = 1
+            catalog.refresh()
+
+        def change_page(offset: int):
+            """Move to an adjacent page of the filtered catalog.
+
+            Args:
+                offset: Signed number of pages to move.
+            """
+            state["page"] += offset
+            catalog.refresh()
+
+        @ui.refreshable
+        def catalog():
+            """Render filtered benchmark records with pagination and direct links."""
+            needle = state["search"].strip().casefold()
+            rows = [row for row in finals if not needle or needle in (
+                row["name"] + " " + description_text(row)
+            ).casefold()]
+            if state["sort"] == "Name A–Z":
+                rows.sort(key=lambda row: row["name"].casefold())
+            else:
+                rows.sort(key=lambda row: _fmt(row.get("finalized_at")), reverse=state["sort"] == "Newest first")
+            count = len(rows)
+            ui.label(f"Showing {count} benchmark{'s' if count != 1 else ''}").classes("text-sm text-gray-500")
+            if not rows:
+                ui.label("No benchmarks match your search." if finals else "No benchmarks yet."
+                         ).classes("text-sm text-gray-400 py-8 text-center w-full")
+                return
+            page_size = state["page_size"] or count
+            last_page = (count + page_size - 1) // page_size
+            state["page"] = max(1, min(state["page"], last_page))
+            start = (state["page"] - 1) * page_size
+
+            with ui.element("div").classes("epi-table-panel"):
+                with ui.element("table").classes("epi-benchmark-catalog-table").props('aria-label="Final benchmarks"'):
+                    with ui.element("thead"):
+                        with ui.element("tr"):
+                            for caption in ("Benchmark", "Test window", "Runs", "Best result", "Finalized", "Leaderboard"):
+                                with ui.element("th").props("scope=col"):
+                                    ui.label(caption)
+                    with ui.element("tbody"):
+                        for b in rows[start:start + page_size]:
+                            with ui.element("tr"):
+                                with ui.element("td").classes("epi-benchmark-catalog-name"):
+                                    ui.link(b["name"], f"/ui/benchmarks/{b['id']}").classes("epi-benchmark-catalog-title")
+                                    ui.label(description_text(b)).classes("epi-benchmark-catalog-description")
+                                with ui.element("td").props('data-label="Test window"'):
+                                    with ui.column().classes("epi-benchmark-catalog-cell"):
+                                        ui.label(f"{_pretty_date(b['test_start'])} – {_pretty_date(b['test_end'])}")
+                                        ui.label(f"Input: {_input_range(b)}").classes("epi-benchmark-catalog-secondary")
+                                with ui.element("td").props('data-label="Runs"'):
+                                    ui.label(str(b.get("entry_count") or 0))
+                                with ui.element("td").props('data-label="Best result"'):
+                                    name, metric = _best_result(best.get(b["id"]))
+                                    with ui.column().classes("epi-benchmark-catalog-cell"):
+                                        ui.label(name).classes("font-semibold")
+                                        if metric:
+                                            ui.label(metric).classes("epi-benchmark-catalog-secondary")
+                                with ui.element("td").props('data-label="Finalized"'):
+                                    ui.label(_pretty_date(b.get("finalized_at")))
+                                with ui.element("td").classes("epi-benchmark-catalog-actions"):
+                                    ui.link("Leaderboard →", f"/ui/benchmarks/{b['id']}?tab=leaderboard")
+                                    if logged_in:
+                                        with ui.row().classes("epi-benchmark-catalog-management"):
+                                            ui.button("Copy as draft", on_click=lambda b=b: copy(b["id"])
+                                                      ).props("flat dense size=sm")
+                                            ui.button("Retire", on_click=lambda b=b: guarded(
+                                                lambda: _retire_dialog(b, reload))).props("flat dense size=sm color=negative")
+                with ui.row().classes("epi-benchmark-catalog-pagination"):
+                    with ui.row().classes("items-center gap-2"):
+                        ui.label("Records per page:")
+                        ui.select({10: "10", 25: "25", 50: "50", 0: "All"}, value=state["page_size"],
+                                  on_change=update_page_size).props(
+                            'borderless dense options-dense aria-label="Records per page"'
+                        ).classes("epi-benchmark-catalog-page-size")
+                    with ui.row().classes("items-center gap-2"):
+                        ui.label(f"{start + 1}–{min(start + page_size, count)} of {count}")
+                        if last_page > 1:
+                            ui.button(icon="chevron_left", on_click=lambda: change_page(-1)).props(
+                                'flat round dense aria-label="Previous page"'
+                            ).set_enabled(state["page"] > 1)
+                            ui.button(icon="chevron_right", on_click=lambda: change_page(1)).props(
+                                'flat round dense aria-label="Next page"'
+                            ).set_enabled(state["page"] < last_page)
+
         with ui.column().classes("epi-page epi-benchmark-list-page"):
             with ui.row().classes("w-full items-start justify-between"):
                 with ui.column().classes("gap-0"):
@@ -515,30 +625,11 @@ def register_benchmarks_page() -> None:
                                   ).props("flat")
                         ui.button("Retire", on_click=lambda d=d: guarded(
                             lambda: _retire_dialog(d, reload, draft=True))).props("flat color=negative")
-            with ui.row().classes("epi-benchmark-list-heading"):
-                ui.label("Final benchmarks").classes("text-xl font-semibold text-gray-900")
-                count = len(finals)
-                ui.label(f"{count} benchmark{'s' if count != 1 else ''}").classes("epi-benchmark-list-muted")
-            if not finals:
-                ui.label("No benchmarks yet.").classes("text-sm text-gray-500")
-            with ui.element("div").classes("epi-benchmark-list"):
-                for b in finals:
-                    with ui.element("article").classes("epi-benchmark-list-row"):
-                        with ui.column().classes("epi-benchmark-list-content"):
-                            ui.link(b["name"], f"/ui/benchmarks/{b['id']}").classes("epi-benchmark-list-title")
-                            ui.label(description_text(b)).classes("epi-benchmark-list-description")
-                            with ui.row().classes("epi-benchmark-list-facts"):
-                                ui.label(f"Test window {_pretty_date(b['test_start'])} – {_pretty_date(b['test_end'])}")
-                                ui.label(f"Input {_input_range(b)}")
-                            with ui.row().classes("epi-benchmark-list-facts epi-benchmark-list-secondary"):
-                                ui.label(f"Best: {_best_text(best.get(b['id']))}")
-                                ui.label(f"Finalized {_pretty_date(b.get('finalized_at'))}"
-                                         ).classes("epi-benchmark-list-muted")
-                        with ui.column().classes("epi-benchmark-list-actions"):
-                            ui.label(_runs_text(b.get("entry_count"))).classes("font-semibold")
-                            ui.link("Leaderboard →", f"/ui/benchmarks/{b['id']}?tab=leaderboard")
-                        if logged_in:
-                            with ui.row().classes("epi-benchmark-list-management"):
-                                ui.button("Copy as draft", on_click=lambda b=b: copy(b["id"])).props("flat dense size=sm")
-                                ui.button("Retire", on_click=lambda b=b: guarded(lambda: _retire_dialog(b, reload))
-                                          ).props("flat dense size=sm color=negative")
+            with ui.row().classes("w-full items-center gap-3"):
+                with ui.row().classes("epi-search"):
+                    ui.icon("search").classes("text-gray-400 shrink-0")
+                    ui.input(placeholder="Search by name or description…", on_change=update_search
+                             ).props("borderless dense clearable").classes("flex-1 text-sm")
+                ui.select(["Newest first", "Oldest first", "Name A–Z"], value=state["sort"], on_change=update_sort
+                          ).props('outlined dense options-dense aria-label="Sort benchmarks"').classes("text-sm")
+            catalog()

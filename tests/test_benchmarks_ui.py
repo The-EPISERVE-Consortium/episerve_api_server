@@ -87,13 +87,71 @@ def test_page_lists_final_benchmarks_from_the_database_only(monkeypatch):
     assert out["status"] == 200
     text = out["labels"]
     assert any(link.text == "Flu 2022" for link in out["find"](ui.link))
-    assert "1 benchmark" in text
-    assert "Test window 01 Jan 2022 – 31 Jan 2022" in text
-    assert "Input First available date – Last date before the test start" in text
-    assert "Best: timesfm · Interval score 4.50" in text
+    assert "Showing 1 benchmark" in text
+    assert "01 Jan 2022 – 31 Jan 2022" in text
+    assert "Input: First available date – Last date before the test start" in text
+    assert "timesfm" in text and "Interval score 4.50" in text
     assert COMMIT not in " ".join(text)
     hrefs = {e.text: e.props.get("href") for e in out["find"](ui.link) if "/ui/benchmarks/5" in (e.props.get("href") or "")}
     assert hrefs == {"Flu 2022": "/ui/benchmarks/5", "Leaderboard →": "/ui/benchmarks/5?tab=leaderboard"}
+
+
+def test_catalog_search_sort_and_pagination_keep_direct_leaderboard_links(monkeypatch):
+    """Filter and order records across pages without hiding their primary action.
+
+    Args:
+        monkeypatch: Fixture replacing the catalog's database dependencies.
+    """
+    finals = [{**FINAL, "id": i, "name": f"Benchmark {i:02}", "finalized_at": f"2026-10-{i:02}",
+               "description": "Needle in wastewater" if i in (1, 6, 11) else "Other forecast"}
+              for i in range(1, 13)]
+
+    def names(find):
+        """Collect titles from the currently rendered catalog page.
+
+        Args:
+            find: Harness element lookup helper.
+
+        Returns:
+            Visible benchmark titles in their rendered order.
+        """
+        return [link.text for link in find(ui.link) if "epi-benchmark-catalog-title" in link.classes]
+
+    async def scenario(out, client, find, drain):
+        """Exercise page movement, filtering, sorting, and the all-records option.
+
+        Args:
+            out: Mutable harness result.
+            client: Browser client receiving simulated control events.
+            find: Harness element lookup helper.
+            drain: Helper completing refresh callbacks.
+        """
+        assert names(find) == [f"Benchmark {i:02}" for i in range(12, 2, -1)]
+        next_page = next(b for b in find(ui.button) if b.props.get("aria-label") == "Next page")
+        await click(next_page, client)
+        await drain()
+        assert names(find) == ["Benchmark 02", "Benchmark 01"]
+        search = next(i for i in find(ui.input) if i.props.get("placeholder") == "Search by name or description…")
+        search.value = "  NEEDLE  "
+        await drain()
+        assert names(find) == ["Benchmark 11", "Benchmark 06", "Benchmark 01"]
+        sort = next(s for s in find(ui.select) if isinstance(s.options, list))
+        sort.value = "Name A–Z"
+        await drain()
+        assert names(find) == ["Benchmark 01", "Benchmark 06", "Benchmark 11"]
+        assert len([link for link in find(ui.link) if link.text == "Leaderboard →"]) == 3
+        search.value = "no matching benchmark"
+        await drain()
+        assert "No benchmarks match your search." in labels(find)
+        search.value = ""
+        await drain()
+        page_size = next(s for s in find(ui.select) if isinstance(s.options, dict))
+        page_size.value = 0
+        await drain()
+        assert len(names(find)) == 12
+        assert "1–12 of 12" in labels(find)
+
+    _render(monkeypatch, finals=finals, after=scenario)
 
 
 def test_anonymous_users_see_no_management_controls(monkeypatch):
