@@ -148,6 +148,34 @@ def set_materialized(benchmark_id: int, materialized: dict) -> None:
         conn.close()
 
 
+def set_target_preview(benchmark_id: int, preview: dict, *, expected_commit: str) -> bool:
+    """Attach an image without replacing other fields of the frozen manifest.
+
+    Args:
+        benchmark_id: Final benchmark to update.
+        preview: Static target images and their point counts.
+        expected_commit: Generated-file commit read before rendering.
+
+    Returns:
+        Whether an image was attached to an unchanged final manifest.
+    """
+    conn = _connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE benchmarks SET materialized = JSON_SET(materialized, '$.target_preview', JSON_EXTRACT(%s, '$')) "
+                "WHERE id = %s AND finalized_at IS NOT NULL AND retired_at IS NULL "
+                "AND JSON_UNQUOTE(JSON_EXTRACT(materialized, '$.commit')) = %s "
+                "AND JSON_EXTRACT(materialized, '$.target_preview') IS NULL",
+                (json.dumps(preview), benchmark_id, expected_commit),
+            )
+            updated = cur.rowcount == 1
+        conn.commit()
+        return updated
+    finally:
+        conn.close()
+
+
 def set_description(benchmark_id: int, description: str | None) -> None:
     """Replace the description of a benchmark in any state (it is not part of the frozen definition)."""
     conn = _connect()

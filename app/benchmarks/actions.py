@@ -6,10 +6,13 @@ spec makes model runs read their input at the same commit.
 """
 
 import json
+from io import BytesIO
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 
-from app.benchmarks import fdo, materialize, recipe, store
+import pandas as pd
+
+from app.benchmarks import fdo, materialize, preview, recipe, store
 from app.benchmarks.definition import (
     Benchmark, DefinitionError, derive_horizon, input_uri, materialized_from_row,
     normalize_covariates, normalize_filters, validate,
@@ -228,10 +231,19 @@ def _covariate_data(benchmark: Benchmark, commit: str, sources: list | None = No
 
 def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materialize.Built",
               sources: list | None, view: dict) -> dict:
-    """Store the generated files as one FDO object and return the manifest recorded with the finalized benchmark.
+    """Store generated files and freeze their recipe and target preview.
 
-    ``view`` is the benchmark row as it is after finalizing (resolved history end, pinned commit, component); the
-    steps that describe how the files were generated are generated from it once and kept in the manifest."""
+    Args:
+        benchmark_id: Benchmark receiving the generated object.
+        name: Display name recorded in the object's metadata.
+        benchmark: Definition pinned to its source data commit.
+        built: Exact input and reference tables produced during finalization.
+        sources: Source object identifiers and component names.
+        view: Resolved benchmark row used to freeze the generation recipe.
+
+    Returns:
+        Manifest containing file checksums, provenance, recipe, and static images.
+    """
     input_bytes, input_sha = materialize.to_parquet(built.input)
     reference_bytes, reference_sha = materialize.to_parquet(built.reference)
     qid = fdo.mint_qid()
@@ -258,7 +270,49 @@ def _manifest(benchmark_id: int, name: str, benchmark: Benchmark, built: "materi
         files, f"benchmark {benchmark_id}: generated input and reference files")
     manifest.update(branch=branch, commit=commit)
     manifest["recipe"] = recipe.describe(view, manifest)
+    manifest["target_preview"] = preview.build(benchmark, built)
     return manifest
+
+
+def store_target_preview(benchmark_id: int) -> dict:
+    """Add a missing static image using an existing benchmark's frozen files.
+
+    Args:
+        benchmark_id: Final benchmark whose manifest should receive the preview.
+
+    Returns:
+        The stored target preview, including an existing image when present.
+
+    Raises:
+        NotFound: The benchmark is not final or has no generated files.
+        Conflict: The manifest changed while its preview was being generated.
+        LoadError: Generated file contents do not match their recorded hashes.
+    """
+    import hashlib
+
+    row = _row(benchmark_id)
+    manifest = materialized_from_row(row)
+    if store.state(row) != "final" or not manifest:
+        raise NotFound(f"Benchmark {benchmark_id} has no finalized generated files")
+    if manifest.get("target_preview"):
+        return manifest["target_preview"]
+    frames = {}
+    for kind in ("input", "reference"):
+        info = manifest[kind]
+        if not info.get("qid"):
+            raise NotFound(f"Benchmark {benchmark_id} needs its generated object migrated first")
+        data = lakefs_client.read_benchmark_component(
+            manifest["commit"], info["qid"], info["component"], MAX_DOWNLOAD_BYTES)
+        if hashlib.sha256(data).hexdigest() != info["sha256"]:
+            raise LoadError(f"The {kind} file does not match its frozen checksum")
+        frames[kind] = pd.read_parquet(BytesIO(data))
+    result = preview.build(store.benchmark_from_row(row), materialize.Built(**frames))
+    if not store.set_target_preview(benchmark_id, result, expected_commit=manifest["commit"]):
+        current = materialized_from_row(_row(benchmark_id)) or {}
+        if current.get("commit") == manifest["commit"] and current.get("target_preview"):
+            return current["target_preview"]
+        raise Conflict("The benchmark manifest changed while its preview was generated")
+    return result
 
 
 def check(benchmark_id: int) -> CheckReport:

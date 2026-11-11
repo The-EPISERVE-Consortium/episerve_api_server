@@ -6,6 +6,7 @@ httpx
 pydantic>=2.0
 nicegui>=3.0
 pandas
+matplotlib>=3.9
 pyarrow
 duckdb
 pymysql

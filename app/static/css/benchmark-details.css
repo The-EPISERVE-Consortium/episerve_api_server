@@ -73,8 +73,8 @@
 .epi-benchmark-description {
   max-width: 82ch;
   min-width: 0;
-  font-size: 1.125rem;
-  line-height: 1.6;
+  font-size: 0.9375rem;
+  line-height: 1.55;
   white-space: pre-line;
   overflow-wrap: anywhere;
 }
@@ -101,6 +101,8 @@
 .epi-benchmark-fact dt { color: var(--benchmark-muted); font-size: 0.875rem; }
 .epi-benchmark-fact dd { margin: 2px 0 0; font-size: 1.25rem; line-height: 1.25; font-weight: 700; }
 .epi-benchmark-window { display: flex; flex-direction: column; gap: 9px; padding-top: 6px; }
+.epi-benchmark-target-preview { display: block; width: 100%; }
+.epi-benchmark-target-preview img { display: block; width: 100%; height: auto; }
 .epi-benchmark-timeline {
   display: flex;
   gap: 3px;
@@ -229,7 +231,6 @@
   .epi-benchmark-title { font-size: 1.5rem; line-height: 1.25; }
   .epi-benchmark-tabs .q-tab { padding-inline: 10px; }
   .epi-benchmark-tabs .q-tab__label { font-size: 0.875rem; }
-  .epi-benchmark-description { font-size: 1rem; }
   .epi-benchmark-summary { grid-template-columns: 1fr; gap: 14px; padding-block: 16px; }
   .epi-benchmark-target { padding-right: 0; }
   .epi-benchmark-facts { padding: 0; border-left: 0; }

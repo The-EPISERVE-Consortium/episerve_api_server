@@ -473,6 +473,23 @@ def test_overview_has_the_general_facts_and_forecast_window_but_no_how_to_run(mo
     assert [b for b, panel in out["buttons"] if panel == "overview" and b] == []
 
 
+def test_overview_displays_frozen_target_images_instead_of_the_period_bar(monkeypatch):
+    """Use stored responsive images without requesting data or rendering a chart.
+
+    Args:
+        monkeypatch: Fixture replacing benchmark and leaderboard storage calls.
+    """
+    preview = {"image": "data:image/png;base64,desktop", "mobile_image": "data:image/png;base64,mobile"}
+    row = {**ROW, "materialized": json.dumps({**MANIFEST, "target_preview": preview})}
+    out = _render(monkeypatch, row=row, board=_board([]))
+    elements = out["find"](ui.element)
+    image = next(e for e in elements if e.props.get("alt", "").startswith("Observed target series"))
+    assert image.props["src"] == preview["image"]
+    assert any(e.props.get("srcset") == preview["mobile_image"] for e in elements)
+    assert not any("epi-benchmark-timeline" in e.classes for e in elements)
+    assert "Observed target values · Shaded period: scoring reference" in out["labels"]
+
+
 def test_only_an_admin_can_edit_the_description_and_it_is_saved_for_a_final_benchmark(monkeypatch):
     saved = []
     monkeypatch.setattr(leaderboard_page.bactions, "set_description", lambda bid, text: saved.append((bid, text)))

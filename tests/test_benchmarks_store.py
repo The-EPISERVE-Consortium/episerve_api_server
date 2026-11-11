@@ -98,6 +98,24 @@ def test_set_description_updates_any_benchmark(monkeypatch):
     assert "UPDATE benchmarks SET description" in conn.executed[0][0] and "finalized" not in conn.executed[0][0]
 
 
+def test_target_preview_updates_only_a_missing_image_on_the_expected_final_manifest(monkeypatch):
+    """Keep an image attachment from replacing concurrent manifest changes.
+
+    Args:
+        monkeypatch: Fixture supplying a fake database connection.
+    """
+    conn = _use(monkeypatch, ([], 1, None))
+    assert store.set_target_preview(3, {"image": "png"}, expected_commit="ab" * 32)
+    sql, params = conn.executed[0]
+    assert "JSON_SET(materialized" in sql
+    assert "finalized_at IS NOT NULL" in sql and "retired_at IS NULL" in sql
+    assert "$.commit" in sql and "JSON_EXTRACT(materialized, '$.target_preview') IS NULL" in sql
+    assert params == ('{"image": "png"}', 3, "ab" * 32)
+    assert conn.commits == 1 and conn.closed
+    _use(monkeypatch, ([], 0, None))
+    assert not store.set_target_preview(3, {"image": "png"}, expected_commit="ab" * 32)
+
+
 def test_create_draft_stores_the_creator(monkeypatch):
     conn = _use(monkeypatch, ([], 1, 7))
     assert store.create_draft("Flu", None, BENCH, created_by=18) == 7

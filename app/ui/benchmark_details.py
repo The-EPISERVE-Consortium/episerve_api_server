@@ -106,7 +106,17 @@ def overview(row: dict, *, can_edit: bool, on_edit: Callable[[], None]) -> None:
             ui.label("The model sees the input period. Forecasts are evaluated over the reference period.").classes(
                 "epi-benchmark-body"
             )
-            if all(window["days"] for window in windows):
+            preview = manifest.get("target_preview")
+            if preview:
+                with ui.element("picture").classes("epi-benchmark-target-preview"):
+                    source = ui.element("source").props('media="(max-width: 700px)"')
+                    source.props["srcset"] = preview.get("mobile_image") or preview["image"]
+                    image = ui.element("img").props(
+                        'alt="Observed target series: blue model input and teal held-out scoring reference"'
+                    )
+                    image.props["src"] = preview["image"]
+                ui.label("Observed target values · Shaded period: scoring reference").classes("epi-benchmark-note")
+            elif all(window["days"] for window in windows):
                 with ui.element("div").classes("epi-benchmark-timeline").props("aria-hidden=true"):
                     for window in windows:
                         ui.element("div").classes(f"epi-benchmark-period-{window['kind']}").style(
