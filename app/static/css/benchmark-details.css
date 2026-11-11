@@ -21,18 +21,7 @@
 }
 .epi-benchmark-toolbar > a { text-decoration: none; }
 .epi-benchmark-toolbar > a:hover { text-decoration: underline; }
-.epi-benchmark-api { position: relative; margin-left: auto; color: #075b9f; }
-.epi-benchmark-api .q-item { padding: 0 0 0 4px; min-height: 36px; }
-.epi-benchmark-api .q-item__section--side { padding-right: 6px; color: inherit; }
-.epi-benchmark-api .q-item__section--avatar,
 .epi-benchmark-disclosure .q-item__section--avatar { min-width: 0; }
-.epi-benchmark-api .q-expansion-item__content {
-  position: absolute;
-  inset: 100% 0 auto auto;
-  width: min(40rem, calc(100vw - 56px));
-  z-index: 5;
-}
-.epi-benchmark-api .epi-api-box { box-shadow: 0 4px 14px #1e3a5f20; }
 .epi-benchmark-title { overflow-wrap: anywhere; text-wrap: pretty; }
 .epi-benchmark-tabs {
   width: 100%;

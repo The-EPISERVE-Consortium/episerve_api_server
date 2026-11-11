@@ -17,9 +17,8 @@ from app.leaderboard.present import (
     LABELS, chart_option, columns_text, comparison_rows, filter_entries, history_text, history_window, model_label,
     params_text, point_rows, summary, table_rows,
 )
-from app.ui.components.api_box import api_box
 from app.ui.components.messages import error_label
-from app.ui.layout import base_url, header
+from app.ui.layout import header
 from app.ui.theme import BENCHMARK_DETAIL_CSS
 
 logger = logging.getLogger(__name__)
@@ -221,7 +220,7 @@ def register_leaderboard_page() -> None:
             benchmark_id: Identifier of the benchmark to display.
             tab: Initial tab key, including supported legacy aliases.
         """
-        header("/ui/benchmarks")
+        header("/ui/benchmarks", api=f"benchmarks/{benchmark_id}/leaderboard?rank_by={_DEFAULT_RANK_BY}&all_runs=true")
         logged_in = _is_logged_in()
         selected = benchmark_id
         try:
@@ -248,10 +247,6 @@ def register_leaderboard_page() -> None:
         with ui.column().classes("epi-page epi-benchmark-page"):
             with ui.row().classes("epi-benchmark-toolbar"):
                 ui.link("← All benchmarks", "/ui/benchmarks")
-                with ui.expansion("API command").props(
-                    "dense switch-toggle-side expand-icon=chevron_right expanded-icon=expand_more"
-                ).classes("epi-benchmark-api"):
-                    api_box(f"{base_url()}benchmarks/{selected}/leaderboard?rank_by={_DEFAULT_RANK_BY}&all_runs=true")
             ui.label(row["name"]).classes("epi-page-title epi-benchmark-title").props("role=heading aria-level=1")
             with ui.tabs(value=open_tab).props("align=left no-caps").classes("epi-benchmark-tabs") as tabs:
                 for key, label in _TABS:
