@@ -8,7 +8,7 @@ nicegui>=3.0
 pandas
 matplotlib>=3.9
 pyarrow
-duckdb
+duckdb==1.5.5
 pymysql
 pytest
 episerve-specs @ https://github.com/The-EPISERVE-Consortium/episerve_specs/archive/refs/tags/v0.4.0.tar.gz

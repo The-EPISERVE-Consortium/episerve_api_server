@@ -20,8 +20,9 @@ recover observations at forecast dates. Simple row-wise SELECTs retain column
 expressions, aliases, population filters and ordering; calendar predicates on the
 unambiguous time column and LIMIT/OFFSET are removed using DuckDB's SQL syntax
 tree. Input SQL and supplied-input reconstruction remain unchanged. No regular
-expression is used to rewrite SQL. Forecasts with row-position axes do not acquire
-inferred dates. Only matching target columns and calendar coordinates are shown,
+expression is used to rewrite SQL. DuckDB is pinned to the tested version because
+its serialized syntax-tree format can change between releases. Forecasts with
+row-position axes do not acquire inferred dates. Only matching target columns and calendar coordinates are shown,
 and no later source version is consulted.
 
 Ambiguous queries (including joins, CTEs, aggregates, windows, mixed date/population
