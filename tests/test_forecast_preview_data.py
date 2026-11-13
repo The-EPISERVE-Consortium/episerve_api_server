@@ -105,3 +105,33 @@ def test_compressed_parquet_is_bounded_before_decoding(monkeypatch):
     monkeypatch.setattr(data, 'MAX_DECODED_BYTES', 1)
     with pytest.raises(ValueError, match='Input exceeds'):
         data.input_frame(parquet(pd.DataFrame({'x': [1], 'y': [2]})), None)
+
+
+def test_manual_samples_preserve_columns_rows_types_and_duplicate_coordinates():
+    """Keep X/Y pairs aligned across a full-range sample without grouping rows."""
+    frame = pd.DataFrame({'day': ['2026-01-01'] * 2 + ['2026-01-02'] * 2998,
+                          'value': range(3000), 'text_number': [str(i) for i in range(3000)],
+                          'region': ['Berlin', 'Hamburg'] * 1500})
+    result = data.manual_table(frame)
+    assert result['total'] == 3000 and result['sampled']
+    assert result['row_numbers'][0] == 1 and result['row_numbers'][-1] == 3000
+    assert result['columns'][0] == {'name': 'day', 'numeric': False, 'duplicate': True}
+    assert result['columns'][2]['numeric']
+    for row, number in zip(result['rows'], result['row_numbers']):
+        assert row[1] == row[2] == number - 1
+        assert row[3] == frame.iloc[number - 1]['region']
+
+
+def test_manual_samples_bound_bytes_and_preserve_nulls_and_single_rows():
+    """Keep long Unicode values bounded and missing observations unfilled."""
+    import json
+    frame = pd.DataFrame({'x': range(2000), 'value': [float('nan')] + list(range(1, 2000)),
+                          **{f'text{i}': ['ä' * 500] * 2000 for i in range(8)}})
+    result = data.manual_table(frame)
+    assert len(json.dumps(result, ensure_ascii=False).encode()) <= 192 * 1024
+    assert result['truncated'] and result['sampled']
+    assert result['rows'][0][1] is None
+    assert result['row_numbers'][-1] == len(frame)
+    single = data.manual_table(pd.DataFrame({'week': ['2026-W01'], 'week_start': ['2025-12-29'], 'value': [0]}))
+    assert single['rows'] == [['2026-W01', '2025-12-29', 0.]]
+    assert not single['sampled'] and single['row_numbers'] == [1]

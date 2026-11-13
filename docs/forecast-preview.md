@@ -29,7 +29,19 @@ Ambiguous queries (including joins, CTEs, aggregates, windows, mixed date/popula
 OR predicates, and unsupported functions) retain inputs/predictions with an
 observation explanation instead of guessing. Missing forecast dates in the source
 produce no overlay. Explicit benchmark reference data take precedence.
-Format version 4 rebuilds previews created before ordinary-source overlays existed.
+If automatic mapping fails, the UI offers a recorded-file selector and explicit
+X/Y column selectors. Each file has an aligned sample of up to 1,500 rows covering
+the full row range, bounded further by 12,000 cells and 192 KiB. Y choices are
+numeric columns (including entirely numeric text); X may be calendar, numeric or
+categorical. Samples retain original row numbers and flag shortened text labels.
+Duplicate X values are detected on the complete source column, so sampling does
+not hide ambiguity: repeated coordinates are plotted as separate points, without
+aggregation or joining different groups. Missing cells remain gaps.
+
+Readable files with unsupported automatic mapping are cacheable; actual retrieval
+or reconstruction failures remain retryable. Format version 5 rebuilds previews
+with the manual-selection samples. Selecting columns never reruns a model or
+changes its recorded input SQL, and requires no additional download or endpoint.
 
 ## Database setup
 
@@ -59,13 +71,13 @@ when that benchmark is public. Other internal URI shapes are rejected.
 Downloads, rows, columns, series, SQL time/memory, chart points and cache JSON size
 are bounded. Read-only SQL executes without external access. Large series show an
 explicit evenly spaced display sample; original downloads remain unchanged.
-Categorical columns form separate series; multiple possible time axes or duplicate
-axis values are shown as tables rather than connected misleadingly. Quantiles are
+Categorical columns form separate series; ambiguous automatic mappings offer
+manual X/Y selection instead of connecting rows misleadingly. Quantiles are
 labelled "reported q10–q90", without asserting their statistical interpretation.
 The chart overlays matching series on compatible date, ISO-week, or numeric axes.
 Explicit x_auto_converted positions align to supplied input row positions. When
-axes cannot be aligned reliably, the preview retains the data tables and explains
-why the combined graph is unavailable. No model-internal history is inferred.
+axes cannot be aligned reliably, the preview explains why the combined graph is
+unavailable and offers manual plotting of individual files. No model-internal history is inferred.
 
 If supplied input is unavailable, predictions remain viewable with an explanation.
 Incomplete previews are not stored as successful cache entries, so a later visit

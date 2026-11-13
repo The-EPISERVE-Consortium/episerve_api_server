@@ -192,12 +192,12 @@ def _build(qid: str, commit: str, sources: list[dict], config: dict) -> dict:
         output = data.predictions_frame(_artifact(qid, commit, 'output/predictions.tsv'))
     except Exception as exc:
         raise PreviewError('No readable predictions are available for this run version.') from exc
-    inputs, warnings = [], []
+    inputs, warnings, complete = [], [], True
     try:
         predictions = data.series(output, forecast=True)
     except ValueError:
         predictions = []
-        warnings.append('Prediction columns could not be mapped to a chart. The recorded output is shown as a table.')
+        warnings.append('Predictions are readable, but automatic chart mapping is unavailable. Choose X and Y columns below.')
     for source in sources:
         description = {key: value for key, value in source.items() if key not in ('path', 'available', 'reference')}
         content = None
@@ -207,11 +207,16 @@ def _build(qid: str, commit: str, sources: list[dict], config: dict) -> dict:
             content = _read_source(source)
             frame = data.input_frame(content, source['sql'])
             description['table'] = data.table(frame)
+            description['manual'] = data.manual_table(frame)
             description['series'] = data.series(frame, forecast=False)
         except Exception:
-            logger.warning('Could not reconstruct supplied input for %s', qid, exc_info=True)
             description['series'] = []
-            warnings.append(f'Input supplied as {source["filename"]} could not be reconstructed. Predictions are still available.')
+            if description.get('manual'):
+                warnings.append(f'{source["filename"]} is readable, but automatic chart mapping is unavailable. Choose X and Y columns below.')
+            else:
+                complete = False
+                logger.warning('Could not reconstruct supplied input for %s', qid, exc_info=True)
+                warnings.append(f'Input supplied as {source["filename"]} could not be reconstructed. Predictions are still available.')
         reference = source.get('reference')
         if reference:
             recorded = {key: value for key, value in reference.items() if key != 'sql'}
@@ -224,6 +229,7 @@ def _build(qid: str, commit: str, sources: list[dict], config: dict) -> dict:
                 recorded['table'] = data.table(frame)
                 recorded['series'] = data.series(frame, forecast=False)
             except Exception:
+                complete = False
                 logger.warning('Could not read benchmark reference for %s', qid, exc_info=True)
                 recorded['series'] = []
                 warnings.append('Benchmark observations could not be loaded. Inputs and predictions are still available.')
@@ -237,14 +243,15 @@ def _build(qid: str, commit: str, sources: list[dict], config: dict) -> dict:
             except ValueError as exc:
                 description['observation_note'] = f'Observed values from the pinned source are unavailable: {exc}'
             except Exception:
+                complete = False
                 logger.warning('Could not reconstruct source observations for %s', qid, exc_info=True)
                 warnings.append('Observed values could not be loaded. Inputs and predictions are still available.')
         inputs.append(description)
     return {'run_qid': qid, 'artifact_commit': commit, 'format_version': cache.FORMAT_VERSION,
             'input_label': 'Input supplied', 'forecast_label': 'Recorded predictions',
             'note': 'The model may have selected or processed these inputs internally.',
-            'config': config, 'inputs': inputs, 'predictions': predictions, 'prediction_table': data.table(output), 'warnings': warnings,
-            'cacheable': not warnings}
+            'config': config, 'inputs': inputs, 'predictions': predictions, 'prediction_table': data.table(output), 'prediction_manual': data.manual_table(output), 'warnings': warnings,
+            'cacheable': complete}
 
 
 def preview(qid: str, version: str | None = None) -> dict:

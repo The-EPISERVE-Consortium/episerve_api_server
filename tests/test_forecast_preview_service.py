@@ -361,3 +361,28 @@ def test_ambiguous_observation_sql_keeps_input_and_predictions_cacheable(world):
     assert 'OR' in result['inputs'][0]['observation_note']
     assert 'reference' not in result['inputs'][0]
     assert result['cacheable'] and not result['warnings']
+
+
+def test_ambiguous_axes_offer_cached_manual_columns_without_changing_input(world):
+    """Treat readable multidimensional files as a supported manual preview.
+
+    Args:
+        world: Public run fixtures with ambiguous calendar axes.
+    """
+    world['predictions'] = b'week\tweek_start\ttarget\n2026-W01\t2025-12-29\t0\n'
+    world['input'] = parquet(pd.DataFrame({'week': ['2026-W01', '2026-W01'],
+                                         'week_start': ['2025-12-29'] * 2, 'value': [2, 4]}))
+    world['workflow']['data_transformation_sql'] = []
+    result = service.preview('Q1')
+    assert result['cacheable'] and result['warnings']
+    assert result['predictions'] == [] and result['inputs'][0]['series'] == []
+    assert result['prediction_manual']['rows'] == [['2026-W01', '2025-12-29', 0.]]
+    assert result['inputs'][0]['manual']['rows'] == [
+        ['2026-W01', '2025-12-29', 2.], ['2026-W01', '2025-12-29', 4.]]
+    assert result['inputs'][0]['manual']['columns'][0]['duplicate']
+    world['downloads'].clear()
+    assert service.preview('Q1')['cached']
+    assert SOURCE not in world['downloads']
+    world['restricted'].add('Q2')
+    with pytest.raises(service.PreviewError):
+        service.preview('Q1')

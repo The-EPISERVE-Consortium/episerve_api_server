@@ -1,6 +1,7 @@
 """Build bounded chart series without model names or internal-model assumptions."""
 
 from io import BytesIO
+import json
 import math
 import numbers
 import re
@@ -199,3 +200,48 @@ def table(frame: pd.DataFrame) -> dict:
     return {'columns': [str(column) for column in frame.columns], 'rows': [
         ['' if pd.isna(value) else str(value) for value in row]
         for row in frame.head(100).itertuples(index=False, name=None)], 'total': len(frame)}
+
+
+
+def manual_table(frame: pd.DataFrame) -> dict:
+    """Provide bounded, aligned column samples for explicit X/Y selection.
+
+    Args:
+        frame: Complete readable input after workflow SQL, or recorded predictions.
+
+    Returns:
+        Column types, duplicate-coordinate flags, original row numbers, and an
+        evenly spaced sample covering the full file within 192 KiB. Missing
+        cells remain null; long text cells are explicitly marked as truncated.
+    """
+    columns = []
+    for name in frame.columns:
+        values = frame[name].dropna()
+        numeric = pd.api.types.is_numeric_dtype(values) or (
+            not values.empty and pd.to_numeric(values, errors='coerce').notna().all())
+        columns.append({'name': str(name), 'numeric': bool(numeric),
+                        'duplicate': bool(values.duplicated().any())})
+    count = min(len(frame), MAX_POINTS, max(2, 12000 // max(1, len(columns))))
+    positions = sorted({round(i * (len(frame) - 1) / (count - 1)) for i in range(count)}) if count > 1 else list(range(count))
+    rows, truncated = [], False
+    for row in frame.iloc[positions].itertuples(index=False, name=None):
+        cells = []
+        for value, column in zip(row, columns):
+            if pd.isna(value):
+                cells.append(None)
+            elif column['numeric']:
+                cells.append(_number(value))
+            else:
+                text = _axis(value)
+                encoded = text.encode('utf-8')
+                truncated = truncated or len(encoded) > 128
+                cells.append(encoded[:128].decode('utf-8', errors='ignore'))
+        rows.append(cells)
+    payload = {'columns': columns, 'rows': rows, 'row_numbers': [index + 1 for index in positions],
+               'total': len(frame), 'sampled': len(rows) < len(frame), 'truncated': truncated}
+    while len(json.dumps(payload).encode()) > 192 * 1024 and len(payload['rows']) > 2:
+        indices = sorted(set(range(0, len(payload['rows']), 2)) | {len(payload['rows']) - 1})
+        payload['rows'] = [payload['rows'][i] for i in indices]
+        payload['row_numbers'] = [payload['row_numbers'][i] for i in indices]
+        payload['sampled'] = True
+    return payload
