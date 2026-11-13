@@ -25,6 +25,37 @@ The UI run workflow (step 5) applies the same check. A run is registered in the 
 run that failed inside the model container (for example on its own config check) is listed with status `failed`;
 only `success` runs can be added to a benchmark.
 
+### Pinned model images
+
+`POST /model-runs` accepts an optional `model_digest` (`sha256:` followed by
+64 lowercase hex digits), or an embedded digest in `model_image`. With neither,
+`model_tag` defaults to `latest`. The Prefect runner resolves a tag once and
+executes the resulting immutable image; an explicit digest takes precedence
+over the tag. Invalid or conflicting digests return `422` before scheduling.
+
+```json
+{
+  "model_image": "ghcr.io/the-episerve-consortium/model__prediction__generic__timesfm",
+  "model_digest": "sha256:<64 hex digits from the original run>",
+  "input_data_files": [["<original versioned input URL>", "input.parquet"]],
+  "config": {"history_length": 91, "prediction_length": 4}
+}
+```
+
+For a pinned image, the API skips validation against the current catalog's
+model card, since that schema may have changed since the image was built. The
+pinned model container validates its own configuration. Unpinned submissions
+retain their existing catalog validation.
+
+Run responses include `model_image`, `model_digest`, and
+`model_source_revision`. `GET /model-runs/{run_id}` reads these from the run's
+FDO through DOIP, even before catalog synchronization indexes them. A failed
+provenance lookup returns `502`; a missing historical FDO retains catalog
+fields. `GET /model-runs` returns the fields indexed in CKAN without fetching
+an FDO for every row; snapshot fields remain `null` until indexed by the sync
+workflow. Older runs have no fabricated digest or source SHA. The lakeFS
+client and OpenLineage run facets also preserve recorded model snapshots.
+
 `POST /models/{model}/check-config` (body `{"config": {...}}`, `model` = name or QID) runs the same check
 without starting anything: `valid`, `problems` (the messages `POST /model-runs` would refuse with) and
 `config` with the declared defaults filled in. `valid` is `null` when the card declares no parameters.
@@ -73,7 +104,7 @@ shows only FDO metadata, which the DOIP server serves openly.
 | `GET` | `/lineage/events?object=<QID>` | Upstream lineage of a dataset, benchmark data object or model run as OpenLineage events |
 | `POST` | `/model-runs` | Trigger a model run via Prefect (returns `202`) |
 | `GET` | `/model-runs` | List all model runs from CKAN (`type-model-run` group), including runs that ended `failed` |
-| `GET` | `/model-runs/{run_id}` | Get a single run by QID (fetched from CKAN) |
+| `GET` | `/model-runs/{run_id}` | Get a run by QID from CKAN, enriched with its recorded model snapshot from DOIP |
 | `GET` | `/ui` | NiceGUI web interface |
 
 ## Web UI

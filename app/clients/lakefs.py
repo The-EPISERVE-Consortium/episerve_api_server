@@ -4,6 +4,7 @@ import lakefs
 from lakefs.exceptions import NotFoundException
 from lakefs import Client
 from app.config import settings
+from app.model_snapshot import run_model_snapshot
 
 
 def _doip_url(qid: str) -> str:
@@ -20,13 +21,17 @@ def _shard_qid(qid: str) -> str:
 
 
 def _parse_run_fdo(qid: str, fdo: dict) -> dict:
+    """Read run components and the recorded model identity from a lakeFS FDO.
+
+    Args:
+        qid: Run identifier.
+        fdo: Current or legacy run descriptor.
+
+    Returns:
+        Run details including any recorded digest and source Git revision.
+    """
     profile    = fdo.get("profile",    {})
     kernel     = fdo.get("kernel",     {})
-    provenance = fdo.get("provenance", {})
-
-    attribution = provenance.get("prov:wasAttributedTo", "")
-    docker_tag  = attribution.rsplit(":", 1)[-1] if ":" in attribution else ""
-
     input_files, output_files = [], []
     for comp in kernel.get("fdo:hasComponent", []):
         comp_id = comp.get("@id", "")
@@ -39,7 +44,7 @@ def _parse_run_fdo(qid: str, fdo: dict) -> dict:
         "run_id":           qid,
         "qid":              qid,
         "model_name":       profile.get("name",     ""),
-        "docker_tag":       docker_tag,
+        **run_model_snapshot(fdo),
         "status":           "",
         "run_timestamp":    kernel.get("modified",  ""),
         "computation_time": "",

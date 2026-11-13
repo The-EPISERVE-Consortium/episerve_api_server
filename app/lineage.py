@@ -22,6 +22,7 @@ from typing import Callable
 from urllib.parse import parse_qs, urlsplit
 
 from app.config import settings
+from app.model_snapshot import run_model_snapshot
 
 PRODUCER = "https://github.com/The-EPISERVE-Consortium/episerve_api_server"
 RUN_EVENT_SCHEMA = "https://openlineage.io/spec/2-0-2/OpenLineage.json#/$defs/RunEvent"
@@ -192,6 +193,8 @@ def event_for(qid: str, fdo: dict, version: str | None = None) -> tuple[dict | N
                 times["nominalEndTime"] = provenance["prov:endedAtTime"]
             run_facets["nominalTime"] = _facet(NOMINAL_TIME_FACET, **times)
         extra = {"model_image": agent.get("@id", "")}
+        snapshot = run_model_snapshot(fdo)
+        extra.update({key: snapshot[key] for key in ("model_digest", "model_source_revision") if snapshot[key]})
         user = (provenance.get("schema:agent") or {}).get("@id")
         if user:
             extra["executed_by"] = user

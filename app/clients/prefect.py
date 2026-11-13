@@ -26,10 +26,21 @@ def trigger_model_run(
     data_transformation_sql: list = None,
     model_tag: str = "latest",
     executed_by: str | None = None,
+    model_digest: str | None = None,
 ) -> dict:
     """Create a Prefect flow run for the model-runner deployment.
 
-    ``executed_by`` is the pseudonym of the user (``users.pseudonym``); the runner records it in the run's provenance.
+    Args:
+        input_data_files: Source URLs and target filenames.
+        model_image: Model repository, optionally with an embedded digest.
+        config_json: Serialized model configuration.
+        data_transformation_sql: Optional per-input SQL transformations.
+        model_tag: Tag to resolve when no digest is supplied.
+        executed_by: User pseudonym recorded in provenance.
+        model_digest: Exact image digest taking precedence over the tag.
+
+    Returns:
+        Prefect flow run identifier and scheduled status.
     """
     deployment_id = _deployment_id(settings.prefect_model_runner_deployment)
     url = f"{settings.prefect_api_url}/deployments/{deployment_id}/create_flow_run"
@@ -42,6 +53,8 @@ def trigger_model_run(
             "data_transformation_sql": data_transformation_sql,
         }
     }
+    if model_digest is not None:
+        payload["parameters"]["model_digest"] = model_digest
     if executed_by:
         payload["parameters"]["executed_by"] = executed_by
     response = httpx.post(url, headers=_headers(), content=json.dumps(payload))

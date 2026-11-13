@@ -11,6 +11,7 @@ import logging
 from episerve_specs import check_model_config, model_config_defaults
 
 from app.clients import ckan as ckan_client
+from app.model_snapshot import image_repository
 
 logger = logging.getLogger(__name__)
 
@@ -32,13 +33,25 @@ def model_params(model_image: str) -> dict | None:
 
     A catalog failure, an image the catalog does not know or a model without parameters in its card
     returns None: such a run is not blocked here and the model container does its own validation.
+    Digest-pinned images also skip the current card because their historical
+    configuration schema can differ.
+
+    Args:
+        model_image: Requested image reference.
+
+    Returns:
+        Current catalog parameters for an unpinned image, otherwise None.
     """
+    # The current catalog card need not match a historical image's config schema.
+    # The pinned container remains responsible for validating its own inputs.
+    if "@" in model_image:
+        return None
     try:
         models = ckan_client.list_models()
     except Exception:
         logger.warning("Model catalog unavailable; skipping config validation", exc_info=True)
         return None
-    image = model_image.rsplit(":", 1)[0] if ":" in model_image.rsplit("/", 1)[-1] else model_image
+    image = image_repository(model_image)
     for m in models:
         if m.get("docker_image") == image:
             return m.get("parameters")

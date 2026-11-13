@@ -1,5 +1,5 @@
 from datetime import date
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Any
 
 
@@ -67,11 +67,34 @@ class ValidationResult(BaseModel):
 
 
 class ModelRunRequest(BaseModel):
+    """Parameters for a tagged or digest-pinned model run."""
+
     model_image: str
     model_tag: str = "latest"
+    model_digest: str | None = Field(default=None, pattern=r"^sha256:[0-9a-f]{64}$")
     input_data_files: list[list[str]]
     config: dict[str, Any]
     data_transformation_sql: list[str] | None = None
+
+    @model_validator(mode="after")
+    def validate_image_digest(self):
+        """Reject malformed embedded digests and conflicting snapshot selections.
+
+        Returns:
+            Validated run request.
+
+        Raises:
+            ValueError: The embedded digest is invalid or conflicts with the field.
+        """
+        import re
+
+        if "@" in self.model_image:
+            embedded = self.model_image.split("@", 1)[1]
+            if not re.fullmatch(r"sha256:[0-9a-f]{64}", embedded):
+                raise ValueError("Invalid embedded image digest")
+            if self.model_digest is not None and self.model_digest != embedded:
+                raise ValueError("Embedded image digest conflicts with model_digest")
+        return self
 
 
 class ModelRunResponse(BaseModel):
@@ -81,6 +104,9 @@ class ModelRunResponse(BaseModel):
 
 
 class ModelRunStatus(BaseModel):
+    model_image: str = ""
+    model_digest: str | None = None
+    model_source_revision: str | None = None
     executed_by: str = ""  # pseudonym ``episerve_user_<id>`` of who executed the run (empty for older runs)
     run_id: str
     qid: str

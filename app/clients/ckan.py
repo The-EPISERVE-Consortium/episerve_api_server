@@ -128,6 +128,9 @@ def list_model_runs() -> list[dict]:
         except Exception:
             data_transformation_sql = []
         runs.append({
+            "model_image":         extras.get("model_image") or extras.get("docker_image", ""),
+            "model_digest":        extras.get("model_digest") or None,
+            "model_source_revision": extras.get("model_source_revision") or None,
             "run_id":              qid,
             "qid":                 qid,
             "model_name":          extras.get("model", ""),
