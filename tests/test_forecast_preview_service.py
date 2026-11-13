@@ -249,3 +249,115 @@ def test_endpoint_busy_response_has_retry_after(world, monkeypatch):
     monkeypatch.setattr(cache, 'get_or_create', busy)
     response = TestClient(app).get('/model-runs/Q1/forecast-preview')
     assert response.status_code == 503 and response.headers['retry-after'] == '3'
+
+
+def test_benchmark_reference_uses_same_snapshot_without_input_sql(world, monkeypatch):
+    """Load declared truth at the input commit and recheck access on cache hits.
+
+    Args:
+        world: Public run fixtures and in-memory cache.
+        monkeypatch: Fixture replacing FDO metadata and reference downloads.
+    """
+    import hashlib
+    reference = parquet(pd.DataFrame({'day': ['2026-01-03'], 'target': [11]}))
+    original_fdo = service.doip.fetch_fdo
+    original_download = service.download_preview_bytes
+    url = SOURCE.replace('input.parquet', 'reference.parquet')
+
+    def fdo(qid, version=None):
+        """Declare reference data only in the pinned benchmark metadata.
+
+        Args:
+            qid: Requested object identifier.
+            version: Requested immutable version.
+
+        Returns:
+            Public-access metadata with optional benchmark manifest.
+        """
+        result = original_fdo(qid, version)
+        if qid == 'Q2' and version == SOURCE_COMMIT:
+            result['profile']['episerveBenchmark'] = {'files': {
+                'input': {'component': 'input.parquet'},
+                'reference': {'component': 'reference.parquet', 'sha256': hashlib.sha256(reference).hexdigest()}}}
+        return result
+
+    def download(source, base, limit):
+        """Serve reference data separately from the input fixture.
+
+        Args:
+            source: Pinned component URL.
+            base: Configured DOIP origin.
+            limit: Maximum download size.
+
+        Returns:
+            Original Parquet or run artifact bytes.
+        """
+        if source == url:
+            world['downloads'].append(source)
+            return world.get('reference_override', reference)
+        return original_download(source, base, limit)
+
+    monkeypatch.setattr(service.doip, 'fetch_fdo', fdo)
+    monkeypatch.setattr(service, 'download_preview_bytes', download)
+    result = service.preview('Q1')
+    recorded = result['inputs'][0]['reference']
+    assert recorded['url'] == url and recorded['commit'] == SOURCE_COMMIT
+    assert recorded['series'][0]['points'] == [{'x': '2026-01-03', 'value': 11.}]
+    assert result['inputs'][0]['series'][0]['points'][0]['value'] == 4.
+    assert result['cacheable']
+    world['downloads'].clear()
+    assert service.preview('Q1')['cached']
+    assert url not in world['downloads']
+    world['stored'].clear()
+    world['reference_override'] = b'invalid parquet and checksum'
+    incomplete = service.preview('Q1')
+    assert not incomplete['cacheable'] and incomplete['warnings']
+    assert incomplete['predictions'] and incomplete['inputs'][0]['series']
+    assert not incomplete['inputs'][0]['reference']['series']
+    world['restricted'].add('Q2')
+    with pytest.raises(service.PreviewError) as failure:
+        service.preview('Q1')
+    assert failure.value.status == 403
+
+
+def test_ordinary_source_observations_reuse_pinned_download_and_cache(world):
+    """Expand only the observation view while retaining the supplied history.
+
+    Args:
+        world: Public run fixtures and an in-memory preview cache.
+    """
+    world['input'] = parquet(pd.DataFrame({'day': ['2026-01-01', '2026-01-02', '2026-01-03'],
+                                         'value': [2, 4, 6], 'region': ['Berlin'] * 3}))
+    world['workflow']['data_transformation_sql'] = [
+        "SELECT day, value * 2 AS target FROM df WHERE day < '2026-01-03' AND region = 'Berlin' ORDER BY day"]
+    result = service.preview('Q1')
+    supplied = result['inputs'][0]
+    assert len(supplied['series'][0]['points']) == 2
+    assert supplied['reference']['kind'] == 'source'
+    assert supplied['reference']['url'] == SOURCE
+    assert supplied['reference']['commit'] == SOURCE_COMMIT
+    assert supplied['reference']['series'][0]['points'] == [{'x': '2026-01-03', 'value': 12.}]
+    assert world['downloads'].count(SOURCE) == 1
+    assert result['cacheable'] and not result['warnings']
+    world['downloads'].clear()
+    assert service.preview('Q1')['cached']
+    assert SOURCE not in world['downloads']
+    world['restricted'].add('Q2')
+    with pytest.raises(service.PreviewError) as failure:
+        service.preview('Q1')
+    assert failure.value.status == 403
+
+
+def test_ambiguous_observation_sql_keeps_input_and_predictions_cacheable(world):
+    """Explain unsupported inference without breaking or repeatedly rebuilding charts.
+
+    Args:
+        world: Public run fixtures with valid but ambiguous input SQL.
+    """
+    world['workflow']['data_transformation_sql'] = [
+        "SELECT day, value AS target FROM df WHERE day < '2026-01-03' OR value > 0"]
+    result = service.preview('Q1')
+    assert result['inputs'][0]['series'] and result['predictions']
+    assert 'OR' in result['inputs'][0]['observation_note']
+    assert 'reference' not in result['inputs'][0]
+    assert result['cacheable'] and not result['warnings']

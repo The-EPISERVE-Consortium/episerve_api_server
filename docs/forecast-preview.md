@@ -6,6 +6,30 @@
 It never reruns a model or infers its internal history selection. No lakeFS writes
 or additional model metadata are required.
 
+When the supplied component is explicitly identified as benchmark input in its
+pinned FDO, the preview also reads the declared `reference.parquet` from that same
+object and commit. Its recorded SHA-256 is checked when present. These observed
+values are shown separately from model input and never passed through the input
+SQL.
+Reference retrieval failures leave the input/prediction chart usable and retryable.
+Current and pinned object access checks also protect the reference before cache
+lookup.
+
+For ordinary inputs, the same pinned source component is read once and reused to
+recover observations at forecast dates. Simple row-wise SELECTs retain column
+expressions, aliases, population filters and ordering; calendar predicates on the
+unambiguous time column and LIMIT/OFFSET are removed using DuckDB's SQL syntax
+tree. Input SQL and supplied-input reconstruction remain unchanged. No regular
+expression is used to rewrite SQL. Forecasts with row-position axes do not acquire
+inferred dates. Only matching target columns and calendar coordinates are shown,
+and no later source version is consulted.
+
+Ambiguous queries (including joins, CTEs, aggregates, windows, mixed date/population
+OR predicates, and unsupported functions) retain inputs/predictions with an
+observation explanation instead of guessing. Missing forecast dates in the source
+produce no overlay. Explicit benchmark reference data take precedence.
+Format version 4 rebuilds previews created before ordinary-source overlays existed.
+
 ## Database setup
 
 Before deploying, apply `migrations/20261111_add_model_run_preview_cache.sql` to

@@ -6,7 +6,7 @@ import json
 
 from app import db
 
-FORMAT_VERSION = 2
+FORMAT_VERSION = 4
 MAX_PAYLOAD_BYTES = 2 * 1024 * 1024
 
 

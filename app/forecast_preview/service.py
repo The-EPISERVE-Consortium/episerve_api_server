@@ -1,5 +1,6 @@
 """Authorize public artifacts, resolve versions, and build generic forecast previews."""
 
+import hashlib
 import json
 import logging
 import re
@@ -10,7 +11,7 @@ import requests
 from app.clients import ckan, doip
 from app.config import settings
 from app.dataset_preview import download_preview_bytes, validate_component_url
-from app.forecast_preview import cache, data
+from app.forecast_preview import cache, data, observations
 
 logger = logging.getLogger(__name__)
 QID = re.compile(r'Q[0-9]{1,30}')
@@ -108,6 +109,27 @@ def _source(url: str, filename: str, sql: str | None) -> dict:
             'commit': versions[0], 'catalog': f'https://data.episerve.zib.de/dataset/{qid.lower()}?version={versions[0]}'}
 
 
+def _reference_source(source: dict) -> dict | None:
+    """Find benchmark observations declared beside the exact supplied component.
+
+    Args:
+        source: Validated input descriptor at an immutable object version.
+
+    Returns:
+        Reference descriptor at the same commit, or None for ordinary inputs.
+    """
+    if 'qid' not in source or not source['available']:
+        return None
+    fdo = doip.fetch_fdo(source['qid'], version=source['commit']) or {}
+    files = ((fdo.get('profile') or {}).get('episerveBenchmark') or {}).get('files') or {}
+    supplied, reference = files.get('input') or {}, files.get('reference') or {}
+    if supplied.get('component') != source['component'] or reference.get('component') != 'reference.parquet':
+        return None
+    url = (f'{settings.doip_url.rstrip("/")}/doip/retrieve/{source["qid"]}/reference.parquet'
+           f'?version={source["commit"]}')
+    return {**_source(url, 'reference.parquet', None), 'sha256': reference.get('sha256')}
+
+
 def _authorize(source: dict) -> bool:
     """Check present access before any cache read or privileged source retrieval.
 
@@ -177,17 +199,46 @@ def _build(qid: str, commit: str, sources: list[dict], config: dict) -> dict:
         predictions = []
         warnings.append('Prediction columns could not be mapped to a chart. The recorded output is shown as a table.')
     for source in sources:
-        description = {key: value for key, value in source.items() if key not in ('path', 'available')}
+        description = {key: value for key, value in source.items() if key not in ('path', 'available', 'reference')}
+        content = None
         try:
             if not source['available']:
                 raise ValueError('The source version is unavailable.')
-            frame = data.input_frame(_read_source(source), source['sql'])
+            content = _read_source(source)
+            frame = data.input_frame(content, source['sql'])
             description['table'] = data.table(frame)
             description['series'] = data.series(frame, forecast=False)
         except Exception:
             logger.warning('Could not reconstruct supplied input for %s', qid, exc_info=True)
             description['series'] = []
             warnings.append(f'Input supplied as {source["filename"]} could not be reconstructed. Predictions are still available.')
+        reference = source.get('reference')
+        if reference:
+            recorded = {key: value for key, value in reference.items() if key != 'sql'}
+            try:
+                content = _read_source(reference)
+                if reference.get('sha256') and hashlib.sha256(content).hexdigest() != reference['sha256']:
+                    raise ValueError('Benchmark reference checksum mismatch.')
+                # Reference data are observations, never model inputs: do not replay input SQL.
+                frame = data.input_frame(content, None)
+                recorded['table'] = data.table(frame)
+                recorded['series'] = data.series(frame, forecast=False)
+            except Exception:
+                logger.warning('Could not read benchmark reference for %s', qid, exc_info=True)
+                recorded['series'] = []
+                warnings.append('Benchmark observations could not be loaded. Inputs and predictions are still available.')
+            description['reference'] = recorded
+        elif content is not None and description['series']:
+            try:
+                recorded = observations.reference(content, source['sql'], predictions)
+                if recorded:
+                    description['reference'] = {**{key: source[key] for key in (
+                        'url', 'filename', 'commit', 'catalog') if key in source}, **recorded}
+            except ValueError as exc:
+                description['observation_note'] = f'Observed values from the pinned source are unavailable: {exc}'
+            except Exception:
+                logger.warning('Could not reconstruct source observations for %s', qid, exc_info=True)
+                warnings.append('Observed values could not be loaded. Inputs and predictions are still available.')
         inputs.append(description)
     return {'run_qid': qid, 'artifact_commit': commit, 'format_version': cache.FORMAT_VERSION,
             'input_label': 'Input supplied', 'forecast_label': 'Recorded predictions',
@@ -249,6 +300,7 @@ def preview(qid: str, version: str | None = None) -> dict:
             raise PreviewError('The saved input list is invalid.')
         source = _source(item[0], item[1], queries[i] if queries else None)
         source['available'] = _authorize(source)
+        source['reference'] = _reference_source(source)
         sources.append(source)
     # Never serve an earlier cached input after its public metadata disappeared.
     if not all(source['available'] for source in sources):
